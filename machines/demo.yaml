@@ -1,0 +1,62 @@
+# Spustiteľné demo — jediná definícia stroja, ktorá funguje bez reálneho CAD.
+#
+# Používa testovací fixture (tests/data/fixture.step) a signály, ktoré generuje
+# `pssim mock-server`. Slúži na overenie, že celá reťaz beží:
+#
+#   mock server → OPC UA → StateStore → kinematika → Panda3D
+#
+# Pre reálny stroj si sprav vlastný súbor podľa machines/priklad.yaml.
+
+machine: demo
+description: Demo na fixture geometrii, riadené mock serverom
+
+step_file: tests/data/fixture.step
+units: mm
+tessellation:
+  linear_deflection_mm: 0.5
+  angular_deflection_rad: 0.35
+
+source:
+  endpoint: opc.tcp://localhost:4840/pssim/
+  publishing_interval_ms: 50
+  stale_after_s: 1.0
+
+joints:
+  # Portál sa posúva po X. Mock posiela mm v rozsahu 50–2450.
+  - name: os_x
+    parent: base
+    child: base/portal
+    type: prismatic
+    axis: [1, 0, 0]
+    limits: [0.0, 2.5]
+    signal:
+      node: "ns=2;s=Axes.X.ActPos"
+      scale: 0.001
+
+  # Druhý diel portálu ide hore-dole. Mock posiela mm v rozsahu 50–750.
+  - name: os_z
+    parent: base/portal
+    child: base/portal/Part1[2]
+    type: prismatic
+    axis: [0, 0, 1]
+    limits: [0.0, 0.8]
+    signal:
+      node: "ns=2;s=Axes.Z.ActPos"
+      scale: 0.001
+
+  # Hlava sa otáča. Mock posiela tisíciny stupňa (±90 000).
+  - name: os_c
+    parent: base/portal
+    child: base/portal/hlava
+    type: revolute
+    axis: [0, 0, 1]
+    limits: [-3.14159265, 3.14159265]
+    signal:
+      node: "ns=2;s=Axes.C.ActPos"
+      scale: 1.7453292519943296e-05
+
+  # Kryt je pevný — je tu, aby demo obsahovalo aj statickú geometriu.
+  - name: kryt
+    parent: base
+    child: base/kryt
+    type: fixed

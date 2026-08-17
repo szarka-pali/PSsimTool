@@ -1,0 +1,51 @@
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- PSsimTool ------------------------------------------------------------
+
+# Vstupné CAD súbory — veľké binárky, patria do artefaktového úložiska,
+# nie do gitu. machines/*.yaml (definície strojov) sa NAOPAK verzuje.
+models/*
+!models/.gitkeep
+!models/README.md
+
+# Tesselovaná geometria — plne generovaná z models/, zahoditeľná
+assets/cache/*
+!assets/cache/.gitkeep
+
+# Záznamy dátových tokov z PLC — môžu obsahovať údaje zo zákazníckeho stroja
+recordings/*
+!recordings/.gitkeep
+
+# Lokálna konfigurácia pripojenia (adresy PLC, certifikáty)
+.env
+.env.local
+config/local.yaml
+certs/
+
+# --- Claude Code ----------------------------------------------------------
+# Osobné nastavenia, ktoré nepatria do repozitára
+.claude/settings.local.json
+CLAUDE.local.md
+.claude/worktrees/
+.claude/agent-memory-local/
+
+# --- ČO NAOPAK VERZUJ (nepridávaj sem) -----------------------------------
+# CLAUDE.md, .claude/settings.json, .claude/rules/, .claude/agents/,
+# .claude/skills/, .claude/hooks/, .mcp.json, .worktreeinclude,
+# machines/*.yaml, uv.lock
+#
+# .claude/ je zdieľaný kontext tímu: keď kolega naklonuje repozitár,
+# jeho Claude Code sa chová rovnako. Konfigurácia agenta je súčasť kódu,
+# prechádza code review a má históriu zmien.

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "_comment_": "Zdieľané s tímom, verzuj to. Tokeny NIKDY nepíš sem — použi $PREMENNÁ, ktorá sa načíta z prostredia. Osobné servery si daj cez `claude mcp add --scope local`. PSsimTool je desktopová 3D aplikácia — browser/DB MCP servery tu nemajú čo robiť, preto sú vyhodené.",
+
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer $GITHUB_TOKEN"
+      }
+    }
+  }
+}

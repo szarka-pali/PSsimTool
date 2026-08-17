@@ -1,0 +1,12 @@
+# Súbory, ktoré sú v .gitignore, ale nový git worktree ich potrebuje.
+# Pri `claude --worktree <nazov>` sa skopírujú do nového worktree,
+# inak by tam projekt nešiel spustiť.
+
+.env
+.env.local
+config/local.yaml
+.claude/settings.local.json
+
+# CAD vstupy a tesselovaná cache sa nekopírujú — sú veľké.
+# V novom worktree spusti `uv run pssim import-step` alebo si urob symlink:
+#   New-Item -ItemType SymbolicLink -Path models -Target ..\..\models

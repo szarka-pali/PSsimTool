@@ -1,0 +1,127 @@
+[project]
+name = "pssim"
+version = "0.1.0"
+description = "3D simulácia strojov riadená live dátami z PLC cez OPC UA"
+readme = "README.md"
+# Panda3D ani cadquery-ocp nemajú wheels pre 3.13+. uv si 3.12 stiahne sám.
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "asyncua>=1.1",
+    "numpy>=2.0",
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+    "structlog>=24.4",
+    "typer>=0.15",
+]
+
+[project.optional-dependencies]
+# Panda3D render. Oddelené, aby unit testy a CI nemuseli ťahať grafický stack.
+viz = [
+    "panda3d>=1.10.15",
+    "panda3d-gltf>=1.2",
+    "panda3d-simplepbr>=0.12",
+]
+# OpenCASCADE. Veľké (stovky MB) — inštaluj len keď importuješ STEP.
+cad = [
+    "cadquery-ocp>=7.7",
+    "trimesh>=4.5",
+]
+# Desktopový shell.
+ui = ["PySide6>=6.8"]
+
+[project.scripts]
+pssim = "pssim.cli:app"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.390",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pssim"]
+
+# --- ruff -----------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "SIM",       # simplify
+    "PTH",       # použi pathlib
+    "RET",       # návratové hodnoty
+    "ARG",       # nepoužité argumenty
+    "TID",       # zakázané importy
+    "ASYNC",     # async pasti
+    "T20",       # print()
+]
+ignore = [
+    "E501",      # dĺžku riadku riešime formátovaním
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pssim", "tests"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ARG"]                      # fixtures sa často javia ako nepoužité
+"src/pssim/io/mock_server.py" = ["T20"]   # mock server je CLI nástroj
+# Zákaz importu je globálny, ale vo vlastnej vrstve tie knižnice patria.
+"src/pssim/cad/**" = ["TID251"]
+"src/pssim/viz/**" = ["TID251"]
+# tools/ sú samostatné skripty spúšťané ručne, nie súčasť balíka.
+"tools/**" = ["TID251", "T201"]
+# Integračné testy overujú práve tie knižnice, ktoré sú inde zakázané.
+"tests/integration/**" = ["TID251"]
+
+# Vynucuje hranice vrstiev z CLAUDE.md. domain/ nesmie importovať nič z projektu
+# ani žiadny externý framework — pravidlo je aj v testoch (test_layer_boundaries).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"panda3d".msg = "Panda3D patrí len do viz/. Viď CLAUDE.md."
+"OCP".msg = "OpenCASCADE patrí len do cad/. Viď CLAUDE.md."
+
+# --- pyright --------------------------------------------------------------
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+# asyncua, panda3d a OCP nemajú kompletné typy
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+# panda3d a OCP sú voliteľné extras. V bežnom checkoute nie sú nainštalované,
+# takže by pyright hlásil chybu pri každom ich importe. Po `uv sync --all-extras`
+# sa resolvujú normálne.
+reportMissingImports = "warning"
+# asyncua reexportuje Client/Server z podmodulov bez `__all__`.
+reportPrivateImportUsage = "warning"
+
+# --- pytest --------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Aby sa dalo importovať `tests.factories` z ktoréhokoľvek testu.
+pythonpath = ["."]
+addopts = "--strict-markers"
+markers = [
+    "integration: vyžaduje mock OPC UA server (uv run pytest -m integration)",
+    "viz: vyžaduje Panda3D a grafický kontext",
+    "cad: vyžaduje OpenCASCADE (cadquery-ocp)",
+]
+asyncio_mode = "auto"

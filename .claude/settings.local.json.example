@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "_comment": [
+    "Skopíruj na .claude/settings.local.json (už je v .gitignore).",
+    "Sem patria OSOBNÉ preferencie a povolenia, ktoré nechceš tlačiť celému týmu —",
+    "napr. endpoint tvojho PLC alebo cesta k lokálnym CAD súborom.",
+    "Zlučuje sa so .claude/settings.json a má nad ním prednosť.",
+    "Pozor: 'deny' pravidlo z projektových settings sa tu NEDÁ prebiť."
+  ],
+
+  "model": "claude-sonnet-5",
+  "defaultMode": "default",
+
+  "env": {
+    "PSSIM_OPCUA_ENDPOINT": "opc.tcp://localhost:4840/pssim/",
+    "PSSIM_LOG_LEVEL": "debug"
+  },
+
+  "permissions": {
+    "allow": [
+      "Bash(gh pr view *)",
+      "Bash(gh pr diff *)"
+    ],
+    "additionalDirectories": [
+      "../cad-podklady"
+    ]
+  }
+}

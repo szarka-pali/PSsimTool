@@ -21,8 +21,9 @@ from pssim.cad.model import CadAssembly
 from pssim.domain.machine import Transform
 from pssim.domain.placement import IDENTITY_PLACEMENT
 from pssim.observability import get_logger
-from pssim.viz.axes import axis_length_for, make_axes_node
+from pssim.viz.axes import axis_length_for, make_axes_node, make_highlight_box
 from pssim.viz.camera import scene_radius, setup_lights
+from pssim.viz.orbit import OrbitCamera
 from pssim.viz.orbit_control import OrbitController
 from pssim.viz.scene import build_scene
 from pssim.viz.transforms import rpy_to_quat
@@ -81,9 +82,12 @@ class EmbeddedRenderer:
         self._base.openDefaultWindow(props=properties)
         self._base.setBackgroundColor(*background)
 
-        self._scene_root: Any = None
+        self._models: dict[str, Any] = {}
+        """Model id -> its root `NodePath`. Insertion order matters for the tree."""
+        self._placements: dict[str, Transform] = {}
         self._axes_root: Any = None
-        self._placement: Transform = IDENTITY_PLACEMENT
+        self._highlight_root: Any = None
+        self._highlighted_id: str | None = None
         self._controller = OrbitController(self._base)
         self._controller.enable()
         logger.info("vložený renderer pripravený", size=(width, height))
@@ -114,101 +118,180 @@ class EmbeddedRenderer:
         """Uvoľní ovládanie. Idempotentné."""
         self._controller.disable()
 
-    # -- obsah scény --------------------------------------------------------
+    # -- scene contents -----------------------------------------------------
 
     @property
     def controller(self) -> OrbitController:
         return self._controller
 
-    def show_assembly(self, assembly: CadAssembly, cache_dir: Path) -> int:
-        """Zobrazí geometriu a vycentruje na ňu kameru.
+    @property
+    def model_ids(self) -> tuple[str, ...]:
+        """Models currently in the scene, in insertion order."""
+        return tuple(self._models)
 
-        Predchádzajúci model sa zahodí. Vracia počet uzlov, ktorých mesh
-        v cache chýbal — nula znamená, že sa načítalo všetko.
+    def add_model(self, model_id: str, assembly: CadAssembly, cache_dir: Path) -> int:
+        """Add a model to the scene under its own root and return the number of
+        nodes whose mesh was missing from the cache.
+
+        Adding does **not** move the camera. With several models loaded, jumping
+        the view on every insert would fight the user; `fit_view()` is explicit.
+        Only the very first model gets framed, so the window is not left staring
+        at empty space.
         """
-        self.clear()
+        self.remove_model(model_id)
 
-        built = build_scene(assembly, cache_dir, name="model")
+        built = build_scene(assembly, cache_dir, name=model_id)
         built.root.reparentTo(self._base.render)
-        # Svetlá visia na koreni modelu, nie na `render` — inak by sa pri každom
-        # ďalšom otvorení súboru hromadili a obraz by postupne vybielil.
+        # Lights hang on the model root, not on `render`: on `render` they would
+        # accumulate with every model added and wash the picture out.
         setup_lights(built.root)
-        self._scene_root = built.root
+        self._models[model_id] = built.root
+        self._placements.setdefault(model_id, IDENTITY_PLACEMENT)
+        self._apply_placement(model_id)
 
-        # Umiestnenie sa aplikuje PRED rámovaním, aby kamera zamierila tam,
-        # kde model naozaj skončí, nie kde bol pred posunutím.
-        self._apply_placement()
-        self._controller.frame(built.root)
-        # Kríž až po vycentrovaní — jeho veľkosť sa odvíja od rozmeru scény.
-        self._show_axes(scene_radius(built.root)[1])
+        if len(self._models) == 1:
+            self._controller.frame(built.root)
+        self._refresh_axes()
 
         logger.info(
-            "model zobrazený",
+            "model added",
+            model=model_id,
             nodes=len(built.node_paths),
             triangles=assembly.triangle_count,
             missing_meshes=built.missing_meshes,
         )
         return built.missing_meshes
 
-    def set_view(self, name: str) -> None:
-        """Prepne na štandardný pohľad (`front`, `top`, …).
+    def remove_model(self, model_id: str) -> bool:
+        """Remove one model. Returns `True` if it was there."""
+        root = self._models.pop(model_id, None)
+        self._placements.pop(model_id, None)
+        if root is None:
+            return False
 
-        Priblíženie a bod záujmu zostávajú — mení sa len uhol.
+        if self._highlighted_id == model_id:
+            self.set_highlight(None)
+        root.removeNode()
+        self._refresh_axes()
+        logger.info("model removed", model=model_id)
+        return True
+
+    def clear(self) -> None:
+        """Remove every model, the highlight and the axes."""
+        for root in self._models.values():
+            root.removeNode()
+        self._models.clear()
+        self._placements.clear()
+        self.set_highlight(None)
+        self._remove_axes()
+
+    # -- camera -------------------------------------------------------------
+
+    def set_view(self, name: str) -> None:
+        """Switch to a standard view (`front`, `top`, …).
+
+        Zoom and point of interest stay; only the angle changes.
         """
         self._controller.set_camera(self._controller.camera.with_view(name))
-        logger.info("pohľad prepnutý", view=name)
-
-    def fit_view(self) -> None:
-        """Vycentruje kameru tak, aby bol celý model v zábere."""
-        if self._scene_root is None:
-            return
-        self._controller.frame(self._scene_root)
-
-    # -- umiestnenie modelu -------------------------------------------------
+        logger.info("view switched", view=name)
 
     @property
-    def placement(self) -> Transform:
-        """Posun a natočenie modelu voči počiatku scény."""
-        return self._placement
+    def camera_state(self) -> OrbitCamera:
+        """The current orbit camera, for saving into a project."""
+        return self._controller.camera
 
-    def set_placement(self, placement: Transform) -> None:
-        """Posadí model na zadané miesto.
+    def set_camera_state(self, camera: OrbitCamera) -> None:
+        """Restore a saved camera."""
+        self._controller.set_camera(camera)
 
-        Kríž v počiatku sa **nehýbe** — je to referencia, voči ktorej sa model
-        umiestňuje. Kamera tiež zostáva; ak sa má znovu zamerať, je na to
-        `fit_view()`.
+    def fit_view(self, model_id: str | None = None) -> None:
+        """Frame one model, or everything when `model_id` is `None`."""
+        if model_id is not None:
+            root = self._models.get(model_id)
+            if root is not None:
+                self._controller.frame(root)
+            return
+
+        if self._models:
+            self._controller.frame(self._base.render)
+
+    # -- placement ----------------------------------------------------------
+
+    def placement(self, model_id: str) -> Transform:
+        """Where a model sits relative to the scene origin."""
+        return self._placements.get(model_id, IDENTITY_PLACEMENT)
+
+    def set_placement(self, model_id: str, placement: Transform) -> None:
+        """Move and rotate one model.
+
+        The origin cross does **not** move — it is the reference the models are
+        placed against. The camera stays too; `fit_view()` re-aims it.
         """
-        self._placement = placement
-        self._apply_placement()
+        self._placements[model_id] = placement
+        self._apply_placement(model_id)
+        self._refresh_axes()
 
-    def _apply_placement(self) -> None:
-        """Prenesie umiestnenie na koreň modelu.
+    def _apply_placement(self, model_id: str) -> None:
+        """Push a placement onto a model root.
 
-        Otočenie sa deje okolo **počiatku modelu**, nie okolo jeho ťažiska —
-        to je to, čo človek čaká, keď zadáva „otoč o 90° okolo Z".
+        Rotation happens about the **model origin**, not its centre of mass —
+        that is what people expect from "rotate 90° about Z".
         """
         from panda3d.core import LQuaternion
 
-        if self._scene_root is None:
+        root = self._models.get(model_id)
+        if root is None:
             return
-        self._scene_root.setPos(*self._placement.xyz)
-        self._scene_root.setQuat(LQuaternion(*rpy_to_quat(self._placement.rpy)))
+        placement = self._placements.get(model_id, IDENTITY_PLACEMENT)
+        root.setPos(*placement.xyz)
+        root.setQuat(LQuaternion(*rpy_to_quat(placement.rpy)))
 
-    def clear(self) -> None:
-        """Odstráni zobrazený model aj kríž."""
-        if self._scene_root is not None:
-            self._scene_root.removeNode()
-            self._scene_root = None
+    # -- selection ----------------------------------------------------------
+
+    @property
+    def highlighted_id(self) -> str | None:
+        return self._highlighted_id
+
+    def set_highlight(self, model_id: str | None) -> None:
+        """Outline one model as selected, or clear the outline with `None`.
+
+        A wireframe box rather than a colour change: models carry their own
+        colours from the STEP file, so tinting them would be invisible on some
+        and misleading on others.
+        """
+        if self._highlight_root is not None:
+            self._highlight_root.removeNode()
+            self._highlight_root = None
+        self._highlighted_id = None
+
+        if model_id is None:
+            return
+        root = self._models.get(model_id)
+        if root is None:
+            return
+
+        self._highlighted_id = model_id
+        box = make_highlight_box(root)
+        if box is not None:
+            box.reparentTo(root)
+            self._highlight_root = box
+
+    # -- axes ---------------------------------------------------------------
+
+    def _refresh_axes(self) -> None:
+        """Redraw the origin cross sized to everything currently loaded.
+
+        Recomputed on every change because the cross scales with the scene: a
+        second, much larger model would otherwise leave it invisibly small.
+        """
+        self._remove_axes()
+        if not self._models:
+            return
+        node = make_axes_node(axis_length_for(scene_radius(self._base.render)[1]))
+        node.reparentTo(self._base.render)
+        self._axes_root = node
+
+    def _remove_axes(self) -> None:
         if self._axes_root is not None:
             self._axes_root.removeNode()
             self._axes_root = None
-
-    def _show_axes(self, scene_radius_m: float) -> None:
-        """Vykreslí kartézsky kríž v počiatku súradníc modelu.
-
-        Visí na `render`, nie na koreni modelu: keby visel na ňom, zdedil by
-        jeho farbu z `setColor()` a všetky tri osi by boli rovnaké.
-        """
-        node = make_axes_node(axis_length_for(scene_radius_m))
-        node.reparentTo(self._base.render)
-        self._axes_root = node

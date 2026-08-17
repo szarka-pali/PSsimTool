@@ -20,12 +20,14 @@ import pytest
 # a na CI bez displeja spadne.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Signal  # noqa: E402
+from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu, QToolButton, QWidget  # noqa: E402
 
+from pssim.cad.model import CadAssembly, CadNode  # noqa: E402
 from pssim.domain.machine import Transform  # noqa: E402
 from pssim.domain.placement import IDENTITY_PLACEMENT  # noqa: E402
 from pssim.ui.main_window import APP_TITLE, MainWindow  # noqa: E402
+from pssim.ui.model_registry import ModelEntry  # noqa: E402
 from pssim.viz.orbit import STANDARD_VIEWS  # noqa: E402
 
 pytestmark = pytest.mark.ui
@@ -135,8 +137,18 @@ class TestMenu:
     def test_hlavne_polozky_su_v_poradi(self, window: MainWindow) -> None:
         assert menu_titles(window) == ["File", "Open", "Model"]
 
-    def test_file_obsahuje_exit(self, window: MainWindow) -> None:
-        assert menu_items(window, "File") == ["Exit"]
+    def test_file_obsahuje_projektove_polozky(self, window: MainWindow) -> None:
+        # Separators come through as empty strings; only the real entries matter.
+        entries = [text for text in menu_items(window, "File") if text]
+
+        assert entries == [
+            "Open Project…",
+            "Open Recent",
+            "Save Project",
+            "Save Project As…",
+            "Close All",
+            "Exit",
+        ]
 
     def test_open_obsahuje_otvorenie_3d_suboru(self, window: MainWindow) -> None:
         assert menu_items(window, "Open") == ["Open 3D file…"]
@@ -250,22 +262,52 @@ class TestOtvorenieSuboru:
 
 
 class _StubViewport(QWidget):
-    """Viewport bez Panda3D, ktorý si zapamätá, čo od neho okno chcelo."""
+    """Viewport without Panda3D that records what the window asked of it."""
 
     def __init__(self) -> None:
         super().__init__()
         self.views: list[str] = []
-        self.fit_calls = 0
-        self.placement = IDENTITY_PLACEMENT
+        self.fit_calls: list[str | None] = []
+        self.placements: dict[str, Transform] = {}
+        self.highlighted: str | None = None
+        self.added: list[str] = []
+        self.removed: list[str] = []
 
     def set_view(self, name: str) -> None:
         self.views.append(name)
 
-    def fit_view(self) -> None:
-        self.fit_calls += 1
+    def fit_view(self, model_id: str | None = None) -> None:
+        self.fit_calls.append(model_id)
 
-    def set_placement(self, placement: Transform) -> None:
-        self.placement = placement
+    def set_highlight(self, model_id: str | None) -> None:
+        self.highlighted = model_id
+
+    def add_model(self, model_id: str, assembly: object, cache_dir: Path) -> int:
+        self.added.append(model_id)
+        return 0
+
+    def remove_model(self, model_id: str) -> None:
+        self.removed.append(model_id)
+
+    def placement(self, model_id: str) -> Transform:
+        return self.placements.get(model_id, IDENTITY_PLACEMENT)
+
+    def set_placement(self, model_id: str, placement: Transform) -> None:
+        self.placements[model_id] = placement
+
+
+def _assembly(parts: int = 2, triangles: int = 24) -> CadAssembly:
+    """Smallest assembly the window will accept, with plausible counts."""
+    nodes = tuple(
+        CadNode(path=f"part{index}", mesh=f"{index}.npz", triangle_count=triangles // parts)
+        for index in range(parts)
+    )
+    return CadAssembly(nodes=nodes, roots=(nodes[0].path,))
+
+
+def _load(window: MainWindow, name: str = "gantry") -> ModelEntry:
+    """Register a model as if an import had just finished."""
+    return window.add_model(Path(f"C:/models/{name}.step"), _assembly(), Path("cache"))
 
 
 @pytest.fixture
@@ -346,10 +388,22 @@ class TestPrepnutiePohladu:
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
+        _load(window)
 
         window.fit_action.trigger()
 
-        assert viewport.fit_calls == 1
+        assert viewport.fit_calls == [window.models.selected_id]
+
+    def test_zobraz_cele_bez_vyberu_rammuje_vsetko(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+        _load(window)
+        window.select_model(None)
+
+        window.fit_view()
+
+        assert viewport.fit_calls == [None]
 
     def test_viewport_bez_podpory_nespadne(self, window: MainWindow) -> None:
         # Náhradný widget v testoch `set_view` nemá — okno to musí prežiť.
@@ -358,38 +412,300 @@ class TestPrepnutiePohladu:
         assert window.centralWidget() is not None
 
 
+class TestModelTree:
+    def test_tree_starts_empty(self, window: MainWindow) -> None:
+        assert window.model_tree.topLevelItemCount() == 0
+
+    def test_dock_is_on_the_left(self, window: MainWindow) -> None:
+        assert window.dockWidgetArea(window.model_dock) == Qt.DockWidgetArea.LeftDockWidgetArea
+
+    def test_loading_adds_a_row(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        _load(window)
+
+        assert window.model_tree.topLevelItemCount() == 1
+
+    def test_loading_twice_adds_two_rows(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        _load(window, "a")
+        _load(window, "b")
+
+        assert window.model_tree.topLevelItemCount() == 2
+
+    def test_second_model_does_not_replace_the_first(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        # The whole point of the change: opening a file adds, it does not replace.
+        window, viewport = window_with_viewport
+
+        _load(window, "a")
+        _load(window, "b")
+
+        assert len(viewport.added) == 2
+        assert len(window.models) == 2
+
+    def test_same_file_twice_gets_distinct_names(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        _load(window, "bolt")
+        _load(window, "bolt")
+
+        assert window.models.names == ("bolt", "bolt (2)")
+
+    def test_tree_shows_part_counts(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window)
+
+        item = window.model_tree.topLevelItem(0)
+
+        assert item is not None
+        assert item.text(1) == "2"
+
+    def test_newly_loaded_model_is_selected(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        entry = _load(window)
+
+        assert window.models.selected_id == entry.model_id
+
+
+class TestSelection:
+    def test_nothing_selected_at_start(self, window: MainWindow) -> None:
+        assert window.selected_model is None
+
+    def test_selection_highlights_in_the_viewport(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+        first = _load(window, "a")
+        _load(window, "b")
+
+        window.select_model(first.model_id)
+
+        assert viewport.highlighted == first.model_id
+
+    def test_clearing_selection_clears_the_highlight(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+        _load(window)
+
+        window.select_model(None)
+
+        assert viewport.highlighted is None
+
+    def test_status_bar_names_the_selected_model(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        first = _load(window, "alpha")
+        _load(window, "beta")
+
+        window.select_model(first.model_id)
+
+        assert "alpha" in window.statusBar().currentMessage()
+
+    def test_code_selection_reaches_the_tree(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        # Selection can change from code too (a neighbour after removal). A row
+        # highlighted in the tree must always be the one the app acts on.
+        window, _ = window_with_viewport
+        first = _load(window, "a")
+        _load(window, "b")
+
+        window.select_model(first.model_id)
+
+        assert window.model_tree.selected_model_id == first.model_id
+
+    def test_clearing_selection_clears_the_tree(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window)
+
+        window.select_model(None)
+
+        assert window.model_tree.selected_model_id is None
+
+    def test_removal_leaves_tree_and_registry_agreeing(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "a")
+        _load(window, "b")
+
+        window.remove_selected_model()
+
+        assert window.model_tree.selected_model_id == window.models.selected_id
+
+    def test_tree_selection_reaches_the_window(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        first = _load(window, "a")
+        _load(window, "b")
+
+        # `setCurrentItem` is what a click does; `setSelected` alone would not
+        # deselect the other row, since single-selection is only enforced for
+        # user interaction.
+        first_item = window.model_tree.topLevelItem(0)
+        assert first_item is not None
+        window.model_tree.setCurrentItem(first_item)
+
+        assert window.models.selected_id == first.model_id
+
+
+class TestActionsFollowSelection:
+    def test_placement_disabled_without_a_model(self, window: MainWindow) -> None:
+        # No target means the action must be disabled, not silently do nothing.
+        assert window.placement_action.isEnabled() is False
+
+    def test_remove_disabled_without_a_model(self, window: MainWindow) -> None:
+        assert window.remove_action.isEnabled() is False
+
+    def test_fit_disabled_without_a_model(self, window: MainWindow) -> None:
+        assert window.fit_action.isEnabled() is False
+
+    def test_placement_enabled_once_a_model_is_selected(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        _load(window)
+
+        assert window.placement_action.isEnabled() is True
+
+    def test_remove_enabled_once_a_model_is_selected(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        _load(window)
+
+        assert window.remove_action.isEnabled() is True
+
+    def test_actions_disabled_again_when_selection_cleared(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window)
+
+        window.select_model(None)
+
+        assert window.placement_action.isEnabled() is False
+        assert window.remove_action.isEnabled() is False
+
+    def test_dialog_not_opened_without_a_selection(self, window: MainWindow) -> None:
+        assert window.open_placement_dialog() is None
+
+
+class TestRemoving:
+    def test_remove_drops_the_row(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window)
+
+        window.remove_action.trigger()
+
+        assert window.model_tree.topLevelItemCount() == 0
+
+    def test_remove_reaches_the_viewport(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+        entry = _load(window)
+
+        window.remove_selected_model()
+
+        assert viewport.removed == [entry.model_id]
+
+    def test_remove_selects_a_neighbour(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "a")
+        _load(window, "b")
+
+        window.remove_selected_model()
+
+        assert window.selected_model is not None
+
+    def test_remove_without_selection_is_harmless(self, window: MainWindow) -> None:
+        window.remove_selected_model()
+
+        assert window.models.is_empty
+
+
 class TestUmiestnenie:
     def test_menu_model_existuje(self, window: MainWindow) -> None:
         assert "Model" in menu_titles(window)
 
-    def test_menu_model_obsahuje_umiestnenie(self, window: MainWindow) -> None:
-        assert menu_items(window, "Model") == ["Placement…"]
+    def test_menu_model_obsahuje_polozky(self, window: MainWindow) -> None:
+        assert menu_items(window, "Model") == ["Placement…", "Remove"]
 
     def test_polozka_ma_skratku(self, window: MainWindow) -> None:
         assert not window.placement_action.shortcut().isEmpty()
 
-    def test_dialog_sa_otvori(self, window: MainWindow) -> None:
+    def test_dialog_sa_otvori(self, window_with_viewport: tuple[MainWindow, _StubViewport]) -> None:
+        window, _ = window_with_viewport
+        _load(window)
+
         dialog = window.open_placement_dialog()
 
+        assert dialog is not None
         assert dialog.isVisible()
         dialog.close()
 
-    def test_druhe_vyvolanie_nevytvori_dalsi_dialog(self, window: MainWindow) -> None:
+    def test_dialog_pojmenuje_model(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        # With several models loaded the dialog must say which one it edits.
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+
+        dialog = window.open_placement_dialog()
+
+        assert dialog is not None
+        assert "gantry" in dialog.windowTitle()
+        dialog.close()
+
+    def test_druhe_vyvolanie_nevytvori_dalsi_dialog(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window)
         first = window.open_placement_dialog()
 
         second = window.open_placement_dialog()
 
         assert first is second
+        assert first is not None
         first.close()
 
     def test_dialog_ukaze_aktualne_umiestnenie(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
-        window, viewport = window_with_viewport
-        viewport.placement = Transform(xyz=(0.25, 0.0, 0.0))
+        window, _ = window_with_viewport
+        entry = _load(window)
+        window.models.set_placement(entry.model_id, Transform(xyz=(0.25, 0.0, 0.0)))
 
         dialog = window.open_placement_dialog()
 
+        assert dialog is not None
         assert dialog.x_spin.value() == pytest.approx(250.0)
         dialog.close()
 
@@ -397,28 +713,63 @@ class TestUmiestnenie:
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
+        entry = _load(window)
         dialog = window.open_placement_dialog()
 
+        assert dialog is not None
         dialog.x_spin.setValue(500.0)
 
-        assert viewport.placement.xyz[0] == pytest.approx(0.5)
+        assert viewport.placements[entry.model_id].xyz[0] == pytest.approx(0.5)
         dialog.close()
 
     def test_otocenie_dorazi_do_sceny_v_radianoch(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
+        entry = _load(window)
         dialog = window.open_placement_dialog()
 
+        assert dialog is not None
         dialog.rotate_z_spin.setValue(90.0)
 
-        assert viewport.placement.rpy[2] == pytest.approx(math.pi / 2)
+        assert viewport.placements[entry.model_id].rpy[2] == pytest.approx(math.pi / 2)
         dialog.close()
+
+    def test_umiestnenie_je_per_model(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        # Moving one model must leave the other where it was.
+        window, _ = window_with_viewport
+        first = _load(window, "a")
+        second = _load(window, "b")
+
+        window.select_model(first.model_id)
+        window.apply_placement(Transform(xyz=(1.0, 0.0, 0.0)))
+
+        assert window.placement(first.model_id).xyz[0] == pytest.approx(1.0)
+        assert window.placement(second.model_id).xyz[0] == pytest.approx(0.0)
+
+    def test_zmena_vyberu_zavrie_dialog(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        # The dialog belongs to one model; leaving it open against another
+        # selection would apply edits to the wrong one.
+        window, _ = window_with_viewport
+        first = _load(window, "a")
+        second = _load(window, "b")
+        window.select_model(first.model_id)
+        dialog = window.open_placement_dialog()
+
+        window.select_model(second.model_id)
+
+        assert dialog is not None
+        assert not dialog.isVisible()
 
     def test_stavovy_riadok_hlasi_umiestnenie_v_milimetroch(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, _ = window_with_viewport
+        _load(window)
 
         window.apply_placement(Transform(xyz=(0.1, 0.0, 0.0)))
 

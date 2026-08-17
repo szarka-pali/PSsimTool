@@ -233,6 +233,75 @@ Z toho plynú dve pravidlá:
 
 Logy sa **neprekladajú** — sú pre vývojára, nie pre používateľa.
 
+### R12 — Viac modelov: stav je v registri, nie v scéne ani vo widgete
+
+Modely drží `ui/model_registry.ModelRegistry` — čistá, netestovateľne nudná
+kolekcia bez Qt a bez Panda3D. `ui/model_tree` ju **vykresľuje**,
+`viz/embed.EmbeddedRenderer` ju **kreslí**, ale ani jeden ju nevlastní.
+
+Prečo nie stav v tree widgete (kam by ho väčšina uložila): zaujímavá logika sú
+unikátne názvy pri opakovanom otvorení toho istého súboru a to, čo sa stane
+s výberom po zmazaní modelu. Oboje sa dá pokaziť a oboje sa v registri dá
+otestovať bez okna.
+
+Kľúčovanie je podľa **generovaného `model_id`**, nie podľa cesty k súboru:
+ten istý súbor sa smie otvoriť viackrát. Zobrazovaný názov je len na pozeranie
+a môže sa opakovať, takže sa ním nikdy nič nekľúčuje.
+
+Z toho plynie jedno pravidlo, ktoré sa dá ľahko porušiť: **výber musí byť
+synchronizovaný v oba smery.** Klik v tree ide do registra, ale výber sa mení
+aj z kódu (susedný model po zmazaní), a vtedy sa musí premietnuť späť do tree —
+inak zostane zvýraznený riadok, s ktorým aplikácia už nepracuje. Chytilo to až
+reálne spustenie, unit testy nie.
+
+Zvýraznenie v scéne je **drôtený rám**, nie zmena farby: modely majú vlastné
+farby zo STEP súboru, takže tónovanie by na niektorých nebolo vidieť a na iných
+by klamalo.
+
+### R13 — Projekt je JSON v mm a stupňoch, modely sa načítavajú po jednom
+
+The project file (`*.pssim`) records what the scene consists of: the models, their
+placements, which one is selected, and where the camera is. It does **not** contain
+geometry — a project is a list of references, so the same STEP file behind ten
+projects is still one file and one cache entry.
+
+Three decisions inside that are worth the words:
+
+**JSON, not YAML.** The file is written by the application, never by hand, so YAML's
+flexibility buys nothing and costs a diff: two saves of the same scene must differ
+only where the scene differs. `config/schema.py` keeps YAML because machine
+definitions *are* written by hand; this one is not.
+
+**Millimetres and degrees, including the camera.** The same boundary rule as R3, and
+the file is the boundary. The numbers in the file are the numbers the user typed into
+the Placement dialog, which means a project can be read and checked without
+converting anything mentally. Conversion happens once, in `config/project.py` and
+`ui/project_controller.py`, and has tests in both directions.
+
+**Model paths are relative only when the model lives inside the project's folder.**
+Then the project and its `models/` subfolder move or get shared as a unit. A model
+kept anywhere else is stored absolute: it does not travel with the project, and a
+chain of `..` segments back out to it breaks the moment the project file alone is
+moved — where an absolute path still opens.
+
+Not stored: the camera's zoom limits (they follow from the size of the scene, and the
+scene is whatever was just loaded), window geometry, and the cache directory.
+
+`selected` names the model, it does not identify it. Model ids are generated per
+session (R12) and would mean nothing after a reload; the name is what the user sees
+in the tree, so it is what survives.
+
+Loading is a **queue, not a loop**: `ui/project_controller.ProjectLoader` starts one
+import, waits for `on_import_finished`, then starts the next. The importer writes
+into a shared cache, so two at once would race. Missing files are collected by
+`plan_load` and reported **once** — a project referencing five moved files must not
+mean five modal dialogs — and everything still on disk loads anyway. Selection and
+camera are applied at the end, once every model is in.
+
+Format version is refused **forward, not backward**: a file written by a newer build
+is an error rather than something half-read, because silently ignoring a section the
+user configured is worse than saying no.
+
 ## Výkon
 
 Assembly zo STEP-u má typicky stovky až tisíce dielov, čo je pri naivnom prístupe

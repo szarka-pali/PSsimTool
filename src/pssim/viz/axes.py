@@ -87,6 +87,86 @@ def axis_segments(length_m: float) -> tuple[AxisSegment, ...]:
     return tuple(segments)
 
 
+#: Colour of the selection outline. Deliberately not one of the axis colours,
+#: so a highlighted model can never be mistaken for an axis.
+HIGHLIGHT_COLOR: Final[Rgba] = (1.0, 0.72, 0.15, 1.0)
+
+HIGHLIGHT_THICKNESS_PX: Final = 1.6
+
+#: The twelve edges of a box, as index pairs into `box_corners()`.
+BOX_EDGES: Final[tuple[tuple[int, int], ...]] = (
+    (0, 1),
+    (1, 3),
+    (3, 2),
+    (2, 0),  # bottom face
+    (4, 5),
+    (5, 7),
+    (7, 6),
+    (6, 4),  # top face
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),  # uprights
+)
+
+
+def box_corners(low: Vec3, high: Vec3) -> tuple[Vec3, ...]:
+    """The eight corners of an axis-aligned box, ordered for `BOX_EDGES`.
+
+    Pure function: the ordering is what makes the edge table correct, and that
+    is worth a test.
+    """
+    return tuple(
+        (
+            high[0] if index & 1 else low[0],
+            high[1] if index & 2 else low[1],
+            high[2] if index & 4 else low[2],
+        )
+        for index in range(8)
+    )
+
+
+def make_highlight_box(node_path: Any) -> Any | None:
+    """Wireframe box around a subtree, for showing which model is selected.
+
+    Returns `None` when the subtree has no extent — an empty model has nothing
+    to outline, and a zero-size box would render as a dot at the origin.
+
+    The box is meant to be attached **as a child of `node_path`**, so that it
+    follows the model when it is moved or rotated.
+
+    That is why the bounds are asked for in the node's **own** coordinates.
+    Bare `getTightBounds()` returns them relative to the *parent*, so they
+    already include the node's transform; attaching such a box as a child would
+    apply that transform a second time and the outline would sit at double the
+    placement. (Measured: a model at x=0.4 got an outline at x=0.8.)
+    """
+    from panda3d.core import LineSegs, NodePath
+
+    bounds = node_path.getTightBounds(node_path)
+    if bounds is None:
+        return None
+
+    low, high = bounds
+    corners = box_corners(
+        (low[0], low[1], low[2]),
+        (high[0], high[1], high[2]),
+    )
+
+    lines = LineSegs("highlight")
+    lines.setThickness(HIGHLIGHT_THICKNESS_PX)
+    lines.setColor(*HIGHLIGHT_COLOR)
+    for start, end in BOX_EDGES:
+        lines.moveTo(*corners[start])
+        lines.drawTo(*corners[end])
+
+    box = NodePath(lines.create())
+    box.setName("selection-highlight")
+    # An outline is a marker, not geometry — lighting would dim it from behind.
+    box.setLightOff()
+    return box
+
+
 def make_axes_node(length_m: float, with_labels: bool = True) -> Any:
     """Postaví `NodePath` s krížom. Volajúci si ho pripojí, kam potrebuje."""
     from panda3d.core import LineSegs, NodePath, TextNode

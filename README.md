@@ -67,21 +67,88 @@ Ikony sa kreslia za behu (`ui/icons.py`), v repozitári nie sú žiadne binárne
 assety. Každá ikona premieta osi tou istou kamerou, aká sa po kliknutí použije,
 takže nemôže ukazovať niečo iné, než sa naozaj stane.
 
+### Viac modelov naraz
+
+Každé `Open` **pridá** model, nenahradí ten predchádzajúci. Zoznam je v paneli
+**Models** vľavo; ukazuje názov, počet dielov a hviezdičkou označí model, ktorý
+je posunutý alebo otočený (celé umiestnenie je v tooltipe).
+
+Ten istý súbor sa dá otvoriť opakovane — stroj legitímne obsahuje desať rovnakých
+dielov. Kópie dostanú `bolt`, `bolt (2)`, `bolt (3)`…
+
+**Všetky akcie sa vzťahujú na vybraný model.** Vybraný model je v scéne
+obtiahnutý oranžovým rámom, aby bolo jasné, ktorého sa zmena dotkne.
+
+| Bez výberu | S vybraným modelom |
+|---|---|
+| `Placement…` a `Remove` sú **zakázané** | obe pracujú na vybranom modeli |
+| `Ctrl+0` zorámuje **všetky** modely | `Ctrl+0` zorámuje vybraný model |
+
+Zakázané, nie tichý no-op: keď nie je čo posúvať, tlačidlo to má povedať.
+
 ### Umiestnenie modelu
 
 `Model → Placement…` (Ctrl+M) otvorí dialóg s posunom v X/Y/Z a otočením okolo
-každej z osí. Zadáva sa v **milimetroch a stupňoch** — tak, ako je zvykom v CAD;
-prevod na interné metre a radiány robí `domain/placement.py`.
+každej z osí **pre vybraný model**. Zadáva sa v **milimetroch a stupňoch** — tak,
+ako je zvykom v CAD; prevod na interné metre a radiány robí `domain/placement.py`.
 
 Slúži na to, aby sa dal model posadiť tam, kam patrí: CAD súbor má počiatok tam,
-kde ho nechal konštruktér, a to nemusí byť bod, voči ktorému chceš merať.
+kde ho nechal konštruktér, a to nemusí byť bod, voči ktorému chceš merať. Pri
+viacerých modeloch je to zároveň spôsob, ako ich rozmiestniť voči sebe.
 
 - Zmena sa prejaví **okamžite** — hodnoty sa inak zadávajú naslepo.
+- Dialóg je viazaný na **jeden model** a má ho v titulku. Zmena výberu ho zavrie,
+  aby sa úpravy nedostali na iný model.
 - `Zrušiť` vráti stav, aký bol pri otvorení dialógu.
 - Dialóg je **nemodálny**, takže sa počas zadávania dá scénou otáčať.
 - Otočenie sa deje okolo **počiatku modelu**, nie okolo jeho ťažiska.
-- Kríž v počiatku sa nehýbe — je to referencia, voči ktorej sa model umiestňuje.
+- Kríž v počiatku sa nehýbe — je to referencia, voči ktorej sa modely umiestňujú.
 - Kamera zostáva; ak model odíde mimo záber, vráti ho `Ctrl+0`.
+
+### Saving the scene as a project
+
+A project remembers the whole scene: which models are loaded, where each one sits,
+which one is selected and where the camera is looking.
+
+| Action | Shortcut |
+|---|---|
+| `File → Save Project` | Ctrl+S |
+| `File → Save Project As…` | |
+| `File → Open Project…` | Ctrl+Shift+O |
+| `File → Open Recent` | last 10 projects |
+| `File → Close All` | empties the scene |
+
+Files are `*.pssim` — plain JSON, **in millimetres and degrees**, so it can be read
+and checked without converting anything:
+
+```json
+{
+  "version": 1,
+  "models": [
+    {
+      "name": "gantry",
+      "file": "models/gantry.step",
+      "placement": { "x_mm": 300.0, "y_mm": -50.0, "rotate_z_deg": 90.0 }
+    }
+  ],
+  "selected": "gantry",
+  "camera": { "distance_mm": 431.3, "azimuth_deg": 90.0, "elevation_deg": 0.0 }
+}
+```
+
+- **No geometry is stored** — a project is a list of references. The same STEP file
+  behind ten projects is still one file and one cache entry.
+- Model paths are **relative when the model sits inside the project's folder**, so a
+  project plus its `models/` subfolder can be moved or handed to a colleague as one
+  unit. A model kept elsewhere is stored absolute, because it does not travel with
+  the project.
+- Models load **one at a time** — the importer writes into a shared cache, so two at
+  once would race. Selection and camera are restored once the last one is in.
+- Files the project refers to but cannot find are reported **once**, and everything
+  still on disk loads anyway.
+- A project written by a newer build is **refused**, not half-read.
+
+Details and reasoning: `docs/architecture.md` R13.
 
 ### Kartézsky kríž
 
@@ -216,8 +283,13 @@ duplicitné názvy dielov, otočený diel a diel bez farby.
 | `viz/embed` + `ui/viewport` — Panda3D vo QWidget | hotové, overené reálnym spustením |
 | `domain/placement` — posun a otočenie modelu, prevod jednotiek | hotové, pokryté testami |
 | `ui/i18n` — mechanizmus prekladov | hotové; preklad do sk zatiaľ neexistuje |
-| `ui/` — okno, menu, lišta, umiestnenie, načítanie STEP na pozadí | hotové (122 testov) |
-| `ui/` — strom dielov, property grid, HUD | neimplementované |
+| `ui/model_registry` — kolekcia modelov a výber | hotové (39 unit testov) |
+| `ui/model_tree` — panel Models a výber | hotové |
+| `config/project` — formát projektu (`*.pssim`) | hotové, pokryté testami |
+| `ui/project_controller` — poradie načítania modelov projektu | hotové, pokryté testami |
+| `ui/recent_files` — zoznam posledných projektov | hotové, pokryté testami |
+| `ui/` — okno, menu, lišta, umiestnenie, viac modelov, projekty | hotové (194 testov) |
+| `ui/` — strom **dielov** vnútri modelu, property grid, HUD | neimplementované |
 
 Celá reťaz **STEP → cache → scéna → hodnota z PLC → poloha dielu** je pokrytá
 testami v `tests/integration/test_viz_scene.py`, ktoré bežia bez otvorenia okna.

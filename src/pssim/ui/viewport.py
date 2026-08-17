@@ -110,45 +110,63 @@ class Panda3DViewport(QWidget):
             logger.exception("chyba v render loope, zastavujem prekresľovanie")
             self._timer.stop()
 
-    # -- obsah scény --------------------------------------------------------
+    # -- scene contents -----------------------------------------------------
 
     @property
     def is_ready(self) -> bool:
         return self._renderer is not None
 
-    def show_assembly(self, assembly: CadAssembly, cache_dir: Path) -> int:
-        """Zobrazí geometriu. Vracia počet uzlov s chýbajúcim meshom."""
+    def add_model(self, model_id: str, assembly: CadAssembly, cache_dir: Path) -> int:
+        """Add a model. Returns the number of nodes with a missing mesh."""
         if self._renderer is None:
-            logger.warning("viewport nie je pripravený, model nezobrazujem")
+            logger.warning("viewport not ready, model not shown", model=model_id)
             return len(assembly.nodes)
-        return int(self._renderer.show_assembly(assembly, cache_dir))
+        return int(self._renderer.add_model(model_id, assembly, cache_dir))
+
+    def remove_model(self, model_id: str) -> None:
+        if self._renderer is not None:
+            self._renderer.remove_model(model_id)
 
     def set_view(self, name: str) -> None:
-        """Prepne na štandardný pohľad (`front`, `top`, …)."""
+        """Switch to a standard view (`front`, `top`, …)."""
         if self._renderer is None:
-            logger.debug("viewport nie je pripravený, pohľad nemením", view=name)
+            logger.debug("viewport not ready, view unchanged", view=name)
             return
         self._renderer.set_view(name)
 
-    def fit_view(self) -> None:
-        """Vycentruje kameru na celý model."""
+    def fit_view(self, model_id: str | None = None) -> None:
+        """Frame one model, or everything when `model_id` is `None`."""
         if self._renderer is not None:
-            self._renderer.fit_view()
+            self._renderer.fit_view(model_id)
 
     @property
-    def placement(self) -> Transform:
-        """Aktuálne umiestnenie modelu. Bez rendereru identita."""
+    def camera_state(self) -> Any:
+        """The orbit camera, or `None` when there is no renderer."""
+        return None if self._renderer is None else self._renderer.camera_state
+
+    def set_camera_state(self, camera: Any) -> None:
+        """Restore a saved camera."""
+        if self._renderer is not None:
+            self._renderer.set_camera_state(camera)
+
+    def set_highlight(self, model_id: str | None) -> None:
+        """Outline the selected model, or clear the outline."""
+        if self._renderer is not None:
+            self._renderer.set_highlight(model_id)
+
+    def placement(self, model_id: str) -> Transform:
+        """Where a model sits. Identity when there is no renderer."""
         if self._renderer is None:
             return IDENTITY_PLACEMENT
-        placement: Transform = self._renderer.placement
+        placement: Transform = self._renderer.placement(model_id)
         return placement
 
-    def set_placement(self, placement: Transform) -> None:
-        """Posunie a otočí model voči počiatku scény."""
+    def set_placement(self, model_id: str, placement: Transform) -> None:
+        """Move and rotate one model."""
         if self._renderer is None:
-            logger.debug("viewport nie je pripravený, umiestnenie nemením")
+            logger.debug("viewport not ready, placement unchanged", model=model_id)
             return
-        self._renderer.set_placement(placement)
+        self._renderer.set_placement(model_id, placement)
 
     def clear(self) -> None:
         if self._renderer is not None:

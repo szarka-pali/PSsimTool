@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from typing import Final
 
-from PySide6.QtCore import QModelIndex, Qt, Signal
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QWidget
+from PySide6.QtCore import QModelIndex, QPoint, Qt, Signal
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem, QWidget
 
 from pssim.observability import get_logger
 from pssim.ui.model_registry import ModelEntry, ModelRegistry
@@ -35,6 +36,15 @@ class ModelTree(QTreeWidget):
     model_selected = Signal(object)
     """Emitted on selection change. Carries the model id, or `None` for nothing."""
 
+    add_requested = Signal()
+    """The user asked for another model in the assembly."""
+
+    rename_requested = Signal()
+    placement_requested = Signal()
+    remove_requested = Signal()
+    """These three carry nothing on purpose: the tree selects the row the menu
+    was opened on before showing it, so the target is always the selection."""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -51,6 +61,60 @@ class ModelTree(QTreeWidget):
         header.setSectionResizeMode(COLUMN_PARTS, header.ResizeMode.ResizeToContents)
 
         self.itemSelectionChanged.connect(self._on_selection_changed)
+
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
+
+    # -- context menu -------------------------------------------------------
+
+    def _on_context_menu(self, position: QPoint) -> None:
+        """Right-click: act on the row under the cursor, not on the old selection.
+
+        Selecting first is what makes the menu unambiguous — right-clicking one
+        model and having the action land on another is the classic way to move
+        the wrong part.
+        """
+        item = self.itemAt(position)
+        if item is not None:
+            self.setCurrentItem(item)
+
+        menu = self.build_context_menu(on_model=item is not None)
+        menu.exec(self.viewport().mapToGlobal(position))
+
+    def build_context_menu(self, on_model: bool) -> QMenu:
+        """The menu for a row (`on_model`) or for empty space.
+
+        On empty space the model actions are **left out**, not greyed out: the
+        selection survives a click into the void, so a disabled `Rename` would be
+        claiming there is no model when the toolbar still says there is one.
+
+        Public so the actions can be inspected and triggered without a cursor —
+        `exec()` blocks on a real popup, which no test can drive.
+        """
+        menu = QMenu(self)
+
+        add_action = menu.addAction(self.tr("&Add Model…"))
+        add_action.setStatusTip(self.tr("Add another model to the assembly"))
+        add_action.triggered.connect(self.add_requested.emit)
+
+        if not on_model:
+            return menu
+
+        menu.addSeparator()
+
+        rename_action = menu.addAction(self.tr("Re&name…"))
+        rename_action.setShortcut(QKeySequence(Qt.Key.Key_F2))
+        rename_action.triggered.connect(self.rename_requested.emit)
+
+        placement_action = menu.addAction(self.tr("&Placement…"))
+        placement_action.triggered.connect(self.placement_requested.emit)
+
+        menu.addSeparator()
+
+        remove_action = menu.addAction(self.tr("&Remove"))
+        remove_action.triggered.connect(self.remove_requested.emit)
+
+        return menu
 
     # -- rendering ----------------------------------------------------------
 

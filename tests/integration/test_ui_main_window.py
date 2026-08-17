@@ -21,6 +21,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
+from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMenu, QToolButton, QWidget  # noqa: E402
 
 from pssim.cad.model import CadAssembly, CadNode  # noqa: E402
@@ -28,6 +29,7 @@ from pssim.domain.machine import Transform  # noqa: E402
 from pssim.domain.placement import IDENTITY_PLACEMENT  # noqa: E402
 from pssim.ui.main_window import APP_TITLE, MainWindow  # noqa: E402
 from pssim.ui.model_registry import ModelEntry  # noqa: E402
+from pssim.ui.placement_dialog import PlacementDialog  # noqa: E402
 from pssim.viz.orbit import STANDARD_VIEWS  # noqa: E402
 
 pytestmark = pytest.mark.ui
@@ -308,6 +310,24 @@ def _assembly(parts: int = 2, triangles: int = 24) -> CadAssembly:
 def _load(window: MainWindow, name: str = "gantry") -> ModelEntry:
     """Register a model as if an import had just finished."""
     return window.add_model(Path(f"C:/models/{name}.step"), _assembly(), Path("cache"))
+
+
+def _type_name(name: str | None) -> Callable[..., tuple[str, bool]]:
+    """Stand-in for `QInputDialog.getText`.
+
+    `None` means the user pressed Cancel, which Qt reports as `accepted=False`;
+    the text must then be ignored rather than trusted.
+    """
+
+    def fake_dialog(*args: object, **kwargs: object) -> tuple[str, bool]:
+        return ("" if name is None else name, name is not None)
+
+    return fake_dialog
+
+
+def _menu_labels(menu: QMenu) -> list[str]:
+    """Action texts with Qt keyboard accelerators stripped."""
+    return [action.text().replace("&", "") for action in menu.actions() if not action.isSeparator()]
 
 
 @pytest.fixture
@@ -655,7 +675,7 @@ class TestUmiestnenie:
         assert "Model" in menu_titles(window)
 
     def test_menu_model_obsahuje_polozky(self, window: MainWindow) -> None:
-        assert menu_items(window, "Model") == ["Placement…", "Remove"]
+        assert menu_items(window, "Model") == ["Placement…", "Rename…", "Remove"]
 
     def test_polozka_ma_skratku(self, window: MainWindow) -> None:
         assert not window.placement_action.shortcut().isEmpty()
@@ -816,3 +836,224 @@ class TestNacitanie:
 
         assert window.open_action.isEnabled() is True
         assert window.is_loading is False
+
+
+class TestContextMenu:
+    def test_menu_on_empty_space_offers_adding_a_model(self, window: MainWindow) -> None:
+        menu = window.model_tree.build_context_menu(on_model=False)
+
+        assert _menu_labels(menu) == ["Add Model…"]
+
+    def test_menu_on_empty_space_leaves_out_model_actions(self, window: MainWindow) -> None:
+        # Left out rather than greyed out: the selection survives a click into
+        # empty space, so a disabled Rename would contradict the toolbar.
+        menu = window.model_tree.build_context_menu(on_model=False)
+
+        assert "Rename…" not in _menu_labels(menu)
+
+    def test_menu_on_a_model_offers_every_action(self, window: MainWindow) -> None:
+        menu = window.model_tree.build_context_menu(on_model=True)
+
+        assert _menu_labels(menu) == ["Add Model…", "Rename…", "Placement…", "Remove"]
+
+    def test_rename_is_reachable_by_f2(self, window: MainWindow) -> None:
+        menu = window.model_tree.build_context_menu(on_model=True)
+        renames = [a for a in menu.actions() if a.text().replace("&", "") == "Rename…"]
+
+        assert renames[0].shortcut() == QKeySequence(Qt.Key.Key_F2)
+
+    def test_add_opens_the_file_dialog(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        window, _ = window_with_viewport
+        step = tmp_path / "part.step"
+        step.write_text("dummy")
+        monkeypatch.setattr("pssim.ui.main_window.QFileDialog.getOpenFileName", _pick_file(step))
+        started: list[Path] = []
+        monkeypatch.setattr(MainWindow, "load_file", _record_loads(started))
+
+        window.model_tree.add_requested.emit()
+
+        assert started == [step]
+
+    def test_placement_opens_the_dialog_for_the_selection(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        entry = _load(window, "gantry")
+
+        window.model_tree.placement_requested.emit()
+
+        dialog = window.findChild(PlacementDialog)
+        assert dialog is not None
+        assert entry.name in dialog.windowTitle()
+
+    def test_remove_drops_the_selection(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+
+        window.model_tree.remove_requested.emit()
+
+        assert window.models.is_empty is True
+
+    def test_selecting_a_row_makes_it_the_target(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        # What the right-click does before opening the menu. Acting on the old
+        # selection instead of the clicked row moves the wrong part.
+        window, _ = window_with_viewport
+        first = _load(window, "a")
+        _load(window, "b")
+        tree = window.model_tree
+        item = tree.topLevelItem(0)
+        assert item is not None
+
+        tree.setCurrentItem(item)
+
+        assert window.models.selected_id == first.model_id
+
+
+class TestRenaming:
+    def test_rename_applies_the_typed_name(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("conveyor"))
+
+        assert window.rename_selected_model() == "conveyor"
+
+    def test_tree_shows_the_new_name(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("conveyor"))
+
+        window.rename_selected_model()
+
+        item = window.model_tree.topLevelItem(0)
+        assert item is not None
+        assert item.text(0) == "conveyor"
+
+    def test_cancel_leaves_the_name_alone(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name(None))
+
+        window.rename_selected_model()
+
+        assert window.models.names == ("gantry",)
+
+    def test_blank_name_is_refused(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("   "))
+
+        assert window.rename_selected_model() is None
+        assert window.models.names == ("gantry",)
+
+    def test_taken_name_gets_a_counter(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        _load(window, "conveyor")
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("gantry"))
+
+        assert window.rename_selected_model() == "gantry (2)"
+
+    def test_counter_is_explained_in_the_status_bar(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The name in the tree is not the one that was typed, so it gets said.
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        _load(window, "conveyor")
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("gantry"))
+
+        window.rename_selected_model()
+
+        assert "gantry (2)" in window.statusBar().currentMessage()
+
+    def test_rename_keeps_the_placement(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, viewport = window_with_viewport
+        entry = _load(window, "gantry")
+        window.apply_placement(Transform(xyz=(0.3, 0.0, 0.0)))
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("conveyor"))
+
+        window.rename_selected_model()
+
+        renamed = window.selected_model
+        assert renamed is not None
+        assert renamed.placement.xyz[0] == pytest.approx(0.3)
+        assert viewport.placements[entry.model_id].xyz[0] == pytest.approx(0.3)
+
+    def test_renamed_placed_model_keeps_its_marker(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        window.apply_placement(Transform(xyz=(0.3, 0.0, 0.0)))
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("conveyor"))
+
+        window.rename_selected_model()
+
+        item = window.model_tree.topLevelItem(0)
+        assert item is not None
+        assert item.text(0) == "conveyor *"
+
+    def test_rename_without_a_selection_does_nothing(self, window: MainWindow) -> None:
+        assert window.rename_selected_model() is None
+
+    def test_action_is_disabled_without_a_selection(self, window: MainWindow) -> None:
+        assert window.rename_action.isEnabled() is False
+
+    def test_action_is_enabled_with_a_selection(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        _load(window, "gantry")
+
+        assert window.rename_action.isEnabled() is True
+
+    def test_context_menu_request_reaches_the_dialog(
+        self,
+        window_with_viewport: tuple[MainWindow, _StubViewport],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        window, _ = window_with_viewport
+        _load(window, "gantry")
+        monkeypatch.setattr("pssim.ui.main_window.QInputDialog.getText", _type_name("conveyor"))
+
+        window.model_tree.rename_requested.emit()
+
+        assert window.models.names == ("conveyor",)

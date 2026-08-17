@@ -170,6 +170,30 @@ class ModelRegistry:
         self._selected_id = resolved
         return True
 
+    def rename(self, model_id: str, name: str) -> ModelEntry | None:
+        """Give a model a different display name. Returns the updated entry.
+
+        `None` when the id is unknown or the name is blank — a model with no name
+        would leave an empty row in the tree with nothing to click on.
+
+        A name already taken by another model gets a counter suffix, exactly as
+        a repeated file does on `add`. Rejecting it instead would mean explaining
+        the collision in a dialog for something the counter settles.
+        """
+        entry = self._entries.get(model_id)
+        if entry is None:
+            return None
+
+        wanted = name.strip()
+        if not wanted:
+            return None
+        if wanted == entry.name:
+            return entry
+
+        updated = replace(entry, name=self._unique_name(wanted, ignoring=model_id))
+        self._entries[model_id] = updated
+        return updated
+
     def set_placement(self, model_id: str, placement: Transform) -> ModelEntry | None:
         """Store a new placement for one model. Returns the updated entry."""
         entry = self._entries.get(model_id)
@@ -181,9 +205,13 @@ class ModelRegistry:
 
     # -- helpers ------------------------------------------------------------
 
-    def _unique_name(self, base: str) -> str:
-        """`gantry`, then `gantry (2)`, `gantry (3)`… for repeated files."""
-        taken = self.names
+    def _unique_name(self, base: str, ignoring: str | None = None) -> str:
+        """`gantry`, then `gantry (2)`, `gantry (3)`… for repeated files.
+
+        `ignoring` leaves one model out of the comparison, which is what a rename
+        needs: a model must not collide with the name it already has.
+        """
+        taken = tuple(entry.name for entry in self._entries.values() if entry.model_id != ignoring)
         if base not in taken:
             return base
         counter = 2

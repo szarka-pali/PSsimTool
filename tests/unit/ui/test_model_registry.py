@@ -260,3 +260,122 @@ def test_many_copies_all_get_distinct_names(count: int) -> None:
         registry.add(Path("bolt.step"))
 
     assert len(set(registry.names)) == count
+
+
+class TestRenaming:
+    def test_name_changes(self) -> None:
+        registry = registry_with("gantry")
+        model_id = registry.entries[0].model_id
+
+        assert registry.rename(model_id, "conveyor") is not None
+        assert registry.names == ("conveyor",)
+
+    def test_updated_entry_is_returned(self) -> None:
+        registry = registry_with("gantry")
+
+        updated = registry.rename(registry.entries[0].model_id, "conveyor")
+
+        assert updated is not None
+        assert updated.name == "conveyor"
+
+    def test_surrounding_whitespace_is_dropped(self) -> None:
+        registry = registry_with("gantry")
+
+        updated = registry.rename(registry.entries[0].model_id, "  conveyor  ")
+
+        assert updated is not None
+        assert updated.name == "conveyor"
+
+    def test_blank_name_is_refused(self) -> None:
+        # An unnamed model would be a row in the tree with nothing to click on.
+        registry = registry_with("gantry")
+
+        assert registry.rename(registry.entries[0].model_id, "   ") is None
+
+    def test_refused_rename_leaves_the_name_alone(self) -> None:
+        registry = registry_with("gantry")
+
+        registry.rename(registry.entries[0].model_id, "")
+
+        assert registry.names == ("gantry",)
+
+    def test_unknown_id_is_refused(self) -> None:
+        assert registry_with("gantry").rename("model-99", "conveyor") is None
+
+    def test_renaming_to_the_same_name_is_allowed(self) -> None:
+        # Reopening the dialog and pressing OK must not add a counter suffix.
+        registry = registry_with("gantry")
+
+        updated = registry.rename(registry.entries[0].model_id, "gantry")
+
+        assert updated is not None
+        assert updated.name == "gantry"
+
+    def test_a_taken_name_gets_a_counter(self) -> None:
+        registry = registry_with("gantry", "conveyor")
+
+        updated = registry.rename(registry.entries[1].model_id, "gantry")
+
+        assert updated is not None
+        assert updated.name == "gantry (2)"
+
+    def test_counter_skips_names_already_in_use(self) -> None:
+        registry = registry_with("gantry", "gantry", "conveyor")
+
+        updated = registry.rename(registry.entries[2].model_id, "gantry")
+
+        assert updated is not None
+        assert updated.name == "gantry (3)"
+
+    def test_placement_survives_a_rename(self) -> None:
+        registry = registry_with("gantry")
+        model_id = registry.entries[0].model_id
+        registry.set_placement(model_id, Transform(xyz=(0.3, 0.0, 0.0)))
+
+        updated = registry.rename(model_id, "conveyor")
+
+        assert updated is not None
+        assert updated.placement.xyz[0] == pytest.approx(0.3)
+
+    def test_id_survives_a_rename(self) -> None:
+        # The renderer refers to models by id; a rename must not disturb it.
+        registry = registry_with("gantry")
+        model_id = registry.entries[0].model_id
+
+        registry.rename(model_id, "conveyor")
+
+        assert registry.entries[0].model_id == model_id
+
+    def test_selection_survives_a_rename(self) -> None:
+        registry = registry_with("gantry", "conveyor")
+        model_id = registry.selected_id
+        assert model_id is not None
+
+        registry.rename(model_id, "head")
+
+        assert registry.selected_id == model_id
+
+    def test_selected_name_follows_the_rename(self) -> None:
+        # What a project file stores, so it has to be the new name.
+        registry = registry_with("gantry")
+        model_id = registry.entries[0].model_id
+
+        registry.rename(model_id, "conveyor")
+
+        assert registry.selected_name == "conveyor"
+
+    def test_order_survives_a_rename(self) -> None:
+        registry = registry_with("first", "second")
+
+        registry.rename(registry.entries[0].model_id, "renamed")
+
+        assert registry.names == ("renamed", "second")
+
+    def test_a_freed_name_can_be_reused(self) -> None:
+        registry = registry_with("gantry", "conveyor")
+        registry.rename(registry.entries[0].model_id, "head")
+
+        updated = registry.rename(registry.entries[1].model_id, "gantry")
+
+        assert updated is not None
+        assert updated.name == "gantry"

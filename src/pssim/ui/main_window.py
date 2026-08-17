@@ -20,6 +20,8 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
+    QInputDialog,
+    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -187,6 +189,12 @@ class MainWindow(QMainWindow):
         )
         self.placement_action.triggered.connect(self.open_placement_dialog)
         model_menu.addAction(self.placement_action)
+
+        self.rename_action = QAction(self.tr("Re&name…"), self)
+        self.rename_action.setShortcut(QKeySequence(Qt.Key.Key_F2))
+        self.rename_action.setStatusTip(self.tr("Give the selected model a different name"))
+        self.rename_action.triggered.connect(self.rename_selected_model)
+        model_menu.addAction(self.rename_action)
 
         self.remove_action = QAction(self.tr("&Remove"), self)
         self.remove_action.setShortcut(QKeySequence.StandardKey.Delete)
@@ -378,6 +386,13 @@ class MainWindow(QMainWindow):
         self.model_tree = ModelTree(self)
         self.model_tree.model_selected.connect(self.select_model)
 
+        # The context menu asks, the window decides. The tree has already selected
+        # the row the menu was opened on, so none of these carry an id.
+        self.model_tree.add_requested.connect(self.open_file_dialog)
+        self.model_tree.rename_requested.connect(self.rename_selected_model)
+        self.model_tree.placement_requested.connect(self.open_placement_dialog)
+        self.model_tree.remove_requested.connect(self.remove_selected_model)
+
         dock = QDockWidget(self.tr("Models"), self)
         dock.setObjectName("model-dock")
         dock.setWidget(self.model_tree)
@@ -424,6 +439,44 @@ class MainWindow(QMainWindow):
         if entry is not None:
             self.statusBar().showMessage(self.tr("Selected {0}").format(entry.name))
 
+    def rename_selected_model(self) -> str | None:
+        """Ask for a new name for the selected model. Returns the name applied.
+
+        `None` when there is nothing selected, the dialog was cancelled, or the
+        name was left as it was. A blank name is refused by the registry, so the
+        dialog closing on an empty field changes nothing.
+        """
+        entry = self._models.selected
+        if entry is None:
+            return None
+
+        name, accepted = QInputDialog.getText(
+            self,
+            self.tr("Rename Model"),
+            self.tr("Name:"),
+            QLineEdit.EchoMode.Normal,
+            entry.name,
+        )
+        if not accepted:
+            return None
+
+        updated = self._models.rename(entry.model_id, name)
+        if updated is None or updated.name == entry.name:
+            return None
+
+        self._refresh_models()
+        if updated.name != name.strip():
+            # The counter suffix is not what the user typed, so it gets said out
+            # loud rather than appearing in the tree unexplained.
+            self.statusBar().showMessage(
+                self.tr("Name {0} is taken, using {1}").format(name.strip(), updated.name)
+            )
+        else:
+            self.statusBar().showMessage(
+                self.tr("Renamed {0} to {1}").format(entry.name, updated.name)
+            )
+        return updated.name
+
     def remove_selected_model(self) -> None:
         """Drop the selected model from the scene and the tree."""
         entry = self._models.selected
@@ -457,6 +510,7 @@ class MainWindow(QMainWindow):
         """
         has_selection = self._models.selected is not None
         self.placement_action.setEnabled(has_selection)
+        self.rename_action.setEnabled(has_selection)
         self.remove_action.setEnabled(has_selection)
         self.fit_action.setEnabled(not self._models.is_empty)
 

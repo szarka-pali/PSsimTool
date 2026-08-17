@@ -86,6 +86,32 @@ obtiahnutý oranžovým rámom, aby bolo jasné, ktorého sa zmena dotkne.
 
 Zakázané, nie tichý no-op: keď nie je čo posúvať, tlačidlo to má povedať.
 
+### Renaming and the tree context menu
+
+Right-clicking the model tree acts on the row under the cursor, which becomes the
+selection first — so the action can never land on a different model than the one
+pointed at.
+
+| On a model row | On empty space |
+|---|---|
+| `Add Model…`, `Rename…`, `Placement…`, `Remove` | `Add Model…` only |
+
+The model actions are **left out** on empty space rather than greyed out: the
+selection survives a click into the void, so a disabled `Rename` would be
+claiming there is no model while the toolbar still has one.
+
+`Rename…` (also **F2**, and `Model → Rename…`) opens a one-field dialog with the
+current name in it. Two rules, both tested without a window because they live in
+the registry:
+
+- A blank name is refused — an unnamed row has nothing to click on.
+- A name already in use gets the same counter suffix a repeated file gets
+  (`gantry (2)`), and the status bar says so, because it is not what was typed.
+
+The name is **display only**. Model ids do not change, so the renderer and an
+open placement dialog keep pointing at the same model. A project stores the
+selection by name (R13), so the next save records the new one.
+
 ### Umiestnenie modelu
 
 `Model → Placement…` (Ctrl+M) otvorí dialóg s posunom v X/Y/Z a otočením okolo
@@ -284,11 +310,11 @@ duplicitné názvy dielov, otočený diel a diel bez farby.
 | `domain/placement` — posun a otočenie modelu, prevod jednotiek | hotové, pokryté testami |
 | `ui/i18n` — mechanizmus prekladov | hotové; preklad do sk zatiaľ neexistuje |
 | `ui/model_registry` — kolekcia modelov a výber | hotové (39 unit testov) |
-| `ui/model_tree` — panel Models a výber | hotové |
+| `ui/model_tree` — panel Models, výber, kontextové menu | hotové |
 | `config/project` — formát projektu (`*.pssim`) | hotové, pokryté testami |
 | `ui/project_controller` — poradie načítania modelov projektu | hotové, pokryté testami |
 | `ui/recent_files` — zoznam posledných projektov | hotové, pokryté testami |
-| `ui/` — okno, menu, lišta, umiestnenie, viac modelov, projekty | hotové (194 testov) |
+| `ui/` — okno, menu, lišta, umiestnenie, viac modelov, projekty, premenovanie | hotové (229 testov) |
 | `ui/` — strom **dielov** vnútri modelu, property grid, HUD | neimplementované |
 
 Celá reťaz **STEP → cache → scéna → hodnota z PLC → poloha dielu** je pokrytá

@@ -25,11 +25,31 @@ Otvorí okno s hlavným menu. Bez PLC, bez definície stroja.
 | Menu | Položka | Čo robí |
 |---|---|---|
 | `File` | `Exit` (Ctrl+Q) | ukončí aplikáciu |
-| `Open` | `Open 3D file…` (Ctrl+O) | dialóg na výber STEP súboru |
+| `Open` | `Open 3D file…` (Ctrl+O) | otvorí STEP súbor a zobrazí ho |
 
-`Open` zatiaľ súbor **len vyberie** — zapamätá si cestu, ukáže ju v titulku
-a v stavovom riadku a vyšle signál `file_opened`. Načítanie geometrie
-a zobrazenie vo viewporte pribudnú ako ďalší krok.
+Import beží **na pozadí** — okno počas neho reaguje. Veľká zostava sa tesseluje
+minúty, výsledok sa cachuje do `assets/cache/`, takže druhé otvorenie je okamžité.
+Po načítaní sa kamera automaticky vycentruje na model.
+
+Súbor bez definície stroja sa považuje za **milimetrový** (`ASSUMED_UNITS`
+v `ui/loader.py`) — väčšina strojárskeho CAD to tak má.
+
+### Ovládanie scény myšou
+
+| Vstup | Akcia |
+|---|---|
+| stredné tlačidlo + tah | otáčanie okolo modelu |
+| **Shift** + stredné + tah | posun |
+| pravé tlačidlo + tah | posun |
+| ľavé tlačidlo + tah | otáčanie |
+| koliesko | priblíženie / oddialenie |
+
+Konvencia je prevzatá z CAD nástrojov (SolidWorks, Fusion, Inventor). Väzby sú
+na jednom mieste — `viz.orbit.drag_action()`.
+
+Kamera sa nenakláňa nabok a elevácia je orezaná pred pólmi, takže sa obraz
+nikdy neprevráti. Priblíženie je násobné, nie sčítacie: krok kolieska je pri
+detaile malý a pri odzoomovanom pohľade veľký.
 
 ### Demo bez PLC a bez vlastného CAD
 
@@ -133,7 +153,10 @@ duplicitné názvy dielov, otočený diel a diel bez farby.
 | `cad/step_import` — čítanie STEP cez OpenCASCADE | **overené** proti `tests/data/fixture.step` (35 testov): assembly tree, názvy, farby, jednotky, rotácie, geometria, cache |
 | `viz/scene_builder`, `viz/transforms` | hotové, pokryté testami (bez Panda3D) |
 | `viz/mesh_loader`, `viz/app` — scéna a render loop | **overené** headless testami celej reťaze (29 testov) aj reálnym spustením |
-| `ui/` — PySide6 shell | okno a menu hotové (18 testov); viewport a načítanie súboru zatiaľ nie |
+| `viz/orbit`, `viz/orbit_control` — ovládanie kamery | hotové (56 unit + 11 integračných testov) |
+| `viz/embed` + `ui/viewport` — Panda3D vo QWidget | hotové, overené reálnym spustením |
+| `ui/` — okno, menu, načítanie STEP na pozadí | hotové (24 testov) |
+| `ui/` — strom dielov, property grid, HUD | neimplementované |
 
 Celá reťaz **STEP → cache → scéna → hodnota z PLC → poloha dielu** je pokrytá
 testami v `tests/integration/test_viz_scene.py`, ktoré bežia bez otvorenia okna.

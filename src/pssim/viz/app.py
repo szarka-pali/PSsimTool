@@ -20,31 +20,12 @@ from pssim.domain.machine import Transform, Vec3
 from pssim.io.base import DataSource, SourceStatus
 from pssim.observability import get_logger
 from pssim.viz.camera import DEFAULT_VIEW, setup_camera, setup_lights
-from pssim.viz.mesh_loader import load_geom_node
+from pssim.viz.embed import offscreen_showbase
+from pssim.viz.scene import build_scene
 from pssim.viz.scene_builder import ScenePlan, plan_scene
 from pssim.viz.transforms import Quaternion, axis_angle_to_quat, multiply_quat, rpy_to_quat
 
 logger = get_logger(__name__)
-
-
-def _offscreen_showbase(size: tuple[int, int]) -> Any:
-    """Vráti `ShowBase` pre render bez okna.
-
-    Panda3D dovolí **jedinú `ShowBase` na proces** — druhý pokus o vytvorenie
-    skončí výnimkou. Pri jednom renderi z CLI to nevadí, ale testy renderujú
-    viackrát za sebou, takže sa existujúca inštancia znovupoužije.
-    """
-    import builtins
-
-    from direct.showbase.ShowBase import ShowBase
-    from panda3d.core import loadPrcFileData
-
-    existing = getattr(builtins, "base", None)
-    if existing is not None:
-        return existing
-
-    loadPrcFileData("", f"window-type offscreen\nwin-size {size[0]} {size[1]}")
-    return ShowBase()
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +136,7 @@ class MachineViewer:
         """
         from panda3d.core import Filename
 
-        self._base = _offscreen_showbase(size)
+        self._base = offscreen_showbase(size)
         # Alfa musí byť 1.0: bez nej má pozadie alfa 0 a v PNG vyjde priehľadné,
         # čo väčšina prehliadačov zobrazí ako bielu plochu.
         self._base.setBackgroundColor(*self._config.background, 1.0)
@@ -187,52 +168,20 @@ class MachineViewer:
         kam chce. Vďaka tomu sa dá celá reťaz (cache → scéna → kinematika →
         poloha dielu) otestovať headless; viď `tests/integration/test_viz_scene.py`.
 
-        Statické uzly sa flattenujú, pohyblivé zostávajú samostatné.
+        Samotné skladanie robí `viz.scene.build_scene()`, spoločné s prehliadaním
+        obyčajného STEP súboru v UI. Tu sa navyše zapamätajú CAD polohy uzlov,
+        ku ktorým sa pripočítava pohyb kĺbov.
         """
-        from panda3d.core import NodePath
-
-        root = NodePath("machine")
-        self._scene_root = root
-
-        missing_meshes = 0
-        # Poradie rodič-pred-potomkom je tu POVINNÉ: `_parent_node_path` hľadá
-        # rodiča medzi už vytvorenými uzlami a pri opačnom poradí by ho nenašiel,
-        # všetko by skončilo na koreni a diely by sa nehýbali spolu.
-        for node in self._assembly.nodes_parents_first:
-            parent = self._parent_node_path(node.path, root)
-            node_path = parent.attachNewNode(node.name)
-            self._apply_transform(node_path, node.transform)
-            node_path.setColor(*node.color)
-            # Poloha z CAD sa musí zapamätať — pohyb kĺbu sa k nej pripočítava.
-            self._base_transforms[node.path] = (
-                node.transform.xyz,
-                rpy_to_quat(node.transform.rpy),
-            )
-
-            if node.mesh is not None:
-                geom_node = load_geom_node(self._cache_dir / node.mesh, node.path)
-                if geom_node is None:
-                    missing_meshes += 1
-                else:
-                    node_path.attachNewNode(geom_node)
-
-            self._node_paths[node.path] = node_path
-
-        if missing_meshes:
-            logger.warning(
-                "časť geometrie chýba — spusti `pssim import-step`",
-                missing=missing_meshes,
-                total=len(self._assembly.nodes),
-            )
-
-        # Statická geometria sa spojí do čo najmenšieho počtu Geomov.
-        # Pohyblivé uzly sa flattenovať nesmú — prišli by o vlastnú transformáciu.
-        for path in self._plan.static_nodes:
-            node_path = self._node_paths.get(path)
-            if node_path is not None and not node_path.getChildren():
-                node_path.flattenStrong()
-
-        return root
+        built = build_scene(
+            self._assembly,
+            self._cache_dir,
+            name="machine",
+            flatten=frozenset(self._plan.static_nodes),
+        )
+        self._scene_root = built.root
+        self._node_paths = built.node_paths
+        self._base_transforms = built.base_transforms
+        return built.root
 
     def apply_values(self, values: dict[str, float]) -> None:
         """Nastaví polohy kĺbov podľa zadaných hodnôt.

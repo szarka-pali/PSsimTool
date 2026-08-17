@@ -10,16 +10,22 @@ ak sa to má zmeniť, je to jednoriadková úprava v `_build_menu()`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QFileDialog, QLabel, QMainWindow, QWidget
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QWidget
 
 from pssim.observability import get_logger
+from pssim.ui.loader import StepImportThread, summarize
 
 logger = get_logger(__name__)
+
+#: Ako sa vyrobí 3D plocha okna. Testy sem podstrčia obyčajný widget —
+#: `ShowBase` smie v procese existovať len raz a v testoch ho nechceme vôbec.
+ViewportFactory = Callable[[], QWidget]
 
 APP_TITLE: Final = "PSsimTool"
 
@@ -41,18 +47,22 @@ class MainWindow(QMainWindow):
     file_opened = Signal(object)
     """Vyslaný po výbere súboru. Nesie `pathlib.Path`."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        viewport_factory: ViewportFactory | None = None,
+    ) -> None:
         super().__init__(parent)
 
         self._current_file: Path | None = None
+        self._import_thread: StepImportThread | None = None
 
         self.setWindowTitle(APP_TITLE)
         self.resize(*DEFAULT_SIZE)
         self.setMinimumSize(*MINIMUM_SIZE)
 
-        self._placeholder = QLabel("Žiadny súbor.\nOtvor 3D súbor cez menu Open.")
-        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setCentralWidget(self._placeholder)
+        self._viewport = (viewport_factory or _default_viewport)()
+        self.setCentralWidget(self._viewport)
 
         self._build_menu()
         self.statusBar().showMessage("Pripravené")
@@ -99,23 +109,83 @@ class MainWindow(QMainWindow):
         if not filename:
             logger.debug("výber súboru zrušený")
             return None
-        return self.set_current_file(Path(filename))
+        return self.open_path(Path(filename))
+
+    def open_path(self, path: Path) -> Path:
+        """Otvorí súbor: zapamätá si ho a spustí načítanie geometrie."""
+        self.set_current_file(path)
+        self.load_file(path)
+        return path
 
     def set_current_file(self, path: Path) -> Path:
         """Zapamätá si vybraný súbor a ohlási to zvyšku aplikácie.
 
-        Súbor sa zatiaľ **nenačítava** — import geometrie a zobrazenie pribudnú
-        až s viewportom.
+        Načítanie **nespúšťa** — to je `load_file()`. Oddelené preto, že
+        „ktorý súbor je otvorený" a „prebieha import" sú dva nezávislé stavy.
         """
         self._current_file = path
         self.setWindowTitle(f"{APP_TITLE} — {path.name}")
         self.statusBar().showMessage(str(path))
-        self._placeholder.setText(
-            f"{path.name}\n\n(načítanie geometrie zatiaľ nie je implementované)"
-        )
         logger.info("vybraný súbor", file=str(path))
         self.file_opened.emit(path)
         return path
+
+    # -- načítanie geometrie ------------------------------------------------
+
+    @property
+    def is_loading(self) -> bool:
+        return self._import_thread is not None
+
+    def load_file(self, path: Path) -> None:
+        """Spustí import STEP súboru na pozadí.
+
+        Počas importu je `Open` zakázané — druhý súbeh by si prepísal cache
+        aj scénu. Veľká zostava sa importuje minúty, preto sa to nedá robiť
+        v hlavnom vlákne.
+        """
+        if self._import_thread is not None:
+            logger.debug("import už beží, ignorujem", file=str(path))
+            return
+
+        self.open_action.setEnabled(False)
+        self.statusBar().showMessage(f"Načítavam {path.name}…")
+
+        thread = StepImportThread(path, parent=self)
+        thread.succeeded.connect(self.on_import_succeeded)
+        thread.failed.connect(self.on_import_failed)
+        thread.finished.connect(self.on_import_finished)
+        self._import_thread = thread
+        thread.start()
+
+    def on_import_succeeded(self, metadata: Any, cache_dir: Path) -> None:
+        """Qt slot. Beží už v hlavnom vlákne — scénu smie stavať len ono."""
+        show_assembly = getattr(self._viewport, "show_assembly", None)
+        if show_assembly is None:
+            self.statusBar().showMessage(summarize(metadata))
+            return
+
+        missing = show_assembly(metadata.assembly, cache_dir)
+        message = summarize(metadata)
+        if missing:
+            message = f"{message} — {missing} dielom chýba geometria"
+        self.statusBar().showMessage(message)
+
+    def on_import_failed(self, message: str) -> None:
+        """Qt slot: import zlyhal."""
+        self.statusBar().showMessage("Načítanie zlyhalo")
+        QMessageBox.warning(self, "Načítanie zlyhalo", message)
+
+    def on_import_finished(self) -> None:
+        """Qt slot: vlákno skončilo, nech už dopadlo akokoľvek."""
+        self._import_thread = None
+        self.open_action.setEnabled(True)
+
+
+def _default_viewport() -> QWidget:
+    """Skutočný 3D viewport. Oddelené, aby sa dal v testoch nahradiť."""
+    from pssim.ui.viewport import Panda3DViewport
+
+    return Panda3DViewport()
 
 
 def run(argv: list[str] | None = None) -> int:

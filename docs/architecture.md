@@ -16,7 +16,7 @@ sú v `CLAUDE.md` a `.claude/rules/`.
   └─────────┬─────────┘                     │  → tesselácia       │
             │ put(signal, value, t)         │  → assembly tree    │
             ▼                               └──────────┬──────────┘
-  ┌───────────────────┐                                │ .bam / .gltf
+  ┌───────────────────┐                                │ .npz (vrcholy)
   │ io/store          │  latest-value + ring buffer    ▼
   │ StateStore (lock) │                     ┌─────────────────────┐
   └─────────┬─────────┘                     │ assets/cache/       │
@@ -146,6 +146,37 @@ DirectGUI nezvládne stromy, dockovanie a property gridy na úrovni, akú CAD-li
 potrebuje. Panda3D vie renderovať do rodičovského window handle, takže sa dá vložiť
 do `QWidget`. `viz/` je preto navrhnuté tak, aby fungovalo aj samostatne
 (`pssim run --no-ui`) — na debug a na testy.
+
+Hranicu drží `viz/embed.EmbeddedRenderer`: dovnútra Panda3D, von len čísla
+a `CadAssembly`. `ui/viewport.py` ho iba drží a preposiela mu Qt udalosti,
+takže `ui/` Panda3D vôbec neimportuje.
+
+Tri veci, ktoré pri vkladaní prekvapia a stálo to čas ich nájsť:
+
+1. **Render loop nepatrí Panda3D.** `base.run()` prevezme riadenie a Qt zamrzne.
+   Tiká `QTimer`, ktorý volá `taskMgr.step()`.
+2. **Veľkosť okna je vo fyzických pixeloch.** Qt počíta v logických; pri 125 %
+   škálovaní Windows je rozdiel 1,25× a prejaví sa ako čierny pás vpravo a dole.
+   Prepočet je v `ui/viewport._device_size()`.
+3. **Myš dostáva Panda3D okno, nie Qt widget.** Ovládanie kamery preto nemôže byť
+   v `mousePressEvent()` — je vo `viz/orbit_control.py` nad udalosťami Panda3D.
+
+### R9b — Kamera je orbitálna, nie voľná
+
+`viz/orbit.OrbitCamera` drží stav sféricky: bod záujmu, vzdialenosť, azimut,
+elevácia. Alternatíva (voľná kamera s kvaterniónom) sa pri prehliadaní modelu
+chová horšie — stráca „hore" a používateľ sa v nej ľahko stratí.
+
+Elevácia je orezaná pred pólmi (`lookAt` tam stráca referenciu a obraz sa preklopí)
+a kamera sa nikdy nenakláňa nabok. Zoom je multiplikatívny, aby krok kolieska
+zodpovedal aktuálnemu priblíženiu.
+
+Celá matematika je **čistá funkcia** v `viz/orbit.py` bez Panda3D. Dôvod je ten istý
+ako pri `domain/`: „model sa točí divne" je inak chyba, ktorá sa ladí len očami.
+Panda3D časť (`viz/orbit_control.py`) len dodá čísla z myši.
+
+Vstavaný trackball sa **nepoužíva** (`base.disableMouse()`) — má neintuitívne
+ovládanie a nedá sa mu povedať, okolo čoho má orbitovať.
 
 ## Výkon
 

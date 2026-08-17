@@ -9,6 +9,7 @@ Vyžaduje `uv sync --extra ui`. Spustenie: ``uv run pytest -m ui``
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -20,9 +21,12 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Signal  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMenu, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMenu, QToolButton, QWidget  # noqa: E402
 
+from pssim.domain.machine import Transform  # noqa: E402
+from pssim.domain.placement import IDENTITY_PLACEMENT  # noqa: E402
 from pssim.ui.main_window import APP_TITLE, MainWindow  # noqa: E402
+from pssim.viz.orbit import STANDARD_VIEWS  # noqa: E402
 
 pytestmark = pytest.mark.ui
 
@@ -128,8 +132,8 @@ class TestOkno:
 
 
 class TestMenu:
-    def test_ma_prave_dve_hlavne_polozky(self, window: MainWindow) -> None:
-        assert menu_titles(window) == ["File", "Open"]
+    def test_hlavne_polozky_su_v_poradi(self, window: MainWindow) -> None:
+        assert menu_titles(window) == ["File", "Open", "Model"]
 
     def test_file_obsahuje_exit(self, window: MainWindow) -> None:
         assert menu_items(window, "File") == ["Exit"]
@@ -243,6 +247,187 @@ class TestOtvorenieSuboru:
         window.open_file_dialog()
 
         assert loaded == []
+
+
+class _StubViewport(QWidget):
+    """Viewport bez Panda3D, ktorý si zapamätá, čo od neho okno chcelo."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.views: list[str] = []
+        self.fit_calls = 0
+        self.placement = IDENTITY_PLACEMENT
+
+    def set_view(self, name: str) -> None:
+        self.views.append(name)
+
+    def fit_view(self) -> None:
+        self.fit_calls += 1
+
+    def set_placement(self, placement: Transform) -> None:
+        self.placement = placement
+
+
+@pytest.fixture
+def window_with_viewport(qt_app: QApplication) -> Iterator[tuple[MainWindow, _StubViewport]]:
+    viewport = _StubViewport()
+    instance = MainWindow(viewport_factory=lambda: viewport)
+    yield instance, viewport
+    instance.close()
+
+
+class TestListaPohladov:
+    def test_lista_existuje(self, window: MainWindow) -> None:
+        assert window.toolbar is not None
+
+    def test_menu_ponuka_vsetky_standardne_pohlady(self, window: MainWindow) -> None:
+        assert set(window.view_actions) == set(STANDARD_VIEWS)
+
+    def test_poradie_zacina_izometriou(self, window: MainWindow) -> None:
+        assert [action.text() for action in window.view_menu.actions()][0] == "Isometric"
+
+    def test_menu_obsahuje_zadane_pohlady(self, window: MainWindow) -> None:
+        labels = [action.text() for action in window.view_menu.actions()]
+
+        assert {"Top", "Bottom", "Left", "Right", "Back", "Front"} <= set(labels)
+
+    def test_tlacidlo_ma_rozbalovacie_menu(self, window: MainWindow) -> None:
+        assert window.view_button.menu() is window.view_menu
+
+    def test_menu_sa_rozbali_hned_po_kliknuti(self, window: MainWindow) -> None:
+        # Bez InstantPopup by sa menu ukázalo až po podržaní tlačidla.
+        assert window.view_button.popupMode() == QToolButton.ToolButtonPopupMode.InstantPopup
+
+    def test_kazdy_pohlad_ma_ikonu(self, window: MainWindow) -> None:
+        assert all(not action.icon().isNull() for action in window.view_actions.values())
+
+    def test_kazdy_pohlad_ma_skratku(self, window: MainWindow) -> None:
+        assert all(not action.shortcut().isEmpty() for action in window.view_actions.values())
+
+    def test_skratky_su_unikatne(self, window: MainWindow) -> None:
+        shortcuts = [action.shortcut().toString() for action in window.view_actions.values()]
+
+        assert len(set(shortcuts)) == len(shortcuts)
+
+    def test_tlacidlo_zobraz_cele_ma_ikonu(self, window: MainWindow) -> None:
+        assert not window.fit_action.icon().isNull()
+
+
+class TestPrepnutiePohladu:
+    def test_akcia_posle_pohlad_do_viewportu(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+
+        window.view_actions["top"].trigger()
+
+        assert viewport.views == ["top"]
+
+    @pytest.mark.parametrize("name", sorted(STANDARD_VIEWS))
+    def test_kazda_polozka_menu_funguje(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport], name: str
+    ) -> None:
+        window, viewport = window_with_viewport
+
+        window.view_actions[name].trigger()
+
+        assert viewport.views == [name]
+
+    def test_stavovy_riadok_hlasi_pohlad(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        window.set_view("front")
+
+        assert "front" in window.statusBar().currentMessage()
+
+    def test_zobraz_cele_zavola_viewport(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+
+        window.fit_action.trigger()
+
+        assert viewport.fit_calls == 1
+
+    def test_viewport_bez_podpory_nespadne(self, window: MainWindow) -> None:
+        # Náhradný widget v testoch `set_view` nemá — okno to musí prežiť.
+        window.set_view("top")
+
+        assert window.centralWidget() is not None
+
+
+class TestUmiestnenie:
+    def test_menu_model_existuje(self, window: MainWindow) -> None:
+        assert "Model" in menu_titles(window)
+
+    def test_menu_model_obsahuje_umiestnenie(self, window: MainWindow) -> None:
+        assert menu_items(window, "Model") == ["Placement…"]
+
+    def test_polozka_ma_skratku(self, window: MainWindow) -> None:
+        assert not window.placement_action.shortcut().isEmpty()
+
+    def test_dialog_sa_otvori(self, window: MainWindow) -> None:
+        dialog = window.open_placement_dialog()
+
+        assert dialog.isVisible()
+        dialog.close()
+
+    def test_druhe_vyvolanie_nevytvori_dalsi_dialog(self, window: MainWindow) -> None:
+        first = window.open_placement_dialog()
+
+        second = window.open_placement_dialog()
+
+        assert first is second
+        first.close()
+
+    def test_dialog_ukaze_aktualne_umiestnenie(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+        viewport.placement = Transform(xyz=(0.25, 0.0, 0.0))
+
+        dialog = window.open_placement_dialog()
+
+        assert dialog.x_spin.value() == pytest.approx(250.0)
+        dialog.close()
+
+    def test_zmena_v_dialogu_dorazi_do_sceny(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+        dialog = window.open_placement_dialog()
+
+        dialog.x_spin.setValue(500.0)
+
+        assert viewport.placement.xyz[0] == pytest.approx(0.5)
+        dialog.close()
+
+    def test_otocenie_dorazi_do_sceny_v_radianoch(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, viewport = window_with_viewport
+        dialog = window.open_placement_dialog()
+
+        dialog.rotate_z_spin.setValue(90.0)
+
+        assert viewport.placement.rpy[2] == pytest.approx(math.pi / 2)
+        dialog.close()
+
+    def test_stavovy_riadok_hlasi_umiestnenie_v_milimetroch(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+
+        window.apply_placement(Transform(xyz=(0.1, 0.0, 0.0)))
+
+        assert "100" in window.statusBar().currentMessage()
+
+    def test_viewport_bez_podpory_nespadne(self, window: MainWindow) -> None:
+        window.apply_placement(Transform(xyz=(1.0, 0.0, 0.0)))
+
+        assert window.centralWidget() is not None
 
 
 class TestNacitanie:

@@ -61,6 +61,23 @@ tests/data/     malé fixture súbory — verzované, na rozdiel od models/
 docs/           architektúra a rozhodnutia
 ```
 
+## Language
+
+**Write everything in English.** Chat replies, commit messages, code, comments,
+docstrings, log messages, user-facing UI strings and documentation.
+
+The reason is token cost: Slovak diacritics tokenize badly (roughly 1.5–2× the
+tokens of the same text in English), and everything you write is re-read on every
+turn. English is also the norm for code and keeps the project readable for anyone
+who joins later.
+
+Two things stay as they are:
+
+- Text already written in Slovak is **not** retrofitted wholesale. Translate a
+  file when you touch it for another reason, not as a separate sweep.
+- UI strings must still go through `tr()` — see `src/pssim/ui/translations/README.md`.
+  English is the source language, other languages are translations.
+
 ## Konvencie, ktoré platia bez výnimky
 
 - **Závislosti idú len dovnútra.** `domain/` neimportuje nič z `viz/`, `io/`, `cad/`, `ui/`

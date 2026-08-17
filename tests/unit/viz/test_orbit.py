@@ -12,6 +12,7 @@ import pytest
 
 from pssim.viz.orbit import (
     MAX_ELEVATION_RAD,
+    STANDARD_VIEWS,
     DragAction,
     OrbitCamera,
     apply_drag,
@@ -308,6 +309,104 @@ class TestKoliesko:
 
     def test_koliesko_respektuje_medze(self) -> None:
         assert apply_wheel(camera(), 500).distance_m == pytest.approx(0.1, abs=1e-12)
+
+
+class TestStandardnePohlady:
+    def test_vsetky_ocakavane_su_definovane(self) -> None:
+        assert set(STANDARD_VIEWS) == {
+            "iso",
+            "front",
+            "back",
+            "left",
+            "right",
+            "top",
+            "bottom",
+        }
+
+    def test_celny_pohlad_je_na_zapornej_y(self) -> None:
+        assert camera().with_view("front").eye == pytest.approx((0.0, -10.0, 0.0), abs=1e-9)
+
+    def test_zadny_pohlad_je_na_kladnej_y(self) -> None:
+        assert camera().with_view("back").eye == pytest.approx((0.0, 10.0, 0.0), abs=1e-9)
+
+    def test_pravy_pohlad_je_na_kladnej_x(self) -> None:
+        assert camera().with_view("right").eye == pytest.approx((10.0, 0.0, 0.0), abs=1e-9)
+
+    def test_lavy_pohlad_je_na_zapornej_x(self) -> None:
+        assert camera().with_view("left").eye == pytest.approx((-10.0, 0.0, 0.0), abs=1e-9)
+
+    def test_pohlad_zhora_je_nad_modelom(self) -> None:
+        assert camera().with_view("top").eye[2] > 9.9
+
+    def test_pohlad_zdola_je_pod_modelom(self) -> None:
+        assert camera().with_view("bottom").eye[2] < -9.9
+
+    def test_zhora_nie_je_presne_v_zenite(self) -> None:
+        # Presne v póle stráca lookAt referenciu „hore" a obraz sa preklopí.
+        assert abs(camera().with_view("top").elevation_rad) < math.pi / 2
+
+    def test_prepnutie_zachova_priblizenie(self) -> None:
+        # Používateľ chce zmeniť uhol, nie stratiť zoom, ktorý si nastavil.
+        zoomed = camera().zoom(0.3)
+
+        assert zoomed.with_view("top").distance_m == pytest.approx(zoomed.distance_m)
+
+    def test_prepnutie_zachova_ciel(self) -> None:
+        moved = camera(target=(1.0, 2.0, 3.0))
+
+        assert moved.with_view("front").target == (1.0, 2.0, 3.0)
+
+    def test_neznamy_pohlad_vypise_podporovane(self) -> None:
+        with pytest.raises(ValueError, match="podporované:"):
+            camera().with_view("zozadu-zhora")
+
+    @pytest.mark.parametrize("name", sorted(STANDARD_VIEWS))
+    def test_kazdy_pohlad_da_platnu_kameru(self, name: str) -> None:
+        instance = camera().with_view(name)
+
+        assert math.dist(instance.eye, instance.target) == pytest.approx(10.0, abs=1e-9)
+
+
+class TestPremietanieOsi:
+    def test_zpredu_ide_x_doprava(self) -> None:
+        screen_x, screen_y = camera().with_view("front").project((1.0, 0.0, 0.0))
+
+        assert screen_x == pytest.approx(1.0, abs=1e-9)
+        assert screen_y == pytest.approx(0.0, abs=1e-9)
+
+    def test_zpredu_ide_z_hore(self) -> None:
+        assert camera().with_view("front").project((0.0, 0.0, 1.0)) == pytest.approx(
+            (0.0, 1.0), abs=1e-9
+        )
+
+    def test_zpredu_mieri_y_do_obrazovky(self) -> None:
+        # Os rovnobežná so smerom pohľadu sa premietne do bodu.
+        screen = camera().with_view("front").project((0.0, 1.0, 0.0))
+
+        assert screen == pytest.approx((0.0, 0.0), abs=1e-9)
+
+    def test_zhora_ide_y_hore(self) -> None:
+        _, screen_y = camera().with_view("top").project((0.0, 1.0, 0.0))
+
+        assert screen_y > 0.9
+
+    def test_zhora_mieri_z_do_obrazovky(self) -> None:
+        screen = camera().with_view("top").project((0.0, 0.0, 1.0))
+
+        assert abs(screen[0]) < 0.05
+        assert abs(screen[1]) < 0.05
+
+    def test_zprava_ide_y_doprava(self) -> None:
+        screen_x, _ = camera().with_view("right").project((0.0, 1.0, 0.0))
+
+        assert screen_x == pytest.approx(1.0, abs=1e-9)
+
+    def test_premietnutie_nepresiahne_jednotku(self) -> None:
+        # Priemet jednotkového vektora nemôže byť dlhší než jednotka.
+        instance = camera().with_view("iso")
+        for direction in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)):
+            screen = instance.project(direction)
+            assert math.hypot(*screen) <= 1.0 + 1e-9
 
 
 class TestVazbyMysi:

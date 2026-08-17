@@ -14,8 +14,20 @@ import math
 from typing import Any, Final
 
 from pssim.observability import get_logger
+from pssim.viz.orbit import DEFAULT_VIEW, STANDARD_VIEWS, standard_view
 
 logger = get_logger(__name__)
+
+__all__ = [
+    "DEFAULT_VIEW",
+    "STANDARD_VIEWS",
+    "clip_planes",
+    "frame_distance",
+    "scene_radius",
+    "setup_camera",
+    "setup_lights",
+    "view_direction",
+]
 
 DEFAULT_FOV_DEG: Final = 40.0
 
@@ -60,27 +72,20 @@ def scene_radius(root: Any) -> tuple[Any, float]:
     return bounds.getCenter(), float(bounds.getRadius())
 
 
-#: Smery pohľadu. Kľúč `iso` je default — trojštvrťový záber zhora.
-#: Vektory sa normalizujú, dôležitý je len ich pomer.
-VIEW_DIRECTIONS: Final[dict[str, tuple[float, float, float]]] = {
-    "iso": (0.65, -0.75, 0.45),
-    "front": (0.0, -1.0, 0.0),
-    "back": (0.0, 1.0, 0.0),
-    "left": (-1.0, 0.0, 0.0),
-    "right": (1.0, 0.0, 0.0),
-    "top": (0.0, -0.001, 1.0),  # nie čisto +Z: lookAt potrebuje smer mimo osi up
-}
-
-DEFAULT_VIEW: Final = "iso"
-
-
 def view_direction(view: str) -> tuple[float, float, float]:
-    """Smer pohľadu podľa názvu. Neznámy názov je `ValueError`."""
-    try:
-        return VIEW_DIRECTIONS[view]
-    except KeyError:
-        known = ", ".join(sorted(VIEW_DIRECTIONS))
-        raise ValueError(f"neznámy pohľad {view!r}; podporované: {known}") from None
+    """Jednotkový vektor od stredu modelu ku kamere pre daný štandardný pohľad.
+
+    Odvodené z `viz.orbit.STANDARD_VIEWS`, ktoré sú **jediný zdroj pravdy** —
+    definícia „čo je čelný pohľad" nesmie existovať na dvoch miestach, inak
+    sa interaktívna kamera a `pssim screenshot` časom rozídu.
+    """
+    azimuth, elevation = standard_view(view)
+    horizontal = math.cos(elevation)
+    return (
+        horizontal * math.sin(azimuth),
+        -horizontal * math.cos(azimuth),
+        math.sin(elevation),
+    )
 
 
 def setup_camera(

@@ -22,6 +22,20 @@ uv run pssim ui
 
 Otvorí okno s hlavným menu. Bez PLC, bez definície stroja.
 
+**UI je po anglicky.** Zdrojové texty sú v kóde priamo v angličtine a obalené
+v `tr()`, takže sa dajú preložiť bez zásahu do logiky. Iný jazyk sa vyberie
+prepínačom:
+
+```bash
+uv run pssim ui --lang sk
+```
+
+Zoznam jazykov a návod na pridanie ďalšieho je v
+[src/pssim/ui/translations/README.md](src/pssim/ui/translations/README.md).
+Zatiaľ je skompilovaná len angličtina — `--lang sk` skončí chybou, kým
+preklad nevznikne. Voľba jazyka v menu pribudne neskôr; napojí sa na
+`ui/i18n.install_translator()`.
+
 | Menu | Položka | Čo robí |
 |---|---|---|
 | `File` | `Exit` (Ctrl+Q) | ukončí aplikáciu |
@@ -33,6 +47,50 @@ Po načítaní sa kamera automaticky vycentruje na model.
 
 Súbor bez definície stroja sa považuje za **milimetrový** (`ASSUMED_UNITS`
 v `ui/loader.py`) — väčšina strojárskeho CAD to tak má.
+
+### Lišta a štandardné pohľady
+
+Tlačidlo **Pohľad** rozbalí menu so siedmimi orientáciami; ikona tlačidla vždy
+ukazuje, v ktorej sa práve nachádzaš.
+
+| Pohľad | Skratka | | Pohľad | Skratka |
+|---|---|---|---|---|
+| Isometric | Ctrl+1 | | Right | Ctrl+5 |
+| Front | Ctrl+2 | | Top | Ctrl+6 |
+| Back | Ctrl+3 | | Bottom | Ctrl+7 |
+| Left | Ctrl+4 | | **Zobraz celé** | Ctrl+0 |
+
+Prepnutie pohľadu **zachová priblíženie** aj bod záujmu — mení sa len uhol.
+`Zobraz celé` vycentruje kameru späť na celý model.
+
+Ikony sa kreslia za behu (`ui/icons.py`), v repozitári nie sú žiadne binárne
+assety. Každá ikona premieta osi tou istou kamerou, aká sa po kliknutí použije,
+takže nemôže ukazovať niečo iné, než sa naozaj stane.
+
+### Umiestnenie modelu
+
+`Model → Placement…` (Ctrl+M) otvorí dialóg s posunom v X/Y/Z a otočením okolo
+každej z osí. Zadáva sa v **milimetroch a stupňoch** — tak, ako je zvykom v CAD;
+prevod na interné metre a radiány robí `domain/placement.py`.
+
+Slúži na to, aby sa dal model posadiť tam, kam patrí: CAD súbor má počiatok tam,
+kde ho nechal konštruktér, a to nemusí byť bod, voči ktorému chceš merať.
+
+- Zmena sa prejaví **okamžite** — hodnoty sa inak zadávajú naslepo.
+- `Zrušiť` vráti stav, aký bol pri otvorení dialógu.
+- Dialóg je **nemodálny**, takže sa počas zadávania dá scénou otáčať.
+- Otočenie sa deje okolo **počiatku modelu**, nie okolo jeho ťažiska.
+- Kríž v počiatku sa nehýbe — je to referencia, voči ktorej sa model umiestňuje.
+- Kamera zostáva; ak model odíde mimo záber, vráti ho `Ctrl+0`.
+
+### Kartézsky kríž
+
+V počiatku súradníc modelu je kríž s osami **X červená, Y zelená, Z modrá**
+a popiskami — rovnaká konvencia ako v CAD nástrojoch. Slúži na orientáciu pri
+otáčaní, hlavne pri symetrických dieloch.
+
+Veľkosť sa odvíja od rozmeru modelu (štvrtina jeho polomeru), takže je čitateľný
+na jednom dieli aj na celej linke.
 
 ### Ovládanie scény myšou
 
@@ -153,9 +211,12 @@ duplicitné názvy dielov, otočený diel a diel bez farby.
 | `cad/step_import` — čítanie STEP cez OpenCASCADE | **overené** proti `tests/data/fixture.step` (35 testov): assembly tree, názvy, farby, jednotky, rotácie, geometria, cache |
 | `viz/scene_builder`, `viz/transforms` | hotové, pokryté testami (bez Panda3D) |
 | `viz/mesh_loader`, `viz/app` — scéna a render loop | **overené** headless testami celej reťaze (29 testov) aj reálnym spustením |
-| `viz/orbit`, `viz/orbit_control` — ovládanie kamery | hotové (56 unit + 11 integračných testov) |
+| `viz/orbit`, `viz/orbit_control` — ovládanie kamery a pohľady | hotové (unit + integračné testy) |
+| `viz/axes` — kartézsky kríž | hotové, pokryté testami |
 | `viz/embed` + `ui/viewport` — Panda3D vo QWidget | hotové, overené reálnym spustením |
-| `ui/` — okno, menu, načítanie STEP na pozadí | hotové (24 testov) |
+| `domain/placement` — posun a otočenie modelu, prevod jednotiek | hotové, pokryté testami |
+| `ui/i18n` — mechanizmus prekladov | hotové; preklad do sk zatiaľ neexistuje |
+| `ui/` — okno, menu, lišta, umiestnenie, načítanie STEP na pozadí | hotové (122 testov) |
 | `ui/` — strom dielov, property grid, HUD | neimplementované |
 
 Celá reťaz **STEP → cache → scéna → hodnota z PLC → poloha dielu** je pokrytá

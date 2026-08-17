@@ -12,8 +12,16 @@ Toto sú pravidlá, ktoré linter nezachytí.
 ## Pomenovanie
 
 - Funkcie sú **činnosti** (`sample_signal`, `build_scene`), premenné sú **veci** (`position`).
-- Kód a identifikátory sú **po anglicky**, komentáre a docstringy **po slovensky**.
+- **Všetko po anglicky** — identifikátory, komentáre, docstringy, logy aj texty
+  pre používateľa. Dôvod je v `CLAUDE.md`, sekcia *Language*. Staré slovenské
+  komentáre prekladaj len keď na súbor siahaš z iného dôvodu.
   Doménové pojmy nechávaj v tvare zo slovníka (`joint`, `signal`, `deflection`).
+- **Texty pre používateľa** musia byť obalené v `self.tr()` (v `QObject`) alebo
+  `QCoreApplication.translate("Kontext", "text")` (na module level). Neobalený
+  text sa nedostane do `.ts` a nikdy sa nepreloží.
+  Viď `src/pssim/ui/translations/README.md`.
+- **Logy sa neprekladajú** cez `tr()` — sú pre vývojára, nie pre používateľa.
+  Ale píšu sa po anglicky, ako všetko ostatné.
 - Žiadne skratky okrem ustálených (`id`, `url`, `cad`, `hpr`, `rpy`). Nie `jnt_cnt`, ale `joint_count`.
 - Boolean začína `is_`/`has_`/`can_` (`is_stale`, `has_limits`).
 - Ak potrebuješ v názve `and`/`or`, funkcia robí dve veci — rozdeľ ju.

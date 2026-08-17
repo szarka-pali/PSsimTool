@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 
 from pssim.domain.errors import PSsimError
 from pssim.observability import get_logger
@@ -76,21 +76,11 @@ class StepImportThread(QThread):
             return
         except Exception as exc:  # neočakávané — používateľ musí niečo vidieť
             logger.exception("import spadol", file=str(self._step_file))
-            self.failed.emit(f"Neočakávaná chyba pri importe: {exc}")
+            self.failed.emit(
+                QCoreApplication.translate(
+                    "StepImportThread", "Unexpected error during import: {0}"
+                ).format(exc)
+            )
             return
 
         self.succeeded.emit(metadata, cache_dir)
-
-
-def summarize(metadata: object) -> str:
-    """Jednoveta o naimportovanom modeli pre stavový riadok.
-
-    Čistá funkcia, aby sa dala otestovať bez Qt aj bez OpenCASCADE.
-    """
-    assembly = getattr(metadata, "assembly", None)
-    if assembly is None:
-        return "model načítaný"
-
-    nodes = len(assembly.nodes)
-    triangles = assembly.triangle_count
-    return f"{nodes} dielov, {triangles} trojuholníkov"

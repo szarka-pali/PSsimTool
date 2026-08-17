@@ -32,9 +32,36 @@ MAX_DISTANCE_FACTOR: Final = 50.0
 
 DEFAULT_FOV_DEG: Final = 40.0
 
-#: Východiskový trojštvrťový pohľad — rovnaký, aký používa `viz/camera.py`.
+#: Východiskový trojštvrťový pohľad.
 DEFAULT_AZIMUTH_RAD: Final = math.radians(-35.0)
 DEFAULT_ELEVATION_RAD: Final = math.radians(25.0)
+
+#: Štandardné pohľady ako `(azimut, elevácia)` v radiánoch. **Jediný zdroj pravdy** —
+#: `viz/camera.py` si z nich odvodí smerový vektor, UI z nich robí položky menu.
+#:
+#: Pri `azimuth = 0` je kamera na `-Y` a pozerá na `+Y`, čo je čelný pohľad.
+#: `top` a `bottom` používajú orezanú eleváciu, nie presne `±pi/2` — v zenite
+#: stráca `lookAt` referenciu „hore" a obraz sa preklopí.
+STANDARD_VIEWS: Final[dict[str, tuple[float, float]]] = {
+    "iso": (DEFAULT_AZIMUTH_RAD, DEFAULT_ELEVATION_RAD),
+    "front": (0.0, 0.0),
+    "back": (math.pi, 0.0),
+    "right": (math.pi / 2.0, 0.0),
+    "left": (-math.pi / 2.0, 0.0),
+    "top": (0.0, MAX_ELEVATION_RAD),
+    "bottom": (0.0, -MAX_ELEVATION_RAD),
+}
+
+DEFAULT_VIEW: Final = "iso"
+
+
+def standard_view(name: str) -> tuple[float, float]:
+    """Uhly štandardného pohľadu. Neznámy názov je `ValueError`."""
+    try:
+        return STANDARD_VIEWS[name]
+    except KeyError:
+        known = ", ".join(STANDARD_VIEWS)
+        raise ValueError(f"neznámy pohľad {name!r}; podporované: {known}") from None
 
 
 class DragAction(StrEnum):
@@ -188,6 +215,27 @@ class OrbitCamera:
 
     def looking_at(self, target: Vec3) -> OrbitCamera:
         return replace(self, target=target)
+
+    def with_view(self, name: str) -> OrbitCamera:
+        """Prepne na štandardný pohľad.
+
+        Cieľ **ani vzdialenosť sa nemenia** — používateľ chce zmeniť uhol
+        pohľadu, nie stratiť priblíženie, ktoré si nastavil.
+        """
+        azimuth, elevation = standard_view(name)
+        return replace(self, azimuth_rad=azimuth, elevation_rad=elevation)
+
+    def project(self, vector: Vec3) -> tuple[float, float]:
+        """Premietne svetový vektor do roviny obrazovky ako `(doprava, hore)`.
+
+        Slúži na kreslenie orientačných ikoniek v UI: os, ktorá mieri do
+        obrazovky, vyjde blízko `(0, 0)`.
+        """
+        right, up = self.right, self.up
+        return (
+            sum(a * b for a, b in zip(vector, right, strict=True)),
+            sum(a * b for a, b in zip(vector, up, strict=True)),
+        )
 
     # -- rámovanie ----------------------------------------------------------
 

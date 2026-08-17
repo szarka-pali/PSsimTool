@@ -13,7 +13,7 @@ import pytest
 from pssim.viz.camera import (
     DEFAULT_FOV_DEG,
     FALLBACK_RADIUS_M,
-    VIEW_DIRECTIONS,
+    STANDARD_VIEWS,
     clip_planes,
     frame_distance,
     view_direction,
@@ -85,9 +85,9 @@ class TestOrezoveRoviny:
 
 class TestSmeryPohladu:
     def test_default_je_znamy(self) -> None:
-        assert "iso" in VIEW_DIRECTIONS
+        assert "iso" in STANDARD_VIEWS
 
-    @pytest.mark.parametrize("name", sorted(VIEW_DIRECTIONS))
+    @pytest.mark.parametrize("name", sorted(STANDARD_VIEWS))
     def test_ziadny_smer_nie_je_nulovy(self, name: str) -> None:
         # Nulový vektor by pri normalizácii dal NaN a scéna by zmizla.
         assert any(component != 0.0 for component in view_direction(name))
@@ -101,6 +101,23 @@ class TestSmeryPohladu:
     def test_top_nie_je_presne_v_osi_up(self) -> None:
         # Čisto +Z by rozbilo lookAt — smer pohľadu by bol rovnobežný s osou up.
         assert view_direction("top")[1] != 0.0
+
+    def test_smery_su_jednotkove(self) -> None:
+        for name in STANDARD_VIEWS:
+            length = math.sqrt(sum(component**2 for component in view_direction(name)))
+            assert length == pytest.approx(1.0, abs=1e-9), name
+
+    def test_lavy_a_pravy_su_opacne(self) -> None:
+        left = view_direction("left")
+        right = view_direction("right")
+
+        assert left == pytest.approx(tuple(-component for component in right), abs=1e-9)
+
+    def test_top_a_bottom_su_opacne_vo_vyske(self) -> None:
+        assert view_direction("top")[2] == pytest.approx(-view_direction("bottom")[2], abs=1e-9)
+
+    def test_celny_pohlad_je_na_zapornej_y(self) -> None:
+        assert view_direction("front") == pytest.approx((0.0, -1.0, 0.0), abs=1e-9)
 
     def test_neznamy_smer_vypise_podporovane(self) -> None:
         with pytest.raises(ValueError, match="podporované:"):

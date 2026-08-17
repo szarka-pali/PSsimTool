@@ -18,10 +18,14 @@ from pathlib import Path
 from typing import Any, Final
 
 from pssim.cad.model import CadAssembly
+from pssim.domain.machine import Transform
+from pssim.domain.placement import IDENTITY_PLACEMENT
 from pssim.observability import get_logger
-from pssim.viz.camera import setup_lights
+from pssim.viz.axes import axis_length_for, make_axes_node
+from pssim.viz.camera import scene_radius, setup_lights
 from pssim.viz.orbit_control import OrbitController
 from pssim.viz.scene import build_scene
+from pssim.viz.transforms import rpy_to_quat
 
 logger = get_logger(__name__)
 
@@ -78,6 +82,8 @@ class EmbeddedRenderer:
         self._base.setBackgroundColor(*background)
 
         self._scene_root: Any = None
+        self._axes_root: Any = None
+        self._placement: Transform = IDENTITY_PLACEMENT
         self._controller = OrbitController(self._base)
         self._controller.enable()
         logger.info("vložený renderer pripravený", size=(width, height))
@@ -129,7 +135,12 @@ class EmbeddedRenderer:
         setup_lights(built.root)
         self._scene_root = built.root
 
+        # Umiestnenie sa aplikuje PRED rámovaním, aby kamera zamierila tam,
+        # kde model naozaj skončí, nie kde bol pred posunutím.
+        self._apply_placement()
         self._controller.frame(built.root)
+        # Kríž až po vycentrovaní — jeho veľkosť sa odvíja od rozmeru scény.
+        self._show_axes(scene_radius(built.root)[1])
 
         logger.info(
             "model zobrazený",
@@ -139,8 +150,65 @@ class EmbeddedRenderer:
         )
         return built.missing_meshes
 
+    def set_view(self, name: str) -> None:
+        """Prepne na štandardný pohľad (`front`, `top`, …).
+
+        Priblíženie a bod záujmu zostávajú — mení sa len uhol.
+        """
+        self._controller.set_camera(self._controller.camera.with_view(name))
+        logger.info("pohľad prepnutý", view=name)
+
+    def fit_view(self) -> None:
+        """Vycentruje kameru tak, aby bol celý model v zábere."""
+        if self._scene_root is None:
+            return
+        self._controller.frame(self._scene_root)
+
+    # -- umiestnenie modelu -------------------------------------------------
+
+    @property
+    def placement(self) -> Transform:
+        """Posun a natočenie modelu voči počiatku scény."""
+        return self._placement
+
+    def set_placement(self, placement: Transform) -> None:
+        """Posadí model na zadané miesto.
+
+        Kríž v počiatku sa **nehýbe** — je to referencia, voči ktorej sa model
+        umiestňuje. Kamera tiež zostáva; ak sa má znovu zamerať, je na to
+        `fit_view()`.
+        """
+        self._placement = placement
+        self._apply_placement()
+
+    def _apply_placement(self) -> None:
+        """Prenesie umiestnenie na koreň modelu.
+
+        Otočenie sa deje okolo **počiatku modelu**, nie okolo jeho ťažiska —
+        to je to, čo človek čaká, keď zadáva „otoč o 90° okolo Z".
+        """
+        from panda3d.core import LQuaternion
+
+        if self._scene_root is None:
+            return
+        self._scene_root.setPos(*self._placement.xyz)
+        self._scene_root.setQuat(LQuaternion(*rpy_to_quat(self._placement.rpy)))
+
     def clear(self) -> None:
-        """Odstráni zobrazený model."""
+        """Odstráni zobrazený model aj kríž."""
         if self._scene_root is not None:
             self._scene_root.removeNode()
             self._scene_root = None
+        if self._axes_root is not None:
+            self._axes_root.removeNode()
+            self._axes_root = None
+
+    def _show_axes(self, scene_radius_m: float) -> None:
+        """Vykreslí kartézsky kríž v počiatku súradníc modelu.
+
+        Visí na `render`, nie na koreni modelu: keby visel na ňom, zdedil by
+        jeho farbu z `setColor()` a všetky tri osi by boli rovnaké.
+        """
+        node = make_axes_node(axis_length_for(scene_radius_m))
+        node.reparentTo(self._base.render)
+        self._axes_root = node

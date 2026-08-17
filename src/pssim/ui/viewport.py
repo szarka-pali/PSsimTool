@@ -20,6 +20,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QWidget
 
 from pssim.cad.model import CadAssembly
+from pssim.domain.machine import Transform
+from pssim.domain.placement import IDENTITY_PLACEMENT
 from pssim.observability import get_logger
 
 logger = get_logger(__name__)
@@ -120,6 +122,33 @@ class Panda3DViewport(QWidget):
             logger.warning("viewport nie je pripravený, model nezobrazujem")
             return len(assembly.nodes)
         return int(self._renderer.show_assembly(assembly, cache_dir))
+
+    def set_view(self, name: str) -> None:
+        """Prepne na štandardný pohľad (`front`, `top`, …)."""
+        if self._renderer is None:
+            logger.debug("viewport nie je pripravený, pohľad nemením", view=name)
+            return
+        self._renderer.set_view(name)
+
+    def fit_view(self) -> None:
+        """Vycentruje kameru na celý model."""
+        if self._renderer is not None:
+            self._renderer.fit_view()
+
+    @property
+    def placement(self) -> Transform:
+        """Aktuálne umiestnenie modelu. Bez rendereru identita."""
+        if self._renderer is None:
+            return IDENTITY_PLACEMENT
+        placement: Transform = self._renderer.placement
+        return placement
+
+    def set_placement(self, placement: Transform) -> None:
+        """Posunie a otočí model voči počiatku scény."""
+        if self._renderer is None:
+            logger.debug("viewport nie je pripravený, umiestnenie nemením")
+            return
+        self._renderer.set_placement(placement)
 
     def clear(self) -> None:
         if self._renderer is not None:

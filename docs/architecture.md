@@ -178,6 +178,61 @@ Panda3D časť (`viz/orbit_control.py`) len dodá čísla z myši.
 Vstavaný trackball sa **nepoužíva** (`base.disableMouse()`) — má neintuitívne
 ovládanie a nedá sa mu povedať, okolo čoho má orbitovať.
 
+### R9c — Štandardné pohľady majú jediný zdroj pravdy
+
+`viz/orbit.STANDARD_VIEWS` mapuje názov pohľadu na `(azimut, elevácia)`. Všetko
+ostatné sa z toho odvodzuje: `viz/camera.view_direction()` počíta smerový vektor
+pre `pssim screenshot`, `ui/main_window` z toho robí položky menu a `ui/icons`
+kreslí ikony premietnutím osí tou istou kamerou.
+
+Predtým existovala definícia „čo je čelný pohľad" na dvoch miestach (uhly pre
+interaktívnu kameru, vektory pre screenshot). Také dvojice sa časom rozídu
+a rozdiel si nikto nevšimne, kým sa nezačne diviť, prečo `--view front`
+v screenshote vyzerá inak než `Ctrl+2` v aplikácii.
+
+`top` a `bottom` používajú **orezanú** eleváciu, nie presne `±pi/2`: v póle
+stráca `lookAt` referenciu „hore" a obraz sa preklopí.
+
+### R10 — Umiestnenie modelu je transformácia koreňa, nie zásah do geometrie
+
+Posun a otočenie modelu (`Model → Placement…`) sa aplikuje na **koreňový
+`NodePath`**, nie na vrcholy v cache. Cache tak zostáva viazaná výhradne na
+obsah STEP súboru a parametre tesselácie — dva rôzne umiestnenia toho istého
+modelu nevyrobia dve kópie geometrie.
+
+Dôsledky, ktoré z toho plynú a sú zámerné:
+
+- Otočenie je okolo **počiatku modelu**, nie okolo ťažiska. To je to, čo človek
+  čaká, keď zadáva „otoč o 90° okolo Z".
+- Kríž v počiatku sa nehýbe — je referencia, voči ktorej sa model umiestňuje.
+- Umiestnenie prežije načítanie iného súboru; aplikuje sa pred rámovaním kamery,
+  aby kamera mierila tam, kde model naozaj skončí.
+
+**Jednotky sa prevádzajú v `domain/placement.py`, nie v dialógu.** UI je ďalšia
+hranica systému a platí pre ňu to isté, čo pre `config/` a `io/` (viď R3):
+používateľ zadáva mm a stupne, scéna beží v metroch a radiánoch, konverzia sa
+deje raz a má testy. Šesť polí krát dva smery je dosť príležitostí na preklep.
+
+### R11 — Preklady cez Qt, zdrojový jazyk angličtina
+
+Texty pre používateľa sú v kóde napísané **po anglicky** a obalené v `tr()`.
+Preklady sú `.ts`/`.qm` súbory, mechanizmus je `ui/i18n.py`.
+
+Prečo Qt a nie vlastný slovník: Qt už rieši fallback na zdrojový text, množné
+čísla, extrakčné nástroje a hlavne **preklad vlastných dialógov Qt** —
+`QFileDialog`, tlačidlá `OK`/`Cancel`. Vlastná implementácia by tie štandardné
+prvky nechala v angličtine a UI by bolo napoly preložené.
+
+Z toho plynú dve pravidlá:
+
+- **Formátovanie hlášok nepatrí do `domain/`.** Predtým `domain/placement.py`
+  vracalo vetu do stavového riadku; doména však nemá ako vedieť, v akom jazyku
+  appka beží, a nesmie importovať Qt. Presunuté do `ui/labels.py`.
+- **Štandardné tlačidlá Qt sa neprepisujú.** Natvrdo nastavený text by pri
+  prepnutí jazyka zostal v angličtine, kým zvyšok dialógu by sa preložil.
+
+Logy sa **neprekladajú** — sú pre vývojára, nie pre používateľa.
+
 ## Výkon
 
 Assembly zo STEP-u má typicky stovky až tisíce dielov, čo je pri naivnom prístupe

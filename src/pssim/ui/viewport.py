@@ -1,14 +1,15 @@
-"""3D plocha okna — Qt obal nad `viz.embed.EmbeddedRenderer`.
+"""The 3D area of the window — a Qt wrapper around `viz.embed.EmbeddedRenderer`.
 
-Zámerne **neimportuje Panda3D**. Všetko, čo o ňom vie, je za `EmbeddedRenderer`;
-tento súbor rieši len Qt stránku veci: kedy okno vzniká, kedy sa prekresľuje
-a čo sa stane pri zmene veľkosti.
+Deliberately **does not import Panda3D**. Everything it knows about it sits
+behind `EmbeddedRenderer`; this file handles only the Qt side: when the window is
+created, when it redraws, and what happens on a resize.
 
-Dve veci, ktoré prekvapia:
+Two things that surprise:
 
-- Render loop tiká `QTimer`. `base.run()` by prevzal riadenie a Qt by zamrzlo.
-- Myš a klávesnicu dostáva **Panda3D okno**, nie tento widget. Ovládanie kamery
-  je preto vo `viz/orbit_control.py`, nie v `mousePressEvent()`.
+- The render loop is ticked by a `QTimer`. `base.run()` would take over and Qt
+  would freeze.
+- Mouse and keyboard go to the **Panda3D window**, not to this widget. Camera
+  control is therefore in `viz/orbit_control.py`, not in `mousePressEvent()`.
 """
 
 from __future__ import annotations
@@ -26,16 +27,16 @@ from pssim.observability import get_logger
 
 logger = get_logger(__name__)
 
-#: ~60 fps. Qt časovač nie je presný, ale na prehliadanie modelu to stačí
-#: a nezaťažuje CPU tak ako nepretržitá slučka.
+#: ~60 fps. A Qt timer is not precise, but it is enough for looking at a model
+#: and it does not load the CPU the way a continuous loop would.
 FRAME_INTERVAL_MS: Final = 16
 
 
 class Panda3DViewport(QWidget):
-    """Widget, do ktorého kreslí Panda3D.
+    """The widget Panda3D draws into.
 
-    Renderer vzniká až pri prvom zobrazení — skôr `winId()` neexistuje
-    a nebolo by sa na čo pripojiť.
+    The renderer is created on first show — before that there is no `winId()`
+    and nothing to attach to.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -45,39 +46,40 @@ class Panda3DViewport(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._step)
 
-        # Qt do widgetu kresliť nesmie — prekrylo by to obsah Panda3D okna.
+        # Qt must not paint into this widget: it would cover the Panda3D window.
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self.setMinimumSize(320, 240)
 
-    # -- životný cyklus -----------------------------------------------------
+    # -- lifecycle ----------------------------------------------------------
 
-    def showEvent(self, event: Any) -> None:  # noqa: N802 — Qt konvencia
+    def showEvent(self, event: Any) -> None:  # noqa: N802 - Qt convention
         super().showEvent(event)
         if self._renderer is None:
             self._create_renderer()
 
-    def closeEvent(self, event: Any) -> None:  # noqa: N802 — Qt konvencia
+    def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt convention
         self.shutdown()
         super().closeEvent(event)
 
-    def resizeEvent(self, event: Any) -> None:  # noqa: N802 — Qt konvencia
+    def resizeEvent(self, event: Any) -> None:  # noqa: N802 - Qt convention
         super().resizeEvent(event)
         if self._renderer is not None:
             self._renderer.resize(*self._device_size())
 
     def shutdown(self) -> None:
-        """Zastaví prekresľovanie. Idempotentné."""
+        """Stop redrawing. Idempotent."""
         self._timer.stop()
         if self._renderer is not None:
             self._renderer.shutdown()
 
     def _device_size(self) -> tuple[int, int]:
-        """Veľkosť widgetu vo **fyzických** pixeloch.
+        """The widget size in **physical** pixels.
 
-        Qt počíta v logických pixeloch, natívne okno Panda3D vo fyzických.
-        Pri 125 % škálovaní Windows je rozdiel 1,25× a prejaví sa ako čierny
-        pás vpravo a dole — Panda3D okno je menšie než plocha, ktorú má vyplniť.
+        Qt counts in logical pixels, the native Panda3D window in physical ones.
+        At 125 % Windows scaling the difference is 1.25x and shows up as a black
+        band on the right and bottom: the Panda3D window is smaller than the area
+        it is meant to fill.
         """
         ratio = self.devicePixelRatioF()
         return (max(int(self.width() * ratio), 1), max(int(self.height() * ratio), 1))
@@ -93,21 +95,21 @@ class Panda3DViewport(QWidget):
                 height=height,
             )
         except Exception:
-            # Bez 3D plochy má appka stále zmysel (menu, výber súboru),
-            # takže sa nezhodí — len sa to zaloguje a viewport zostane prázdny.
-            logger.exception("3D viewport sa nepodarilo vytvoriť")
+            # The application is still usable without a 3D area (menu, file
+            # dialog), so it must not die: log it and leave the viewport empty.
+            logger.exception("3D viewport could not be created")
             return
 
         self._timer.start(FRAME_INTERVAL_MS)
 
     def _step(self) -> None:
-        """Jeden snímok. Nikdy nesmie vyhodiť — zastavilo by to časovač."""
+        """One frame. Must never raise — that would stop the timer."""
         if self._renderer is None:
             return
         try:
             self._renderer.step()
         except Exception:
-            logger.exception("chyba v render loope, zastavujem prekresľovanie")
+            logger.exception("render loop failed, stopping redraws")
             self._timer.stop()
 
     # -- scene contents -----------------------------------------------------

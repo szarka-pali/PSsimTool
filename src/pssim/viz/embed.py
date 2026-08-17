@@ -1,15 +1,15 @@
-"""Panda3D renderujúce do cudzieho okna.
+"""Panda3D rendering into somebody else's window.
 
-Panda3D vie kresliť do okna, ktoré vytvoril niekto iný
-(`WindowProperties.setParentWindow`) — vďaka tomu sa dá vložiť do `QWidget`.
-Viď docs/architecture.md R9.
+Panda3D can draw into a window created by someone else
+(`WindowProperties.setParentWindow`), which is what makes embedding it in a
+`QWidget` possible. See docs/architecture.md R9.
 
-Prečo je to v `viz/` a nie v `ui/`: `ui/` nesmie importovať Panda3D. Táto trieda
-je hranica — dovnútra Panda3D, von len čísla a `CadAssembly`. `ui/viewport.py`
-ju len drží a preposiela jej Qt udalosti.
+Why this lives in `viz/` and not in `ui/`: `ui/` must not import Panda3D. This
+class is the boundary — Panda3D on the inside, only numbers and `CadAssembly` on
+the outside. `ui/viewport.py` merely holds it and forwards Qt events.
 
-Render loop **nepatrí Panda3D**: `base.run()` by prevzal riadenie a hostiteľské
-GUI by zamrzlo. Volajúci si sám tiká a volá `step()`.
+The render loop **does not belong to Panda3D**: `base.run()` would take over and
+the host GUI would freeze. The caller ticks and calls `step()`.
 """
 
 from __future__ import annotations
@@ -34,11 +34,11 @@ BACKGROUND: Final = (0.12, 0.13, 0.15, 1.0)
 
 
 def offscreen_showbase(size: tuple[int, int]) -> Any:
-    """Vráti `ShowBase` pre render bez okna.
+    """Return a `ShowBase` for rendering without a window.
 
-    Panda3D dovolí **jedinú `ShowBase` na proces** — druhý pokus o vytvorenie
-    skončí výnimkou. Pri jednom renderi z CLI to nevadí, ale testy renderujú
-    viackrát za sebou, takže sa existujúca inštancia znovupoužije.
+    Panda3D allows **one `ShowBase` per process** — a second attempt raises. That
+    is harmless for a single render from the CLI, but tests render several times
+    in a row, so an existing instance is reused.
     """
     import builtins
 
@@ -54,10 +54,10 @@ def offscreen_showbase(size: tuple[int, int]) -> Any:
 
 
 class EmbeddedRenderer:
-    """Panda3D kresliaci do okna, ktoré patrí niekomu inému.
+    """Panda3D drawing into a window that belongs to somebody else.
 
-    `ShowBase` smie v procese existovať **len raz**, takže aj tento renderer
-    je efektívne singleton — druhá inštancia by spadla.
+    `ShowBase` may exist **only once** per process, which makes this renderer
+    effectively a singleton — a second instance would fail.
     """
 
     def __init__(
@@ -70,8 +70,8 @@ class EmbeddedRenderer:
         from direct.showbase.ShowBase import ShowBase
         from panda3d.core import WindowProperties, loadPrcFileData
 
-        # `window-type none` odloží vytvorenie okna — otvoriť ho treba až
-        # s odkazom na rodiča, inak by Panda3D otvorilo vlastné samostatné okno.
+        # `window-type none` defers creating the window: it has to be opened with
+        # a reference to the parent, or Panda3D would open its own separate one.
         loadPrcFileData("", "window-type none")
         self._base: Any = ShowBase()
 
@@ -90,20 +90,21 @@ class EmbeddedRenderer:
         self._highlighted_id: str | None = None
         self._controller = OrbitController(self._base)
         self._controller.enable()
-        logger.info("vložený renderer pripravený", size=(width, height))
+        logger.info("embedded renderer ready", size=(width, height))
 
-    # -- životný cyklus -----------------------------------------------------
+    # -- lifecycle ----------------------------------------------------------
 
     def step(self) -> None:
-        """Vykreslí jeden snímok."""
+        """Draw one frame."""
         self._base.taskMgr.step()
 
     def resize(self, width: int, height: int) -> None:
-        """Prispôsobí okno novej veľkosti hostiteľského widgetu.
+        """Follow the host widget to a new size.
 
-        Origin sa **zámerne nenastavuje**: pri zmene veľkosti ho Windows
-        u vloženého okna prepočíta voči obrazovke, nie voči rodičovi, a okno
-        by ušlo mimo widget (namerané: origin skočil na -640).
+        The origin is **deliberately left alone**: on a resize, Windows
+        recalculates it for an embedded window against the screen rather than
+        against the parent, and the window would wander outside the widget
+        (measured: the origin jumped to -640).
         """
         from panda3d.core import WindowProperties
 
@@ -115,7 +116,7 @@ class EmbeddedRenderer:
         self._base.win.requestProperties(properties)
 
     def shutdown(self) -> None:
-        """Uvoľní ovládanie. Idempotentné."""
+        """Release camera control. Idempotent."""
         self._controller.disable()
 
     # -- scene contents -----------------------------------------------------

@@ -14,6 +14,23 @@ uv sync --all-extras
 Projekt vyžaduje **Python 3.12** — `panda3d` ani `cadquery-ocp` nemajú wheels pre 3.13+.
 `uv` si správnu verziu stiahne sám, systémový Python meniť netreba.
 
+### Desktopová aplikácia
+
+```bash
+uv run pssim ui
+```
+
+Otvorí okno s hlavným menu. Bez PLC, bez definície stroja.
+
+| Menu | Položka | Čo robí |
+|---|---|---|
+| `File` | `Exit` (Ctrl+Q) | ukončí aplikáciu |
+| `Open` | `Open 3D file…` (Ctrl+O) | dialóg na výber STEP súboru |
+
+`Open` zatiaľ súbor **len vyberie** — zapamätá si cestu, ukáže ju v titulku
+a v stavovom riadku a vyšle signál `file_opened`. Načítanie geometrie
+a zobrazenie vo viewporte pribudnú ako ďalší krok.
+
 ### Demo bez PLC a bez vlastného CAD
 
 `machines/demo.yaml` beží na testovacej geometrii a na simulovanom PLC, takže
@@ -96,6 +113,9 @@ Pred commitom musí prejsť `ruff check` aj `pytest tests/unit`.
   (`uv run pytest -m integration`).
 - `tests/integration/` s markerom `cad` — import STEP, vyžaduje `uv sync --extra cad`
   (`uv run pytest -m cad`).
+- `tests/integration/` s markerom `ui` — okno a menu, vyžaduje `uv sync --extra ui`
+  (`uv run pytest -m ui`). Bežia headless cez `QT_QPA_PLATFORM=offscreen`,
+  žiadne okno sa neotvára.
 
 Testovací STEP súbor `tests/data/fixture.step` je vo verzovaní (50 kB).
 Vygeneruje ho `uv run python tools/make_step_fixture.py` — obsahuje zámerne
@@ -113,7 +133,7 @@ duplicitné názvy dielov, otočený diel a diel bez farby.
 | `cad/step_import` — čítanie STEP cez OpenCASCADE | **overené** proti `tests/data/fixture.step` (35 testov): assembly tree, názvy, farby, jednotky, rotácie, geometria, cache |
 | `viz/scene_builder`, `viz/transforms` | hotové, pokryté testami (bez Panda3D) |
 | `viz/mesh_loader`, `viz/app` — scéna a render loop | **overené** headless testami celej reťaze (29 testov) aj reálnym spustením |
-| `ui/` — PySide6 shell | neimplementované |
+| `ui/` — PySide6 shell | okno a menu hotové (18 testov); viewport a načítanie súboru zatiaľ nie |
 
 Celá reťaz **STEP → cache → scéna → hodnota z PLC → poloha dielu** je pokrytá
 testami v `tests/integration/test_viz_scene.py`, ktoré bežia bez otvorenia okna.

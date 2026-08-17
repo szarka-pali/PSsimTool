@@ -22,11 +22,13 @@ pre 3.13+). `uv` si správnu verziu stiahne sám.
 | Účel | Príkaz |
 |---|---|
 | Inštalácia závislostí | `uv sync --all-extras` |
-| Spustenie lokálne | `uv run pssim run machines/priklad.yaml` |
+| Spustenie desktopovej appky | `uv run pssim ui` |
+| Spustenie so živým PLC | `uv run pssim run machines/priklad.yaml` |
 | Mock PLC (druhý terminál) | `uv run pssim mock-server` |
 | **Testy (rýchle)** | `uv run pytest tests/unit -q` |
 | Testy proti mock PLC | `uv run pytest -m integration` |
 | Testy importu STEP | `uv run pytest -m cad` (treba `uv sync --extra cad`) |
+| Testy okna (headless) | `uv run pytest -m ui` (treba `uv sync --extra ui`) |
 | Testy (všetky, pomalé) | `uv run pytest` |
 | Lint + formát | `uv run ruff format . && uv run ruff check --fix .` |
 | Typová kontrola | `uv run pyright` |

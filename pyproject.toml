@@ -123,5 +123,6 @@ markers = [
     "integration: vyžaduje mock OPC UA server (uv run pytest -m integration)",
     "viz: vyžaduje Panda3D a grafický kontext",
     "cad: vyžaduje OpenCASCADE (cadquery-ocp)",
+    "ui: vyžaduje PySide6 (beží headless cez QT_QPA_PLATFORM=offscreen)",
 ]
 asyncio_mode = "auto"

@@ -64,6 +64,21 @@ def main(log_level: LogLevelOpt = None) -> None:
 
 
 @app.command()
+def ui() -> None:
+    """Spustí desktopovú aplikáciu.
+
+    Zatiaľ len okno s menu — bez PLC a bez definície stroja.
+    """
+    try:
+        from pssim.ui.main_window import run
+    except ImportError as exc:  # PySide6 je voliteľná závislosť
+        typer.echo("PySide6 nie je nainštalované — spusti `uv sync --extra ui`", err=True)
+        raise typer.Exit(code=1) from exc
+
+    raise typer.Exit(code=run())
+
+
+@app.command()
 def validate(machine: MachineArg) -> None:
     """Overí definíciu stroja bez pripojenia k PLC a bez otvorenia okna."""
     from pssim.config.loader import load_machine

@@ -1,116 +1,116 @@
-# Import STEP cez OpenCASCADE
+# Importing STEP through OpenCASCADE
 
-Referenčný dokument. Načítaj ho, keď pracuješ na `src/pssim/cad/`.
+A reference document. Load it when working on `src/pssim/cad/`.
 
-> **Overené proti `cadquery-ocp 7.9.3.1.1`** (OCCT 7.9) na `tests/data/fixture.step`.
-> Testy: `uv run pytest -m cad`. Ak povýšiš OCP, **prejdi tieto testy skôr,
-> než uveríš tomuto dokumentu** — bindings sa medzi verziami menia v detailoch.
+> **Verified against `cadquery-ocp 7.9.3.1.1`** (OCCT 7.9) on `tests/data/fixture.step`.
+> Tests: `uv run pytest -m cad`. If you upgrade OCP, **run those tests before you believe
+> this document** — the bindings change in details between versions.
 
-## Pasce v OCP bindings, ktoré stáli čas
+## Traps in the OCP bindings that cost time
 
-Toto sú konkrétne veci, ktoré nesedeli s dokumentáciou OCCT ani s intuíciou.
-Ak niečo hádže `TypeError` alebo `ImportError`, pozri sem najprv.
+These are the concrete things that did not match the OCCT documentation or intuition.
+If something throws a `TypeError` or an `ImportError`, look here first.
 
-| Čakal by si | V skutočnosti (OCP 7.9) |
+| What you would expect | What it actually is (OCP 7.9) |
 |---|---|
-| `STEPCAFControlReader` | **`STEPCAFControl_Reader`** — s podtržníkom. Rovnako `STEPCAFControl_Writer`. |
-| `shape_tool.IsAssembly(label)` | **`XCAFDoc_ShapeTool.IsAssembly_s(label)`** — statická. Rovnako `GetComponents_s`, `GetLocation_s`, `GetShape_s`, `IsReference_s`, `GetReferredShape_s`. |
-| `shape_tool.GetFreeShapes(seq)` | inštančná, **bez** `_s`. Nekonzistentné s predchádzajúcim riadkom, ale je to tak. |
-| `color_tool.GetColor(label, ...)` | prijíma **`TopoDS_Shape`, nie `TDF_Label`** — napriek dokumentácii OCCT. Najprv `GetShape_s(label)`. |
-| `BRep_Tool.Triangulation_s(shape, loc)` | chce **`TopoDS_Face`**. `TopExp_Explorer.Current()` vracia `TopoDS_Shape` → pretypuj cez **`TopoDS.Face_s(...)`**. |
-| `TDocStd_Document(...)` stačí | **nestačí.** Dokument musí prejsť cez `XCAFApp_Application.GetApplication_s().NewDocument("MDTV-XCAF", doc)`, inak nemá XCAF atribúty a nástroje nad ním nič nenájdu. |
-| statické metódy majú `_s` | platí v `OCP`, **neplatí v `pythonocc-core`**. Ak sa niečo nenájde, skús obe. |
+| `STEPCAFControlReader` | **`STEPCAFControl_Reader`** — with an underscore. Likewise `STEPCAFControl_Writer`. |
+| `shape_tool.IsAssembly(label)` | **`XCAFDoc_ShapeTool.IsAssembly_s(label)`** — static. Likewise `GetComponents_s`, `GetLocation_s`, `GetShape_s`, `IsReference_s`, `GetReferredShape_s`. |
+| `shape_tool.GetFreeShapes(seq)` | an instance method, **without** `_s`. Inconsistent with the line above, but that is how it is. |
+| `color_tool.GetColor(label, ...)` | takes a **`TopoDS_Shape`, not a `TDF_Label`** — despite the OCCT documentation. Call `GetShape_s(label)` first. |
+| `BRep_Tool.Triangulation_s(shape, loc)` | wants a **`TopoDS_Face`**. `TopExp_Explorer.Current()` returns a `TopoDS_Shape` → cast with **`TopoDS.Face_s(...)`**. |
+| `TDocStd_Document(...)` is enough | **it is not.** The document must go through `XCAFApp_Application.GetApplication_s().NewDocument("MDTV-XCAF", doc)`, otherwise it has no XCAF attributes and the tools find nothing in it. |
+| static methods have `_s` | true in `OCP`, **not true in `pythonocc-core`**. If something is not found, try both. |
 
-Pravidlo, ktoré z toho plynie: **nepíš viac než jedno neoverené volanie naraz.**
-Vypíš si `dir(Trieda)` a `Trieda.metoda.__doc__` — pybind11 do docstringu generuje
-kompletné signatúry všetkých preťažení.
+The rule that follows: **do not write more than one unverified call at a time.** Print
+`dir(Class)` and `Class.method.__doc__` — pybind11 generates the complete signatures of every
+overload into the docstring.
 
-## Prečo CAF a nie obyčajný reader
+## Why CAF and not the plain reader
 
 | | `STEPControl_Reader` | `STEPCAFControlReader` |
 |---|---|---|
-| Geometria | áno | áno |
-| Assembly tree s názvami | **nie** | áno |
-| Transformácie inštancií | zliate do shape | áno, samostatne |
-| Farby a materiály | nie | áno |
-| Vhodné pre PSsimTool | **nie** | áno |
+| Geometry | yes | yes |
+| Assembly tree with names | **no** | yes |
+| Instance transformations | fused into the shape | yes, separately |
+| Colours and materials | no | yes |
+| Suitable for PSsimTool | **no** | yes |
 
-Bez assembly tree by sa kĺby nedali namapovať na diely — musel by si ich identifikovať
-podľa geometrie, čo je nerobiteľné.
+Without the assembly tree the joints could not be mapped onto parts — you would have to
+identify them from their geometry, which is not doable.
 
-## Postup
+## The procedure
 
 ```python
 from OCP.IFSelect import IFSelect_ReturnStatus
-from OCP.STEPCAFControl import STEPCAFControl_Reader  # POZOR: s podtržníkom
+from OCP.STEPCAFControl import STEPCAFControl_Reader  # CAREFUL: with an underscore
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDocStd import TDocStd_Document
 from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDoc import XCAFDoc_DocumentTool
 
-# 1) XCAF dokument — MUSÍ prejsť cez XCAFApp_Application, inak nemá
-#    inicializované XCAF atribúty a nástroje nad ním nič nenájdu.
+# 1) the XCAF document — it MUST go through XCAFApp_Application, otherwise it has
+#    no initialised XCAF attributes and the tools find nothing in it.
 application = XCAFApp_Application.GetApplication_s()
 doc = TDocStd_Document(TCollection_ExtendedString("pssim"))
 application.NewDocument(TCollection_ExtendedString("MDTV-XCAF"), doc)
 
-# 2) načítanie
+# 2) reading
 reader = STEPCAFControl_Reader()
 reader.SetColorMode(True)
 reader.SetNameMode(True)
 reader.SetLayerMode(True)
-status = reader.ReadFile(str(path))  # chce str, nie Path
+status = reader.ReadFile(str(path))  # wants a str, not a Path
 if status != IFSelect_ReturnStatus.IFSelect_RetDone:
     raise CadImportError(...)
 if not reader.Transfer(doc):
     raise CadImportError(...)
 
-# 3) nástroje na prechádzanie
+# 3) the tools for walking the tree
 shape_tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
 color_tool = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
 ```
 
-Návratové kódy sa **nehlásia výnimkami** — musíš ich testovať sám, inak dostaneš
-prázdny dokument a žiadnu chybu.
+Return codes are **not reported as exceptions** — you have to test them yourself, otherwise
+you get an empty document and no error.
 
-## Prechádzanie assembly tree
+## Walking the assembly tree
 
 ```python
 from OCP.TDF import TDF_Label, TDF_LabelSequence
 from OCP.XCAFDoc import XCAFDoc_ShapeTool
 
 free_shapes = TDF_LabelSequence()
-shape_tool.GetFreeShapes(free_shapes)  # inštančná, BEZ _s
+shape_tool.GetFreeShapes(free_shapes)  # an instance method, WITHOUT _s
 
-# Ostatné sú STATICKÉ (volajú sa na triede, nie na inštancii shape_tool):
-XCAFDoc_ShapeTool.IsAssembly_s(label)  # má potomkov
-XCAFDoc_ShapeTool.GetComponents_s(label, seq)  # potomkovia
-XCAFDoc_ShapeTool.IsReference_s(label)  # je to inštancia iného shape
-XCAFDoc_ShapeTool.GetReferredShape_s(label, out)  # na čo odkazuje (out = TDF_Label)
-XCAFDoc_ShapeTool.GetLocation_s(label)  # TopLoc_Location tejto inštancie
+# The rest are STATIC (called on the class, not on the shape_tool instance):
+XCAFDoc_ShapeTool.IsAssembly_s(label)  # has children
+XCAFDoc_ShapeTool.GetComponents_s(label, seq)  # the children
+XCAFDoc_ShapeTool.IsReference_s(label)  # it is an instance of another shape
+XCAFDoc_ShapeTool.GetReferredShape_s(label, out)  # what it refers to (out = TDF_Label)
+XCAFDoc_ShapeTool.GetLocation_s(label)  # the TopLoc_Location of this instance
 XCAFDoc_ShapeTool.GetShape_s(label)  # TopoDS_Shape
 ```
 
-Kľúčová vec, ktorú treba pochopiť: **inštancia (component) a definícia (referred
-shape) sú dva rôzne labely.** Ten istý diel použitý desaťkrát má jednu definíciu
-a desať inštancií, každú s vlastnou `TopLoc_Location`.
+The key thing to understand: **an instance (component) and a definition (referred shape) are
+two different labels.** The same part used ten times has one definition and ten instances,
+each with its own `TopLoc_Location`.
 
-Prakticky to znamená rozdelenie zdrojov:
+In practice that means splitting the sources:
 
-| Údaj | Ber z |
+| Datum | Take it from |
 |---|---|
-| poloha voči rodičovi | **inštancia** (`GetLocation_s(component_label)`) |
-| názov | **definícia** (`GetReferredShape_s` → `TDataStd_Name`) |
-| geometria | **definícia** |
-| farba | inštancia, s fallbackom na definíciu |
+| position relative to the parent | the **instance** (`GetLocation_s(component_label)`) |
+| name | the **definition** (`GetReferredShape_s` → `TDataStd_Name`) |
+| geometry | the **definition** |
+| colour | the instance, falling back to the definition |
 
-Ak čítaš názov z inštancie, dostaneš samé `Unnamed_*` — inštancie meno spravidla
-nemajú. Práve preto sa dá v Panda3D použiť `instanceTo()` a preto musíš generovať
-**stabilné cesty**, nie len názvy.
+If you read the name from the instance you get nothing but `Unnamed_*` — instances usually
+have no name. That is exactly why `instanceTo()` can be used in Panda3D, and why you have to
+generate **stable paths**, not just names.
 
-## Rotácia z transformácie
+## Rotation from a transformation
 
-`TopLoc_Location.Transformation()` dá `gp_Trsf`. Z neho:
+`TopLoc_Location.Transformation()` gives a `gp_Trsf`. From it:
 
 ```python
 from OCP.gp import gp_EulerSequence
@@ -119,30 +119,30 @@ translation = trsf.TranslationPart()  # gp_XYZ, .X()/.Y()/.Z()
 roll, pitch, yaw = trsf.GetRotation().GetEulerAngles(gp_EulerSequence.gp_Intrinsic_XYZ)
 ```
 
-`GetRotation()` vracia `gp_Quaternion`. Poradie `gp_Intrinsic_XYZ` zodpovedá
-konvencii `domain.machine.Transform.rpy` — ak ho zmeníš, rozsypú sa všetky
-existujúce `machines/*.yaml`.
+`GetRotation()` returns a `gp_Quaternion`. The order `gp_Intrinsic_XYZ` matches the
+convention of `domain.machine.Transform.rpy` — change it and every existing
+`machines/*.yaml` falls apart.
 
-Škáluj **len translačnú časť**. Uhly sú bezrozmerné.
+Scale **only the translation part**. Angles are dimensionless.
 
-## Stabilné cesty uzlov
+## Stable node paths
 
-`machines/*.yaml` sa odkazuje na uzly cestou. Formát:
+`machines/*.yaml` refers to nodes by path. The format:
 
 ```
 base/portal/Carriage[2]/Bolt[5]
 ```
 
-- segmenty oddelené `/`
-- `[n]` je **1-based index medzi rovnomennými siblingami**, pridáva sa len ak je
-  rovnomenných viac ako jeden
-- cesta musí byť **deterministická medzi importmi** — poradie ber z `GetComponents()`,
-  nikdy z `dict` iterácie ani zo `set`
+- segments separated by `/`
+- `[n]` is a **1-based index among siblings of the same name**, added only when there is more
+  than one of that name
+- the path must be **deterministic between imports** — take the order from `GetComponents()`,
+  never from `dict` iteration or from a `set`
 
-Duplicitné názvy sú v reálnych zostavách bežné (`Part1` desaťkrát). Bez indexovania
-by sa YAML odkazoval na nejednoznačný uzol.
+Duplicate names are common in real assemblies (`Part1` ten times). Without indexing, the YAML
+would refer to an ambiguous node.
 
-## Tesselácia
+## Tessellation
 
 ```python
 from OCP.BRep import BRep_Tool
@@ -152,46 +152,47 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
 BRepMesh_IncrementalMesh(shape, linear_deflection, False, angular_deflection, True)
-# argumenty: (shape, theLinDeflection, isRelative, theAngDeflection, isInParallel)
+# arguments: (shape, theLinDeflection, isRelative, theAngDeflection, isInParallel)
 
 explorer = TopExp_Explorer(shape, TopAbs_ShapeEnum.TopAbs_FACE)
 while explorer.More():
-    # Current() vracia TopoDS_Shape, Triangulation_s chce TopoDS_Face → pretypuj.
+    # Current() returns a TopoDS_Shape, Triangulation_s wants a TopoDS_Face → cast it.
     face = TopoDS.Face_s(explorer.Current())
     loc = TopLoc_Location()
     triangulation = BRep_Tool.Triangulation_s(face, loc)
-    if triangulation is None:  # BEŽNÝ prípad, nie chyba
+    if triangulation is None:  # a COMMON case, not an error
         explorer.Next()
         continue
-    # ... vrcholy: triangulation.Node(i), i od 1 do NbNodes()
-    # ... trojuholníky: triangulation.Triangle(i), indexy tiež 1-based
+    # ... vertices: triangulation.Node(i), i from 1 to NbNodes()
+    # ... triangles: triangulation.Triangle(i), indices are 1-based too
     explorer.Next()
 ```
 
-- **Indexy v OCC sú 1-based.** Toto je najčastejší off-by-one v celom importe.
-- `Triangulation_s()` môže vrátiť `None` — degenerované plochy sú v reálnych súboroch bežné.
-- Vrcholy sú v lokálnych súradniciach plochy, treba aplikovať `loc.Transformation()`.
-- Orientácia plochy (`face.Orientation()`) určuje, či treba obrátiť poradie indexov
-  trojuholníka. Ak zabudneš, normály budú naopak a model bude vyzerať „naruby".
-- `linear_deflection` je v jednotkách modelu, teda typicky **milimetroch** — nie v metroch.
+- **Indices in OCC are 1-based.** This is the most common off-by-one in the whole import.
+- `Triangulation_s()` may return `None` — degenerate faces are common in real files.
+- Vertices are in the face's local coordinates; `loc.Transformation()` has to be applied.
+- The face orientation (`face.Orientation()`) decides whether the triangle's index order has
+  to be flipped. Forget it and the normals point the wrong way and the model looks inside out.
+- `linear_deflection` is in the model's units, so typically **millimetres** — not metres.
 
-## Jednotky
+## Units
 
-STEP hlavička obsahuje jednotku, ale nie vždy dôveryhodne. Postup:
+The STEP header contains a unit, but not always a trustworthy one. The procedure:
 
-1. Skús ju prečítať zo súboru.
-2. Ak sa nedá, ber `units:` z `machines/*.yaml`.
-3. **Zapíš do cache metadát, ktorú si nakoniec použil.**
+1. Try to read it from the file.
+2. If that fails, take `units:` from `machines/*.yaml`.
+3. **Write the one you finally used into the cache metadata.**
 
-Škáluj **aj translačnú časť transformácií** z assembly tree, nie len vrcholy.
-Ak sa vrcholy zmenšia 1000× a offsety nie, model sa rozsype na kusy vzdialené kilometre.
+Scale **the translation part of the transformations too**, not only the vertices. If the
+vertices shrink by a factor of 1000 and the offsets do not, the model falls apart into pieces
+kilometres away from each other.
 
-## Formát cache
+## The cache format
 
 ```
 assets/cache/<hash>/
-  meta.json          povinné, viď nižšie
-  <path-slug>.bam    jeden mesh na definíciu shape (nie na inštanciu)
+  meta.json          required, see below
+  <path-slug>.bam    one mesh per shape definition (not per instance)
 ```
 
 `meta.json`:
@@ -216,32 +217,32 @@ assets/cache/<hash>/
 }
 ```
 
-`importer_version` **musíš zvýšiť**, keď zmeníš importér tak, že sa mení výstup.
-Inak sa bude ticho používať stará cache a nikto nepochopí, prečo sa zmena neprejavila.
+You **must bump** `importer_version` when you change the importer so that its output changes.
+Otherwise the old cache is used silently and nobody understands why the change had no effect.
 
-## Patológie reálnych STEP súborov
+## Pathologies of real STEP files
 
-Každú z týchto vecí ošetri explicitne a zaloguj. Nikdy nespadni s `AttributeError`
-z hlbín OCP — používateľ nemá ako zistiť, čo sa stalo.
+Handle each of these explicitly and log it. Never crash with an `AttributeError` from the
+depths of OCP — the user has no way of finding out what happened.
 
-| Patológia | Ako sa prejaví | Čo s tým |
+| Pathology | How it shows up | What to do |
 |---|---|---|
-| Plocha bez triangulácie | `Triangulation_s()` → `None` | preskoč, zaloguj počet |
-| Diel bez názvu | prázdny `TDataStd_Name` | `Unnamed_<tag>` |
-| Duplicitné názvy siblingov | nejednoznačná cesta | indexuj `[n]` |
-| Prázdny compound | shape bez plôch | preskoč, zaloguj |
-| Nulová/degenerovaná transformácia | diel v nule alebo zmizne | zaloguj varovanie, zachovaj |
-| Diel bez farby | `color_tool` nič nevráti | default šedá `[0.6, 0.6, 0.62, 1]` |
-| Obrovské súradnice (mm vs. m zámena) | stroj kilometre od kamery | skontroluj bounding box, varuj nad 1000 m |
-| Assembly zabalené vo viacerých úrovniach compoundov | zbytočne hlboký strom | nekolabuj — cesty musia zostať stabilné |
-| Tisíce dielov | tesselácia trvá minúty | preto je import samostatný príkaz, nie štart appky |
+| A face without triangulation | `Triangulation_s()` → `None` | skip it, log the count |
+| A part without a name | an empty `TDataStd_Name` | `Unnamed_<tag>` |
+| Duplicate sibling names | an ambiguous path | index them `[n]` |
+| An empty compound | a shape with no faces | skip it, log it |
+| A zero/degenerate transformation | the part sits at zero or disappears | log a warning, keep it |
+| A part without a colour | `color_tool` returns nothing | default grey `[0.6, 0.6, 0.62, 1]` |
+| Enormous coordinates (mm vs. m mix-up) | the machine is kilometres from the camera | check the bounding box, warn above 1000 m |
+| An assembly wrapped in several levels of compounds | a needlessly deep tree | do not collapse it — paths must stay stable |
+| Thousands of parts | tessellation takes minutes | which is why import is a separate command, not app startup |
 
-## Alternatívy, ktoré boli zvážené a zamietnuté
+## Alternatives that were considered and rejected
 
-| Nástroj | Prečo nie |
+| Tool | Why not |
 |---|---|
-| FreeCAD headless | funguje, ale ťahá celý GUI stack; distribúcia by narástla o gigabajty |
-| `gmsh` | mieri na FEM meshe; assembly tree ani farby nezachová |
-| `assimp` | STEP nepodporuje vôbec |
-| komerčné SDK (Datakit, HOOPS) | licenčné náklady; STEP je pre náš prípad dostatočný |
-| `cadquery` / `build123d` (vysokoúrovňové) | postavené na tom istom OCP, ale skrývajú prístup k XCAF assembly tree |
+| FreeCAD headless | works, but drags in the whole GUI stack; the distribution would grow by gigabytes |
+| `gmsh` | aimed at FEM meshes; preserves neither the assembly tree nor colours |
+| `assimp` | does not support STEP at all |
+| commercial SDKs (Datakit, HOOPS) | licence costs; STEP is sufficient for our case |
+| `cadquery` / `build123d` (high level) | built on the same OCP, but they hide access to the XCAF assembly tree |

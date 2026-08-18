@@ -1,117 +1,119 @@
 ---
 name: domenovy-kontext
-description: Doménový model a slovník PSsimTool — kĺb (joint), kinematický reťazec, signál, definícia stroja, tesselácia, deflection, stale dáta, jednotky. Použi vždy, keď zadanie obsahuje doménový pojem, alebo pri práci s domain/, config/, alebo s definíciou stroja v machines/*.yaml.
+description: The PSsimTool domain model and glossary — joint, kinematic chain, signal, machine definition, tessellation, deflection, stale data, units. Use whenever a task mentions a domain term, or when working with domain/, config/, or a machine definition in machines/*.yaml.
 ---
 
-# Doménový kontext PSsimTool
+# PSsimTool domain context
 
-## Slovník
+## Glossary
 
-| Pojem | Znamená | Nezamieňať s |
+| Term | Meaning | Do not confuse with |
 |---|---|---|
-| **Machine** (stroj) | celá simulovaná zostava: geometria + kinematika + viazané signály | STEP súbor — ten je len geometria |
-| **Joint** (kĺb) | jeden stupeň voľnosti: `parent` uzol, `child` uzol, os, typ, limity | uzol assembly — kĺb je väzba *medzi* uzlami |
-| **Node** (uzol) | prvok CAD assembly tree, identifikovaný stabilnou cestou `base/portal/Part1` | OPC UA node — to je adresa premennej v PLC |
-| **Signal** (signál) | jedna hodnota z PLC v čase, s vlastnou históriou vzoriek | OPC UA node — node je adresa, signál je tok hodnôt |
-| **Binding** (väzba) | mapovanie `joint ↔ OPC UA node` vrátane `scale` a `offset` | joint samotný — ten o PLC nič nevie |
-| **JointPose** | výsledok kinematiky: posun + (os, uhol) pre jeden kĺb | transformácia scény — tú skladá Panda3D z hierarchie |
-| **Sample** (vzorka) | `(source_time, value)` — hodnota s časom vzniku v PLC | čas prijatia — ten je nepoužiteľný |
-| **StateStore** | thread-safe držiteľ posledných vzoriek všetkých signálov | scéna — tá je len konzument |
-| **Deflection** | tolerancia tesselácie: lineárna (mm) a uhlová (rad) | LOD — to je iná úroveň optimalizácie |
-| **Stale** (zastaraný) | signál, ktorý neprišiel dlhšie ako `stale_after_s` | chýbajúci — ten sa nikdy neobjavil |
-| **Render delay** | zámerné spozdenie vzorkovania, aby sa interpolovalo, nie extrapolovalo | latencia — tá je nechcená |
+| **Machine** | the whole simulated assembly: geometry + kinematics + bound signals | the STEP file — that is geometry only |
+| **Joint** | one degree of freedom: a `parent` node, a `child` node, an axis, a type, limits | an assembly node — a joint is a link *between* nodes |
+| **Node** | an element of the CAD assembly tree, identified by the stable path `base/portal/Part1` | an OPC UA node — that is the address of a variable in the PLC |
+| **Signal** | one value from the PLC over time, with its own history of samples | an OPC UA node — the node is an address, the signal is the stream of values |
+| **Binding** | the mapping `joint ↔ OPC UA node`, including `scale` and `offset` | the joint itself — that knows nothing about the PLC |
+| **JointPose** | the result of kinematics: translation + (axis, angle) for one joint | a scene transform — Panda3D composes that from the hierarchy |
+| **Sample** | `(source_time, value)` — a value with the time it came into being in the PLC | the arrival time — that one is useless |
+| **StateStore** | the thread-safe holder of the latest samples of all signals | the scene — that is only a consumer |
+| **Deflection** | the tessellation tolerance: linear (mm) and angular (rad) | LOD — that is a different level of optimisation |
+| **Stale** | a signal that has not arrived for longer than `stale_after_s` | missing — that one never appeared |
+| **Render delay** | the deliberate sampling delay, so that it interpolates rather than extrapolates | latency — that one is unwanted |
 
-## Invarianty, ktoré nesmie porušiť žiadna zmena
+## Invariants no change may break
 
-1. **Vnútri systému je jedna jednotka: metry a radiány.** Konverzia sa deje výhradne
-   na hranici (`config/loader.py`, `cad/`, `io/`). Ak nájdeš násobenie `0.001`
-   v `domain/` alebo `viz/`, je to bug.
-2. **Čas je vždy `SourceTimestamp` z PLC**, prevedený raz na internú monotónnu škálu
-   v sekundách (`float`). Offset PLC↔lokálny čas sa určí pri prvej vzorke a **nemení sa**.
-3. **`domain/` importuje výhradne stdlib.** Žiadny numpy, pydantic, panda3d, asyncua, OCP.
-4. **Kĺb nikdy nemení hodnotu sám.** Hodnota prichádza zvonku. Kinematika je čistá funkcia
-   `(joint, value) → JointPose`. Žiadny stav, žiadna pamäť predchádzajúceho snímku.
-5. **Kinematický reťazec je strom, nikdy graf.** Každý uzol má najviac jedného rodiča.
-   Cyklus a viacnásobný rodič sú `ConfigError` pri načítaní, nie runtime problém.
-6. **Chýbajúci alebo zastaraný signál nikdy nezhodí render.** Zobrazí sa posledná známa
-   hodnota, vizuálne označená ako zastaraná.
-7. **Cache je zahoditeľná.** Nič, čo sa nedá znovu vyrobiť z `models/` + `machines/`,
-   do `assets/cache/` nepatrí.
-8. **Do PLC sa nezapisuje.** Aplikácia je čitateľ.
-9. **Kĺb sa pohybuje relatívne k polohe z CAD.** STEP určuje, kde diel je v nule;
-   hodnota z PLC pridáva pohyb na vrch. Nikdy neprepisuj CAD polohu — diel by
-   pri prvej hodnote skočil do počiatku rodiča.
-10. **Geometria sa kľúčuje podľa definície dielu, nie podľa cesty uzla.** Ten istý
-    diel použitý desaťkrát má jeden mesh súbor a desať uzlov naň ukazuje.
+1. **Inside the system there is one unit: metres and radians.** Conversion happens
+   exclusively at the boundary (`config/loader.py`, `cad/`, `io/`). If you find a
+   multiplication by `0.001` in `domain/` or `viz/`, that is a bug.
+2. **Time is always the `SourceTimestamp` from the PLC**, converted once onto the internal
+   monotonic scale in seconds (`float`). The PLC↔local time offset is determined on the first
+   sample and **does not change**.
+3. **`domain/` imports stdlib only.** No numpy, pydantic, panda3d, asyncua or OCP.
+4. **A joint never changes its value by itself.** The value arrives from outside. Kinematics
+   is a pure function `(joint, value) → JointPose`. No state, no memory of the previous frame.
+5. **The kinematic chain is a tree, never a graph.** Every node has at most one parent.
+   A cycle or multiple parents is a `ConfigError` at load time, not a runtime problem.
+6. **A missing or stale signal never brings down the render.** The last known value is shown,
+   visually marked as stale.
+7. **The cache is disposable.** Nothing that cannot be rebuilt from `models/` + `machines/`
+   belongs in `assets/cache/`.
+8. **Nothing is written to the PLC.** The application is a reader.
+9. **A joint moves relative to the placement from CAD.** The STEP file decides where the part
+   sits at zero; the value from the PLC adds movement on top. Never overwrite the CAD
+   placement — on the first value the part would jump to its parent's origin.
+10. **Geometry is keyed by part definition, not by node path.** The same part used ten times
+    has one mesh file and ten nodes pointing at it.
 
-## Typy kĺbov
+## Joint types
 
-| Typ | Hodnota signálu | Efekt |
+| Type | Signal value | Effect |
 |---|---|---|
-| `prismatic` | posun v metroch | translácia po `axis` |
-| `revolute` | uhol v radiánoch | rotácia okolo `axis` |
-| `fixed` | ignoruje sa | žiadny pohyb, len pevný offset v hierarchii |
+| `prismatic` | displacement in metres | translation along `axis` |
+| `revolute` | angle in radians | rotation about `axis` |
+| `fixed` | ignored | no movement, only a fixed offset in the hierarchy |
 
-`axis` je jednotkový vektor v súradnicovom systéme **rodiča**, nie v globálnom.
-Neznormalizovaná os je `ConfigError` — nie tichá normalizácia, lebo dĺžka vektora
-by inak nenápadne škálovala pohyb.
+`axis` is a unit vector in the **parent's** coordinate system, not in the global one.
+An unnormalised axis is a `ConfigError` — not silent normalisation, because the length of the
+vector would otherwise scale the movement unnoticed.
 
-## Životný cyklus hodnoty signálu
+## The life of a signal value
 
 ```
-PLC premenná
+PLC variable
   │ OPC UA subscription, SourceTimestamp
   ▼
-raw hodnota (jednotky PLC: mm, stupne, inkrementy)
-  │ binding: value * scale + offset        ← JEDINÉ miesto konverzie
+raw value (PLC units: mm, degrees, increments)
+  │ binding: value * scale + offset        ← THE ONLY place of conversion
   ▼
-Sample(source_time_s, value)  v metroch / radiánoch
-  │ StateStore.put()  (vlákno B, pod lockom)
+Sample(source_time_s, value)  in metres / radians
+  │ StateStore.put()  (thread B, under the lock)
   ▼
-SignalBuffer — ring buffer posledných N vzoriek
-  │ sample_at(t = now - render_delay)  → lineárna interpolácia
+SignalBuffer — a ring buffer of the last N samples
+  │ sample_at(t = now - render_delay)  → linear interpolation
   ▼
-hodnota kĺbu
-  │ domain/kinematics.joint_pose(joint, value)  → clamp na limity
+joint value
+  │ domain/kinematics.joint_pose(joint, value)  → clamped to the limits
   ▼
 JointPose(translation, rotation_axis, rotation_angle_rad)
   │ viz/ → NodePath.setPos() / setQuat()
   ▼
-obrazovka
+the screen
 ```
 
-Každý krok tohto reťazca má vlastný test v `tests/unit/`. Keď niečo nesedí,
-lokalizuj to podľa tohto zoznamu — nehľadaj od obrazovky dozadu.
+Every step of this chain has its own test in `tests/unit/`. When something does not add up,
+locate it by this list — do not work backwards from the screen.
 
-## Stavy zdroja dát
+## Data source states
 
 ```
 DISCONNECTED ──► CONNECTING ──► CONNECTED ──► DEGRADED
      ▲               │              │             │
      └───────────────┴──────────────┴─────────────┘
-                   (reconnect, exponenciálny backoff, strop 30 s)
+                   (reconnect, exponential backoff, capped at 30 s)
 ```
 
-- `CONNECTED` — spojenie žije a všetky signály sú svieže.
-- `DEGRADED` — spojenie žije, ale aspoň jeden signál je `stale`. **Renderuje sa ďalej.**
-- Prechod do `DISCONNECTED` **nezmaže** dáta v `StateStore` — scéna zostane stáť
-  na poslednom známom stave, označená ako zastaraná.
+- `CONNECTED` — the connection is alive and every signal is fresh.
+- `DEGRADED` — the connection is alive, but at least one signal is `stale`.
+  **Rendering continues.**
+- A transition to `DISCONNECTED` **does not clear** the data in `StateStore` — the scene
+  stays on the last known state, marked as stale.
 
-Implementácia: `src/pssim/io/base.py` (`SourceStatus`). Každý nový stav pridaj **aj tam**,
-inak sa HUD a `DEGRADED` logika obídu.
+Implementation: `src/pssim/io/base.py` (`SourceStatus`). Add every new state **there too**,
+or the HUD and the `DEGRADED` logic get bypassed.
 
-## Podrobnosti
+## Details
 
-Ak potrebuješ hlbšie detaily, prečítaj až podľa potreby:
+If you need deeper detail, read these only when you actually need them:
 
-- @referencie/opcua-mapovanie.md — schéma `machines/*.yaml`, typy OPC UA, prevody jednotiek,
-  nastavenia subscription a známe zvláštnosti serverov
-- @referencie/step-import.md — postup OpenCASCADE volaní, štruktúra XCAF dokumentu,
-  formát cache metadát, známe patológie reálnych STEP súborov
+- @referencie/opcua-mapovanie.md — the `machines/*.yaml` schema, OPC UA types, unit
+  conversions, subscription settings and known server quirks
+- @referencie/step-import.md — the sequence of OpenCASCADE calls, the structure of an XCAF
+  document, the cache metadata format, known pathologies of real STEP files
 
 <!--
-Súbory v podadresároch skillu sa NEnačítajú automaticky. Claude ich prečíta,
-až keď to bude podľa instrukcií vyššie potrebovať. To je pointa progresívneho
-odhaľovania: popis skillu (1 riadok) je v kontexte vždy, telo skillu pri jeho
-vyvolaní, referencie až na požiadanie.
+Files in a skill's subdirectories are NOT loaded automatically. Claude reads them only when
+the instructions above make it necessary. That is the point of progressive disclosure: the
+skill description (1 line) is always in context, the skill body when it is invoked, and the
+references only on request.
 -->

@@ -1,59 +1,62 @@
 ---
 name: nova-funkcia
-description: Riadený postup implementácie novej funkcionality — od zadania cez plán a testy po commit. Použi, keď treba pridať novú funkciu, endpoint, modul alebo väčšiu zmenu správania.
+description: A guided procedure for implementing new functionality — from the brief through a plan and tests to the commit. Use when a new feature, endpoint, module or larger behavioural change has to be added.
 ---
 
-# Nová funkcionalita: $ARGUMENTS
+# New functionality: $ARGUMENTS
 
-Postupuj po fázach. **Po fáze 2 sa zastav a nechaj si plán schváliť.**
-Neposúvaj sa dopredu, kým predchádzajúca fáza nie je hotová.
+Work through the phases. **After phase 2, stop and have the plan approved.**
+Do not move forward until the previous phase is finished.
 
-## Fáza 1 — Pochopenie (nič needituj)
+## Phase 1 — Understanding (edit nothing)
 
-1. Zisti, kde v codebase zmena patrí. Nájdi **najbližší analogický existujúci modul**
-   a prečítaj ho celý — to je tvoj vzor.
-2. Nájdi, kto bude nový kód volať, a čo bude volať on.
-3. Prečítaj existujúce testy analogického modulu.
-4. Napíš, čo si zistil: dotknuté súbory, existujúci vzor, ktorý budeš nasledovať.
+1. Work out where in the codebase the change belongs. Find the **closest analogous existing
+   module** and read all of it — that is your pattern.
+2. Find who will call the new code, and what it will call.
+3. Read the existing tests of the analogous module.
+4. Write down what you found: the files affected, and the existing pattern you will follow.
 
-**Ak je zadanie nejednoznačné, spýtaj sa TERAZ.** Konkrétne otázky, nie „chceš, aby som pokračoval".
-Typicky nejasné: chybové stavy, spätná kompatibilita, správanie pri prázdnom vstupe,
-kto to smie volať, čo sa má logovať.
+**If the brief is ambiguous, ask NOW.** Concrete questions, not "shall I carry on".
+Typically unclear: error states, backwards compatibility, behaviour on empty input, who is
+allowed to call it, what should be logged.
 
-## Fáza 2 — Plán (nič needituj)
+## Phase 2 — The plan (edit nothing)
 
-Napíš plán v tomto formáte:
+Write the plan in this format:
 
 ```
-Cieľ:        jedna veta, merateľná.
-Nemení sa:   čo výslovne zostáva ako je (verejné API, schéma, ...).
-Kroky:
-  1. [súbor] čo tam pridám/zmením
+Goal:        one sentence, measurable.
+Unchanged:   what explicitly stays as it is (public API, schema, ...).
+Steps:
+  1. [file] what I will add/change there
   2. ...
-Testy:       konkrétne prípady, ktoré budú dokazovať, že to funguje.
-Riziká:      čo sa môže pokaziť inde v systéme.
-Otvorené:    rozhodnutia, ktoré potrebujem od človeka.
+Tests:       the concrete cases that will prove it works.
+Risks:       what could break elsewhere in the system.
+Open:        decisions I need from a human.
 ```
 
-Ak plán presahuje ~8 krokov alebo ~5 súborov, navrhni rozdelenie na samostatné PR.
+If the plan exceeds about 8 steps or about 5 files, propose splitting it into separate PRs.
 
-**STOP. Čakaj na schválenie plánu.**
+**STOP. Wait for the plan to be approved.**
 
-## Fáza 3 — Testy najprv
+## Phase 3 — Tests first
 
-Napíš testy z fázy 2. Spusti ich. **Ukáž, že padajú, a prečo padajú** —
-padajúci test, ktorý padá z nesprávneho dôvodu (import error, typo), nič nedokazuje.
+Write the tests from phase 2. Run them. **Show that they fail, and why they fail** — a
+failing test that fails for the wrong reason (import error, typo) proves nothing.
 
-## Fáza 4 — Implementácia
+## Phase 4 — Implementation
 
-- Rob **najmenšiu** zmenu, ktorá testy rozsvieti. Žiadna funkcionalita „do zásoby".
-- Po každom logickom kroku spusti rýchle testy a lint.
-- Ak zistíš, že plán bol zlý, **zastav sa a povedz to** — neimprovizuj potichu iný návrh.
+- Make the **smallest** change that turns the tests green. No functionality "in reserve".
+- After every logical step run the fast tests and the linter.
+- If you find the plan was wrong, **stop and say so** — do not quietly improvise a different
+  design.
 
-## Fáza 5 — Uzavretie
+## Phase 5 — Closing
 
-1. Spusti celú testovaciu sadu, lint a typovú kontrolu. Ukáž výstup.
-2. Prejdi `git diff` a odstráň: debug výpisy, zakomentovaný kód, nesúvisiace zmeny formátovania.
-3. Nechaj to skontrolovať agentom `code-reviewer` a nálezy vyrieš alebo vysvetli, prečo ich ignoruješ.
-4. Commituj podľa `.claude/rules/git-workflow.md`.
-5. Zhrnutie: čo je hotové, čo nie je pokryté, čo si zámerne nechal na neskôr.
+1. Run the whole test suite, the linter and the type check. Show the output.
+2. Go through `git diff` and remove: debug prints, commented-out code, unrelated formatting
+   changes.
+3. Have it checked by the `code-reviewer` agent and resolve the findings, or explain why you
+   are ignoring them.
+4. Commit according to `.claude/rules/git-workflow.md`.
+5. A summary: what is done, what is not covered, what you deliberately left for later.

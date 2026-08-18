@@ -1,45 +1,45 @@
-# Preklady UI
+# UI translations
 
-Zdrojový jazyk je **angličtina** — texty sú tak napísané priamo v kóde. Tento
-adresár obsahuje preklady do ostatných jazykov.
+The source language is **English** — the strings are written that way directly in the code.
+This directory holds the translations into the other languages.
 
-## Súbory
+## The files
 
-| Prípona | Čo to je | Verzovať? |
+| Extension | What it is | Version it? |
 |---|---|---|
-| `.ts` | XML s textami a prekladmi, edituje sa | **áno** |
-| `.qm` | skompilovaná binárka, číta ju appka | **áno** — inak by si každý musel inštalovať Qt nástroje |
+| `.ts` | XML with the strings and translations, this is what gets edited | **yes** |
+| `.qm` | the compiled binary, read by the application | **yes** — otherwise everyone would have to install the Qt tools |
 
-## Pridanie jazyka
+## Adding a language
 
-Extrakcia textov zo zdrojákov do `.ts`:
+Extracting the strings from the sources into a `.ts`:
 
 ```bash
 uv run pyside6-lupdate src/pssim/ui/main_window.py src/pssim/ui/placement_dialog.py src/pssim/ui/loader.py -ts src/pssim/ui/translations/pssim_sk.ts
 ```
 
-Preklad: otvor `.ts` v Qt Linguist (`uv run pyside6-linguist`), alebo ho uprav
-ručne — je to čitateľné XML.
+Translating: open the `.ts` in Qt Linguist (`uv run pyside6-linguist`), or edit it by hand —
+it is readable XML.
 
-Kompilácia na `.qm`:
+Compiling to `.qm`:
 
 ```bash
 uv run pyside6-lrelease src/pssim/ui/translations/pssim_sk.ts
 ```
 
-Nakoniec pridaj kód jazyka do `LANGUAGES` v `src/pssim/ui/i18n.py`. Bez toho ho
-appka ponúkať nebude, aj keby `.qm` existoval.
+Finally add the language code to `LANGUAGES` in `src/pssim/ui/i18n.py`. Without that the
+application will not offer it, even if the `.qm` exists.
 
-## Po zmene textov v kóde
+## After changing strings in the code
 
-`lupdate` spusti znovu — doplní nové texty a tie, ktoré sa zmenili, označí ako
-`type="unfinished"`. Staré preklady sa nezahodia.
+Run `lupdate` again — it adds the new strings and marks the changed ones as
+`type="unfinished"`. Existing translations are not thrown away.
 
-## Na čo nezabudnúť
+## What not to forget
 
-- Nové texty pre používateľa **vždy** obaľ do `self.tr()` (v `QObject`)
-  alebo `QCoreApplication.translate("Kontext", "text")` (na module level).
-  Neobalený text sa do `.ts` nedostane a nikdy sa nepreloží.
-- Nespájaj vety z kúskov (`tr("Loaded") + " " + name`) — v inom jazyku môže byť
-  poradie iné. Použi zástupné znaky: `tr("Loaded {0}").format(name)`.
-- Logy sa **neprekladajú**. Sú pre vývojára, nie pre používateľa.
+- **Always** wrap new user-facing text in `self.tr()` (inside a `QObject`) or
+  `QCoreApplication.translate("Context", "text")` (at module level). Unwrapped text never
+  reaches the `.ts` and will never be translated.
+- Do not assemble sentences from pieces (`tr("Loaded") + " " + name`) — another language may
+  need a different order. Use placeholders: `tr("Loaded {0}").format(name)`.
+- Logs are **not translated**. They are for the developer, not for the user.

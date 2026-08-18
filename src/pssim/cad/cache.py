@@ -139,8 +139,8 @@ class CacheEntry:
         """Read the metadata. Verifies that the cache belongs to this key."""
         if not self.exists:
             raise CacheError(
-                f"cache pre tento import neexistuje: {self.directory}. "
-                f"Spusti `uv run pssim import-step <subor.step>`."
+                f"no cache exists for this import: {self.directory}. "
+                f"Run `uv run pssim import-step <file.step>`."
             )
         try:
             raw = json.loads(self.metadata_path.read_text(encoding="utf-8"))

@@ -30,10 +30,9 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class ViewerConfig:
-    """Nastavenia zobrazenia."""
+    """Window settings for a standalone run."""
 
     window_title: str = "PSsimTool"
-    show_hud: bool = True
     background: tuple[float, float, float] = (0.12, 0.13, 0.15)
 
 
@@ -208,12 +207,6 @@ class MachineViewer:
             )
             joint_quat = axis_angle_to_quat(pose.rotation_axis, pose.rotation_angle_rad)
             node_path.setQuat(LQuaternion(*multiply_quat(base_quat, joint_quat)))
-
-    def _parent_node_path(self, path: str, root: Any) -> Any:
-        parent_path = path.rsplit("/", 1)[0] if "/" in path else None
-        if parent_path is None:
-            return root
-        return self._node_paths.get(parent_path, root)
 
     @staticmethod
     def _apply_transform(node_path: Any, transform: Transform) -> None:

@@ -215,9 +215,6 @@ class OrbitCamera:
         # Dragging right moves the model right, which means moving the target left.
         return self.pan(-delta_x_px * world_per_pixel, delta_y_px * world_per_pixel)
 
-    def looking_at(self, target: Vec3) -> OrbitCamera:
-        return replace(self, target=target)
-
     def with_view(self, name: str) -> OrbitCamera:
         """Switch to a standard view.
 

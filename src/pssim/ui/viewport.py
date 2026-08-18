@@ -114,10 +114,6 @@ class Panda3DViewport(QWidget):
 
     # -- scene contents -----------------------------------------------------
 
-    @property
-    def is_ready(self) -> bool:
-        return self._renderer is not None
-
     def add_model(self, model_id: str, assembly: CadAssembly, cache_dir: Path) -> int:
         """Add a model. Returns the number of nodes with a missing mesh."""
         if self._renderer is None:

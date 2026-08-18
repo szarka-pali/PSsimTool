@@ -125,11 +125,6 @@ class EmbeddedRenderer:
     def controller(self) -> OrbitController:
         return self._controller
 
-    @property
-    def model_ids(self) -> tuple[str, ...]:
-        """Models currently in the scene, in insertion order."""
-        return tuple(self._models)
-
     def add_model(self, model_id: str, assembly: CadAssembly, cache_dir: Path) -> int:
         """Add a model to the scene under its own root and return the number of
         nodes whose mesh was missing from the cache.
@@ -248,10 +243,6 @@ class EmbeddedRenderer:
         root.setQuat(LQuaternion(*rpy_to_quat(placement.rpy)))
 
     # -- selection ----------------------------------------------------------
-
-    @property
-    def highlighted_id(self) -> str | None:
-        return self._highlighted_id
 
     def set_highlight(self, model_id: str | None) -> None:
         """Outline one model as selected, or clear the outline with `None`.

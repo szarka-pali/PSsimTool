@@ -81,10 +81,6 @@ class Joint:
                     f"joint {self.name!r}: the lower limit {low} is greater than the upper {high}"
                 )
 
-    @property
-    def has_limits(self) -> bool:
-        return self.limits is not None
-
 
 @dataclass(frozen=True, slots=True)
 class Machine:

@@ -20,7 +20,6 @@ from typing import Final
 
 from pssim.config.project import (
     CameraSpec,
-    ModelSpec,
     ProjectSpec,
     build_project,
     read_project,
@@ -179,15 +178,6 @@ class ProjectLoader:
         self._start_import(self._current.path)
         return True
 
-    def cancel(self) -> None:
-        """Abandon the rest of the queue.
-
-        Models already imported stay — a half-loaded project the user can see is
-        more useful than an empty window.
-        """
-        self._queue.clear()
-        self._current = None
-
     def finish(self) -> LoadPlan | None:
         """Called once the queue is empty. Returns the plan for final steps."""
         plan = self._plan
@@ -235,7 +225,3 @@ def load_plan_from_file(path: Path) -> LoadPlan:
         missing=len(plan.missing),
     )
     return plan
-
-
-def spec_names(models: tuple[ModelSpec, ...]) -> tuple[str, ...]:
-    return tuple(model.name for model in models)

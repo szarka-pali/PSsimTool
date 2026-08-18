@@ -102,8 +102,3 @@ def rest_pose(joint: Joint) -> JointPose:
     low, high = joint.limits
     initial = min(max(0.0, low), high)
     return joint_pose(joint, initial)
-
-
-def identity_pose() -> JointPose:
-    """The neutral pose — usable as a fallback when the joint is not known."""
-    return JointPose(translation=_ZERO, rotation_axis=(0.0, 0.0, 1.0), rotation_angle_rad=0.0)

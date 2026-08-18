@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -225,12 +225,3 @@ def build_project(
         selected=selected,
         camera=camera,
     )
-
-
-def project_summary(project: ProjectSpec) -> dict[str, Any]:
-    """Small dict for logging. Never contains full paths of customer files."""
-    return {
-        "version": project.version,
-        "models": len(project.models),
-        "has_camera": project.camera is not None,
-    }

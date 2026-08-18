@@ -33,10 +33,6 @@ class ScenePlan:
     joint_to_node: dict[str, str]
     """The mapping from a joint name to the path of the node that should move (`joint.child`)."""
 
-    @property
-    def flattenable_count(self) -> int:
-        return len(self.static_nodes)
-
 
 def plan_scene(machine: Machine, assembly: CadAssembly) -> ScenePlan:
     """Decide which nodes are moving.

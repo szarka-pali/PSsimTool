@@ -18,10 +18,6 @@ class ConfigError(PSsimError):
     """
 
 
-class KinematicsError(PSsimError):
-    """An invalid kinematic operation or an invalid kinematic chain."""
-
-
 class CadImportError(PSsimError):
     """Importing a CAD file failed, or the file is unusable."""
 

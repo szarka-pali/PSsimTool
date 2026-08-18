@@ -1,24 +1,24 @@
-"""Import STEP cez OpenCASCADE (XCAF).
+"""STEP import through OpenCASCADE (XCAF).
 
-Overené proti `cadquery-ocp 7.9.3` na `tests/data/fixture.step` —
-`tests/integration/test_step_import.py` (marker `cad`). **Po povýšení OCP tie
-testy vždy spusti**, bindings sa medzi verziami menia v detailoch.
+Verified against `cadquery-ocp 7.9.3` on `tests/data/fixture.step` —
+`tests/integration/test_step_import.py` (marker `cad`). **Always run those tests after
+upgrading OCP**; the bindings change in details between versions.
 
-Postup, pasce v bindings a známe patológie reálnych STEP súborov:
+The procedure, the traps in the bindings and known pathologies of real STEP files:
 `.claude/skills/domenovy-kontext/referencie/step-import.md`
 
-Modul má dve časti:
+The module has two parts:
 
-- **čistú** (`build_paths`, `scale_transform`, `cache_key_for`) — bez OCP,
-  testovaná v `tests/unit/cad/`
-- **OCP-závislú** (`read_step_assembly` a `_`-funkcie pod ňou) — testovaná
-  integračne proti fixture súboru
+- a **pure** one (`build_paths`, `scale_transform`, `cache_key_for`) — no OCP, tested in
+  `tests/unit/cad/`
+- an **OCP-dependent** one (`read_step_assembly` and the `_` functions below it) — tested
+  by integration against the fixture file
 """
 
-# OCP je balík re-exportných shimov (`OCP.TDF` → `OCP.OCP.TDF`), cez ktoré
-# pyright nevidí. Za behu sa všetko resolvuje správne — dokazujú to testy
-# s markerom `cad`. Preto je kontrola vypnutá pre celý súbor, nie ad hoc
-# na jednotlivých riadkoch.
+# OCP is a package of re-export shims (`OCP.TDF` → `OCP.OCP.TDF`) that pyright cannot
+# see through. At run time everything resolves correctly — the tests with the `cad`
+# marker prove it. That is why the check is disabled for the whole file rather than ad
+# hoc on individual lines.
 # pyright: reportAttributeAccessIssue=false
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class ImportSettings:
-    """Parametre jedného importu. Všetky vstupujú do cache kľúča."""
+    """The parameters of one import. All of them go into the cache key."""
 
     step_file: Path
     scale_to_m: float
@@ -52,15 +52,15 @@ class ImportSettings:
 
 @dataclass(frozen=True, slots=True)
 class RawNode:
-    """Uzol tak, ako ho vrátilo OCP — pred pridelením stabilnej cesty.
+    """A node as OCP returned it — before a stable path has been assigned.
 
-    Oddelenie od `CadNode` je zámerné: skladanie ciest je čistá logika s testami,
-    zatiaľ čo čítanie z OCP testovať v unit testoch nejde.
+    The separation from `CadNode` is deliberate: composing paths is pure logic with
+    tests, whereas reading from OCP cannot be tested in unit tests.
 
-    `mesh_key` je identita **definície** dielu (XCAF entry labelu), nie inštancie.
-    Ten istý diel použitý desaťkrát má desať `RawNode` s rovnakým `mesh_key`,
-    takže sa geometria do cache zapíše raz. Bez toho by zostava s tisíckou
-    skrutiek mala v cache tisíc kópií tej istej skrutky.
+    `mesh_key` is the identity of the part **definition** (the XCAF entry of the label),
+    not of the instance. The same part used ten times has ten `RawNode`s with the same
+    `mesh_key`, so the geometry is written into the cache once. Without that, an assembly
+    with a thousand screws would have a thousand copies of the same screw in the cache.
     """
 
     name: str
@@ -75,18 +75,18 @@ class RawNode:
         return self.mesh_key is not None
 
 
-# -- čistá časť: stabilné cesty -------------------------------------------
+# -- the pure part: stable paths -------------------------------------------
 
 
 def build_paths(roots: tuple[RawNode, ...]) -> CadAssembly:
-    """Priradí uzlom stabilné cesty a vráti plochý assembly.
+    """Assign stable paths to the nodes and return a flat assembly.
 
-    Index `[n]` (1-based) sa pridáva **len** rovnomenným siblingom — jeden
-    `Portal` zostane `base/Portal`, desať `Part1` bude `base/Part1[1]`..`[10]`.
+    The index `[n]` (1-based) is added **only** to siblings of the same name — a single
+    `Portal` stays `base/Portal`, ten `Part1`s become `base/Part1[1]`..`[10]`.
 
-    Poradie sa berie tak, ako prišlo z `GetComponents()`. Nikdy neiteruj cez
-    `dict` ani `set` — cesty musia byť medzi importmi deterministické, inak
-    sa `machines/*.yaml` rozbije po každom reimporte.
+    The order is taken as it came from `GetComponents()`. Never iterate over a `dict` or
+    a `set` — the paths have to be deterministic between imports, or `machines/*.yaml`
+    breaks after every reimport.
     """
     nodes: list[CadNode] = []
     root_paths = _walk_level(roots, prefix="", collected=nodes)
@@ -117,8 +117,8 @@ def _walk_level(
             CadNode(
                 path=path,
                 transform=node.transform,
-                # Názov meshu sa odvodzuje od DEFINÍCIE, nie od cesty — inštancie
-                # toho istého dielu tak ukazujú na jeden zdieľaný súbor.
+                # The mesh name is derived from the DEFINITION, not from the path — so
+                # instances of the same part point at one shared file.
                 mesh=mesh_filename(node.mesh_key) if node.mesh_key is not None else None,
                 color=node.color,
                 children=child_paths,
@@ -131,10 +131,10 @@ def _walk_level(
 
 
 def scale_transform(transform: Transform, scale_to_m: float) -> Transform:
-    """Preškáluje translačnú časť transformácie.
+    """Rescale the translation part of a transformation.
 
-    Rotácia sa neškáluje. Ak sa zabudne škálovať translácia, vrcholy sa zmenšia
-    a offsety nie — model sa rozsype na kusy vzdialené kilometre.
+    Rotation is not scaled. Forget to scale the translation and the vertices shrink while
+    the offsets do not — the model falls apart into pieces kilometres away from each other.
     """
     x, y, z = transform.xyz
     return Transform(xyz=(x * scale_to_m, y * scale_to_m, z * scale_to_m), rpy=transform.rpy)
@@ -149,26 +149,27 @@ def cache_key_for(settings: ImportSettings) -> CacheKey:
     )
 
 
-# -- časť závislá od OCP ---------------------------------------------------
+# -- the OCP-dependent part -------------------------------------------------
 
 
 def import_step(
     settings: ImportSettings, cache_root: Path, *, force: bool = False
 ) -> CacheMetadata:
-    """Naimportuje STEP do cache a vráti metadáta.
+    """Import a STEP into the cache and return the metadata.
 
-    Ak cache pre daný kľúč už existuje, načíta sa (pokiaľ nie je `force=True`).
+    If a cache for the given key already exists, it is read instead (unless
+    `force=True`).
     """
     if not settings.step_file.is_file():
         raise CadImportError(f"STEP súbor neexistuje: {settings.step_file}")
 
     entry = CacheEntry(root=cache_root, key=cache_key_for(settings))
     if entry.exists and not force:
-        logger.info("cache je aktuálna, preskakujem import", directory=str(entry.directory))
+        logger.info("cache is up to date, skipping the import", directory=str(entry.directory))
         return entry.read()
 
     logger.info(
-        "importujem STEP (môže to trvať minúty)",
+        "importing STEP (this may take minutes)",
         file=str(settings.step_file),
         units=settings.units,
     )
@@ -186,7 +187,7 @@ def import_step(
     _write_meshes(entry, meshes)
 
     logger.info(
-        "import hotový",
+        "import finished",
         nodes=len(assembly.nodes),
         meshes=len(meshes),
         triangles=assembly.triangle_count,
@@ -196,7 +197,7 @@ def import_step(
 
 
 def _write_meshes(entry: CacheEntry, meshes: dict[str, MeshData]) -> None:
-    """Zapíše geometriu do cache — jeden súbor na definíciu dielu."""
+    """Write the geometry into the cache — one file per part definition."""
     for mesh_key, mesh in meshes.items():
         if mesh.is_empty:
             continue
@@ -204,18 +205,18 @@ def _write_meshes(entry: CacheEntry, meshes: dict[str, MeshData]) -> None:
 
 
 def read_step_assembly(settings: ImportSettings) -> tuple[RawNode, ...]:
-    """Prečíta STEP a vráti korene assembly tree, bez geometrie.
+    """Read a STEP and return the roots of the assembly tree, without geometry.
 
-    Tenký obal nad `read_step()` pre prípady, keď geometria netreba
-    (validácia definície, diagnostika).
+    A thin wrapper over `read_step()` for the cases where the geometry is not needed
+    (validating a definition, diagnostics).
     """
     return read_step(settings)[0]
 
 
 def read_step(settings: ImportSettings) -> tuple[tuple[RawNode, ...], dict[str, MeshData]]:
-    """Prečíta STEP: assembly tree + geometria kľúčovaná podľa definície dielu.
+    """Read a STEP: the assembly tree + geometry keyed by part definition.
 
-    Overené proti `tests/data/fixture.step` (OCP 7.9.3) —
+    Verified against `tests/data/fixture.step` (OCP 7.9.3) —
     `tests/integration/test_step_import.py`.
     """
     doc = _open_document(settings.step_file)
@@ -233,7 +234,7 @@ def read_step(settings: ImportSettings) -> tuple[tuple[RawNode, ...], dict[str, 
             f"Súbor je prázdny alebo sa nepodaril transfer."
         )
 
-    # Geometria sa tesseluje raz na definíciu dielu; inštancie ju zdieľajú.
+    # Geometry is tessellated once per part definition; instances share it.
     meshes: dict[str, MeshData] = {}
     roots = tuple(
         _read_label(free_shapes.Value(index), color_tool, settings, meshes)
@@ -249,8 +250,8 @@ def _open_document(step_file: Path) -> Any:
     from OCP.TDocStd import TDocStd_Document
     from OCP.XCAFApp import XCAFApp_Application
 
-    # Dokument musí vzniknúť cez XCAFApp_Application, inak nemá inicializované
-    # XCAF atribúty a shape/color tool nad ním nefungujú.
+    # The document must be created through XCAFApp_Application, otherwise it has no
+    # initialised XCAF attributes and the shape/color tools do not work on it.
     application = XCAFApp_Application.GetApplication_s()
     doc = TDocStd_Document(TCollection_ExtendedString("pssim"))
     application.NewDocument(TCollection_ExtendedString("MDTV-XCAF"), doc)
@@ -260,8 +261,8 @@ def _open_document(step_file: Path) -> Any:
     reader.SetNameMode(True)
     reader.SetLayerMode(True)
 
-    # OCC nehlási chyby výnimkami — návratový kód sa MUSÍ testovať,
-    # inak dostaneš prázdny dokument a žiadnu chybu.
+    # OCC does not report errors as exceptions — the return code MUST be tested,
+    # or you get an empty document and no error.
     status = reader.ReadFile(str(step_file))
     if status != IFSelect_ReturnStatus.IFSelect_RetDone:
         raise CadImportError(f"{step_file}: STEP sa nedá prečítať (status {status})")
@@ -283,13 +284,13 @@ def _read_label(
     settings: ImportSettings,
     meshes: dict[str, MeshData],
 ) -> RawNode:
-    """Prečíta jeden label assembly tree rekurzívne.
+    """Read one label of the assembly tree recursively.
 
-    Kľúčová vec: **inštancia (component) a definícia (referred shape) sú dva
-    rôzne labely.** Meno a geometria sedia na definícii, poloha na inštancii.
-    Ten istý diel použitý desaťkrát má jednu definíciu a desať inštancií.
+    The key thing: **an instance (component) and a definition (referred shape) are two
+    different labels.** The name and the geometry sit on the definition, the position on
+    the instance. The same part used ten times has one definition and ten instances.
 
-    `meshes` sa priebežne dopĺňa — každá definícia sa tesseluje len raz.
+    `meshes` is filled in as we go — every definition is tessellated only once.
     """
     from OCP.TDF import TDF_LabelSequence
     from OCP.XCAFDoc import XCAFDoc_ShapeTool
@@ -297,8 +298,8 @@ def _read_label(
     transform = scale_transform(_label_transform(label), settings.scale_to_m)
     definition = _referred_label(label)
     name = _label_name(definition) or _label_name(label) or f"Unnamed_{label.Tag()}"
-    # Farba môže sedieť na inštancii aj na definícii; inštancia má prednosť,
-    # lebo ten istý diel môže byť v zostave dvakrát v rôznych farbách.
+    # The colour may sit on the instance as well as on the definition; the instance
+    # wins, because the same part may appear twice in an assembly in different colours.
     color = (
         _shape_color(XCAFDoc_ShapeTool.GetShape_s(label), color_tool)
         or _shape_color(XCAFDoc_ShapeTool.GetShape_s(definition), color_tool)
@@ -330,10 +331,10 @@ def _read_label(
 
 
 def _label_entry(label: Any) -> str:
-    """XCAF entry labelu (`0:1:1:3`) — stabilný identifikátor definície v dokumente.
+    """The XCAF entry of a label (`0:1:1:3`) — a stable identifier of a definition in the document.
 
-    Slúži ako kľúč zdieľaného meshu. Je stabilný v rámci jedného načítania
-    dokumentu, čo stačí — cache sa aj tak invaliduje hashom vstupného súboru.
+    Serves as the key of a shared mesh. It is stable within one loading of the document,
+    which is enough — the cache is invalidated by the hash of the input file anyway.
     """
     from OCP.TCollection import TCollection_AsciiString
     from OCP.TDF import TDF_Tool
@@ -344,7 +345,7 @@ def _label_entry(label: Any) -> str:
 
 
 def _referred_label(label: Any) -> Any:
-    """Definícia, na ktorú label odkazuje. Pre neinštanciu vráti label samotný."""
+    """The definition a label refers to. For a non-instance it returns the label itself."""
     from OCP.TDF import TDF_Label
     from OCP.XCAFDoc import XCAFDoc_ShapeTool
 
@@ -357,9 +358,9 @@ def _referred_label(label: Any) -> Any:
 
 
 def _label_name(label: Any) -> str | None:
-    """Názov uzla, alebo `None` ak ho label nemá.
+    """The name of a node, or `None` when the label has none.
 
-    Diel bez názvu je v reálnych súboroch bežný — volajúci musí mať fallback.
+    A part without a name is common in real files — the caller must have a fallback.
     """
     from OCP.TDataStd import TDataStd_Name
 
@@ -371,10 +372,11 @@ def _label_name(label: Any) -> str | None:
 
 
 def _label_transform(label: Any) -> Transform:
-    """Transformácia inštancie voči rodičovi: posun aj rotácia.
+    """The transformation of an instance relative to its parent: translation and rotation.
 
-    Rotácia sa z `gp_Trsf` vytiahne ako kvaternión a prevedie na roll/pitch/yaw
-    v poradí Intrinsic XYZ — to je konvencia `domain.machine.Transform.rpy`.
+    The rotation is pulled out of the `gp_Trsf` as a quaternion and converted into
+    roll/pitch/yaw in Intrinsic XYZ order — that is the convention of
+    `domain.machine.Transform.rpy`.
     """
     from OCP.gp import gp_EulerSequence
     from OCP.XCAFDoc import XCAFDoc_ShapeTool
@@ -390,10 +392,10 @@ def _label_transform(label: Any) -> Transform:
 
 
 def _shape_color(shape: Any, color_tool: Any) -> tuple[float, float, float, float] | None:
-    """Farba shapu, alebo `None` ak žiadnu nemá.
+    """The colour of a shape, or `None` when it has none.
 
-    `XCAFDoc_ColorTool.GetColor` v OCP 7.9 prijíma **shape, nie label** —
-    napriek tomu, čo hovorí dokumentácia OCCT.
+    `XCAFDoc_ColorTool.GetColor` in OCP 7.9 takes a **shape, not a label** — despite
+    what the OCCT documentation says.
     """
     from OCP.Quantity import Quantity_Color
     from OCP.XCAFDoc import XCAFDoc_ColorType
@@ -409,12 +411,12 @@ def _shape_color(shape: Any, color_tool: Any) -> tuple[float, float, float, floa
 
 
 def _tessellate(label: Any, settings: ImportSettings) -> MeshData:
-    """Tesseluje shape a vráti jeho geometriu v metroch.
+    """Tessellate a shape and return its geometry in metres.
 
-    Prechádza všetky plochy shapu a zlepí ich do jednej siete. Vrcholy sa medzi
-    plochami **nezdieľajú** — každá plocha prispeje vlastnými. Pre strojárske
-    diely je to správne: na hrane kvádra majú susedné steny rôzne normály
-    a zdieľaný vrchol by ich spriemeroval do zaobleného vzhľadu.
+    Walks every face of the shape and glues them into one mesh. Vertices are **not**
+    shared between faces — every face contributes its own. For mechanical parts that is
+    correct: on the edge of a box the adjacent faces have different normals, and a shared
+    vertex would average them into a rounded look.
     """
     from OCP.BRep import BRep_Tool
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
@@ -428,7 +430,7 @@ def _tessellate(label: Any, settings: ImportSettings) -> MeshData:
     if shape.IsNull():
         return empty_mesh()
 
-    # linear_deflection je v jednotkách modelu (typicky mm), nie v metroch.
+    # linear_deflection is in the model's units (typically mm), not in metres.
     BRepMesh_IncrementalMesh(
         shape,
         settings.linear_deflection_mm,
@@ -449,7 +451,7 @@ def _tessellate(label: Any, settings: ImportSettings) -> MeshData:
         face = TopoDS.Face_s(explorer.Current())
         triangulation = BRep_Tool.Triangulation_s(face, location)
 
-        # None je BEŽNÝ prípad: degenerované plochy sú v reálnych súboroch normálne.
+        # None is a COMMON case: degenerate faces are normal in real files.
         if triangulation is None:
             skipped_faces += 1
             explorer.Next()
@@ -468,8 +470,8 @@ def _tessellate(label: Any, settings: ImportSettings) -> MeshData:
             first, second, third = triangulation.Triangle(index).Get()
             indices[index - 1] = (first - 1, second - 1, third - 1)
 
-        # Obrátená plocha má obrátené poradie vrcholov. Bez tejto opravy by
-        # normály mierili dovnútra a diel by v scéne vyzeral „naruby".
+        # A reversed face has a reversed vertex order. Without this correction the
+        # normals would point inwards and the part would look inside out in the scene.
         if face.Orientation() == TopAbs_Orientation.TopAbs_REVERSED:
             indices = indices[:, ::-1]
 
@@ -479,7 +481,7 @@ def _tessellate(label: Any, settings: ImportSettings) -> MeshData:
         explorer.Next()
 
     if skipped_faces:
-        logger.debug("plochy bez triangulácie preskočené", count=skipped_faces)
+        logger.debug("faces without triangulation skipped", count=skipped_faces)
 
     if not vertex_blocks:
         return empty_mesh()

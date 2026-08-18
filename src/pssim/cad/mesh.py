@@ -1,20 +1,19 @@
-"""Neutrálny formát tesselovanej geometrie.
+"""The neutral format of tessellated geometry.
 
-`cad/` o Panda3D vedieť nesmie, takže do cache sa nedá zapísať `.bam`. Formát
-je preto `.npz` (numpy archív): vrcholy, normály a indexy trojuholníkov.
+`cad/` must know nothing about Panda3D, so a `.bam` cannot be written into the cache.
+The format is therefore `.npz` (a numpy archive): vertices, normals and triangle indices.
 
-Prečo nie glTF (pôvodný zámer v docs/architecture.md R2):
+Why not glTF (the original intention in docs/architecture.md R2):
 
-- glTF by pridal závislosť na `trimesh` a v Panda3D na loader plugin
-  `panda3d-gltf` — dva pohyblivé diely navyše v ceste, ktorú potrebujeme mať
-  spoľahlivú
-- `.npz` číta numpy, ktorý už v projekte je, a `viz/` z neho postaví `Geom`
-  priamo, bez konverzie
-- formát je plne testovateľný v `tests/unit/` — bez OpenCASCADE aj bez Panda3D
+- glTF would add a dependency on `trimesh`, and in Panda3D on the `panda3d-gltf` loader
+  plugin — two extra moving parts in a path that needs to be dependable
+- `.npz` is read by numpy, which is in the project already, and `viz/` builds a `Geom`
+  from it directly, with no conversion
+- the format is fully testable in `tests/unit/` — without OpenCASCADE and without Panda3D
 
-Cena za to je, že mesh sa nedá otvoriť v Blenderi. Na to je tu pôvodný STEP.
+The price is that the mesh cannot be opened in Blender. The original STEP is there for that.
 
-Jednotky: vrcholy sú **v metroch**, prevod sa deje pri importe.
+Units: vertices are **in metres**, the conversion happens at import.
 """
 
 from __future__ import annotations
@@ -28,19 +27,19 @@ import numpy as np
 from pssim.domain.errors import CacheError
 
 MESH_FORMAT_VERSION: Final = 1
-"""Zvýš pri nekompatibilnej zmene formátu. Je súčasťou súboru, nie cache kľúča —
-`IMPORTER_VERSION` v `cache.py` je to, čo invaliduje cache."""
+"""Bump this on an incompatible format change. It is part of the file, not of the cache
+key — `IMPORTER_VERSION` in `cache.py` is what invalidates the cache."""
 
 _REQUIRED_ARRAYS: Final = ("vertices", "normals", "indices")
 
 
 @dataclass(frozen=True, slots=True)
 class MeshData:
-    """Trojuholníková sieť jedného dielu.
+    """The triangle mesh of one part.
 
-    - `vertices` — `(N, 3) float32`, v metroch
-    - `normals` — `(N, 3) float32`, jednotkové, jedna na vrchol
-    - `indices` — `(M, 3) uint32`, 0-based (OCC je 1-based, prevod je pri importe)
+    - `vertices` — `(N, 3) float32`, in metres
+    - `normals` — `(N, 3) float32`, unit length, one per vertex
+    - `indices` — `(M, 3) uint32`, 0-based (OCC is 1-based, the conversion is at import)
     """
 
     vertices: np.ndarray
@@ -75,9 +74,10 @@ class MeshData:
         return self.triangle_count == 0
 
     def bounding_box(self) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
-        """Min a max roh v metroch. Slúži na sanity kontrolu po importe.
+        """The min and max corner in metres. Used as a sanity check after an import.
 
-        Prázdny mesh vráti dve nuly — volajúci to má ošetriť, nie sa spoliehať.
+        An empty mesh returns two zeros — the caller should handle that rather than
+        rely on it.
         """
         if not len(self.vertices):
             return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
@@ -91,7 +91,7 @@ class MeshData:
 
 
 def empty_mesh() -> MeshData:
-    """Prázdna sieť — pre uzly bez vlastnej geometrie."""
+    """An empty mesh — for nodes with no geometry of their own."""
     return MeshData(
         vertices=np.zeros((0, 3), dtype=np.float32),
         normals=np.zeros((0, 3), dtype=np.float32),
@@ -104,17 +104,18 @@ def build_mesh(
     indices: np.ndarray,
     normals: np.ndarray | None = None,
 ) -> MeshData:
-    """Zloží `MeshData` a dopočíta normály, ak nie sú zadané.
+    """Assemble a `MeshData` and compute the normals if they are not given.
 
-    Typy sa zjednotia na `float32`/`uint32` — bez toho by sa do cache dostali
-    raz `float64` a raz `float32` podľa toho, odkiaľ dáta prišli.
+    The types are unified to `float32`/`uint32` — without that, the cache would end up
+    with `float64` in one place and `float32` in another depending on where the data
+    came from.
     """
     vertices = np.ascontiguousarray(vertices, dtype=np.float32)
     indices = np.ascontiguousarray(indices, dtype=np.uint32)
 
-    # Rozsah indexov sa musí overiť TERAZ, nie až v `MeshData.__post_init__`:
-    # výpočet normál indexuje pole vrcholov a pri zlom indexe by spadol na
-    # neužitočnom IndexError skôr, než sa dostane k zrozumiteľnej kontrole.
+    # The index range has to be checked NOW, not in `MeshData.__post_init__`:
+    # computing the normals indexes the vertex array, and a bad index would crash
+    # on an unhelpful IndexError before it ever reached the readable check.
     if len(indices) and int(indices.max()) >= len(vertices):
         raise ValueError(f"index {int(indices.max())} mieri mimo {len(vertices)} vrcholov")
 
@@ -127,13 +128,14 @@ def build_mesh(
 
 
 def compute_vertex_normals(vertices: np.ndarray, indices: np.ndarray) -> np.ndarray:
-    """Normály vrcholov ako plošne vážený priemer normál priľahlých trojuholníkov.
+    """Vertex normals as the area-weighted average of the adjacent triangles' normals.
 
-    Váženie plochou je zadarmo: nenormalizovaný vektorový súčin má veľkosť
-    úmernú ploche trojuholníka, takže stačí ho nenormalizovať pred sčítaním.
+    The area weighting is free: an unnormalised cross product has a magnitude
+    proportional to the triangle's area, so it is enough not to normalise it before
+    summing.
 
-    Osamotený vrchol (v žiadnom trojuholníku) alebo degenerovaný trojuholník
-    dá nulovú normálu — nahrádza sa `+Z`, aby v scéne nevznikli čierne plochy.
+    An isolated vertex (in no triangle) or a degenerate triangle gives a zero normal —
+    that is replaced with `+Z`, so no black faces appear in the scene.
     """
     normals = np.zeros(vertices.shape, dtype=np.float64)
     if len(indices):
@@ -142,8 +144,8 @@ def compute_vertex_normals(vertices: np.ndarray, indices: np.ndarray) -> np.ndar
         corner_c = vertices[indices[:, 2]]
         face_normals = np.cross(corner_b - corner_a, corner_c - corner_a)
 
-        # np.add.at, nie `normals[idx] += ...` — pri opakovanom indexe by sa
-        # priradenie prepísalo namiesto sčítania a zdieľané vrcholy by boli zle.
+        # np.add.at, not `normals[idx] += ...` — with a repeated index the assignment
+        # would overwrite instead of accumulating and shared vertices would be wrong.
         for corner in range(3):
             np.add.at(normals, indices[:, corner], face_normals)
 
@@ -155,10 +157,10 @@ def compute_vertex_normals(vertices: np.ndarray, indices: np.ndarray) -> np.ndar
 
 
 def write_mesh(path: str | Path, mesh: MeshData) -> None:
-    """Zapíše mesh atomicky.
+    """Write a mesh atomically.
 
-    Atomicky preto, že prerušený zápis by zanechal súbor, ktorý existuje,
-    ale nedá sa načítať — a to je horšie než chýbajúci súbor.
+    Atomically because an interrupted write would leave a file that exists but cannot be
+    read — and that is worse than a missing file.
     """
     file_path = Path(path)
     temporary = file_path.with_suffix(".npz.tmp")
@@ -178,7 +180,7 @@ def write_mesh(path: str | Path, mesh: MeshData) -> None:
 
 
 def read_mesh(path: str | Path) -> MeshData:
-    """Načíta mesh z cache."""
+    """Read a mesh from the cache."""
     file_path = Path(path)
     try:
         with np.load(file_path) as archive:

@@ -1,7 +1,7 @@
-"""Dátový model importovanej geometrie.
+"""The data model of imported geometry.
 
-Nezávisí od OCP ani od Panda3D — je to len popis toho, čo z importu vyšlo,
-a je plne serializovateľný do `meta.json`.
+Depends on neither OCP nor Panda3D — it is only a description of what came out of an
+import, and it is fully serialisable into `meta.json`.
 """
 
 from __future__ import annotations
@@ -11,20 +11,20 @@ from typing import Any
 
 from pssim.domain.machine import Transform, Vec3
 
-#: Šedá pre diely, ktoré v STEP súbore nemajú farbu. Diel bez farby je bežný.
+#: Grey for parts that have no colour in the STEP file. A part without a colour is common.
 DEFAULT_COLOR: tuple[float, float, float, float] = (0.6, 0.6, 0.62, 1.0)
 
 
 @dataclass(frozen=True, slots=True)
 class CadNode:
-    """Uzol CAD assembly tree.
+    """A node of the CAD assembly tree.
 
-    `path` je **stabilná cesta** (`base/portal/Carriage[2]`) — práve na ňu sa
-    odkazuje `machines/*.yaml`. Index `[n]` sa pridáva len keď má uzol
-    rovnomenných siblingov; bez toho by bola cesta nejednoznačná.
+    `path` is the **stable path** (`base/portal/Carriage[2]`) — it is exactly what
+    `machines/*.yaml` refers to. The index `[n]` is added only when the node has
+    siblings of the same name; without it the path would be ambiguous.
 
-    `mesh` je názov súboru v adresári cache, alebo `None` pre čisto organizačné
-    uzly (assembly bez vlastnej geometrie).
+    `mesh` is the file name in the cache directory, or `None` for purely organisational
+    nodes (an assembly with no geometry of its own).
     """
 
     path: str
@@ -36,7 +36,7 @@ class CadNode:
 
     @property
     def name(self) -> str:
-        """Posledný segment cesty, vrátane prípadného indexu."""
+        """The last segment of the path, including any index."""
         return self.path.rsplit("/", 1)[-1]
 
     @property
@@ -75,7 +75,7 @@ class CadNode:
 
 @dataclass(frozen=True, slots=True)
 class CadAssembly:
-    """Celý importovaný assembly ako plochý zoznam uzlov + korene."""
+    """The whole imported assembly as a flat list of nodes plus the roots."""
 
     nodes: tuple[CadNode, ...]
     roots: tuple[str, ...] = field(default=())
@@ -86,12 +86,12 @@ class CadAssembly:
 
     @property
     def nodes_parents_first(self) -> tuple[CadNode, ...]:
-        """Uzly zoradené tak, že rodič je vždy pred svojimi potomkami.
+        """The nodes ordered so that a parent always comes before its children.
 
-        `nodes` samo o sebe túto vlastnosť **nemá** — vzniká rekurzívnym
-        prechodom, ktorý zapisuje uzol až po jeho deťoch. Kto stavia hierarchiu
-        (napr. `viz/`), musí použiť toto poradie, inak rodič v čase pripájania
-        potomka ešte neexistuje a strom vyjde plochý.
+        `nodes` on its own does **not** have this property — it comes from a recursive
+        walk that appends a node after its children. Anyone building a hierarchy
+        (`viz/`, for instance) must use this order, or the parent does not exist yet at
+        the moment a child is attached and the tree comes out flat.
         """
         return tuple(sorted(self.nodes, key=lambda node: (node.depth, node.path)))
 
@@ -106,10 +106,10 @@ class CadAssembly:
         return None
 
     def similar_paths(self, path: str, limit: int = 5) -> tuple[str, ...]:
-        """Cesty podobné zadanej — pre chybovú správu, keď uzol z YAML neexistuje.
+        """Paths similar to the given one — for the error message when a node from the YAML does not exist.
 
-        Bez tohto je „uzol sa nenašiel" nepoužiteľná chyba: assembly má tisíc uzlov
-        a používateľ nemá ako zistiť, ako sa ten jeho naozaj menuje.
+        Without this, "node not found" is a useless error: an assembly has a thousand
+        nodes and the user has no way of finding out what theirs is really called.
         """
         needle = path.rsplit("/", 1)[-1].lower()
         matches = [node.path for node in self.nodes if needle in node.path.lower()]

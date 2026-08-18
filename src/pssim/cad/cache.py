@@ -1,12 +1,12 @@
-"""Cache tesselovanej geometrie.
+"""The cache of tessellated geometry.
 
-Tesselácia veľkého assembly trvá minúty, takže sa robí raz (`pssim import-step`)
-a výsledok sa cachuje. Viď docs/architecture.md R2.
+Tessellating a large assembly takes minutes, so it is done once (`pssim import-step`)
+and the result is cached. See docs/architecture.md R2.
 
-Cache je **plne zahoditeľná**: nič, čo sa nedá znovu vyrobiť z `models/`
-a `machines/`, do nej nepatrí.
+The cache is **entirely disposable**: nothing that cannot be rebuilt from `models/` and
+`machines/` belongs in it.
 
-Modul je čistý (žiadne OCP, žiadne Panda3D) a plne testovateľný.
+The module is pure (no OCP, no Panda3D) and fully testable.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from pssim.cad.model import CadAssembly, CadNode
 from pssim.domain.errors import CacheError
 
 IMPORTER_VERSION: Final = 2
-"""Zvýš pri každej zmene importéra, ktorá mení výstup.
+"""Bump this on every change to the importer that changes its output.
 
-Bez toho sa bude ticho používať stará cache a nikto nepochopí, prečo sa zmena
-neprejavila. Verzia je súčasťou cache kľúča.
+Without that, the old cache is used silently and nobody understands why the change had
+no effect. The version is part of the cache key.
 
-História:
-  1 — prvá verzia, len assembly tree bez geometrie
-  2 — zápis geometrie (.npz), mesh zdieľaný medzi inštanciami toho istého dielu
+History:
+  1 — the first version, assembly tree only, no geometry
+  2 — geometry written out (.npz), the mesh shared between instances of the same part
 """
 
 _METADATA_FILENAME: Final = "meta.json"
@@ -37,10 +37,10 @@ _HASH_CHUNK_BYTES: Final = 1 << 20
 
 @dataclass(frozen=True, slots=True)
 class CacheKey:
-    """Identita jedného importu.
+    """The identity of one import.
 
-    Kľúč zahŕňa obsah súboru, parametre tesselácie a verziu importéra. Zmena
-    ktoréhokoľvek z nich musí viesť na iný adresár cache.
+    The key covers the file content, the tessellation parameters and the importer
+    version. A change to any of them must lead to a different cache directory.
     """
 
     source_sha256: str
@@ -51,7 +51,7 @@ class CacheKey:
 
     @property
     def digest(self) -> str:
-        """Krátky hash použitý ako názov adresára."""
+        """The short hash used as the directory name."""
         payload = json.dumps(
             {
                 "source": self.source_sha256,
@@ -67,7 +67,7 @@ class CacheKey:
 
 @dataclass(frozen=True, slots=True)
 class CacheMetadata:
-    """Obsah `meta.json`. Bez neho je cache neinterpretovateľná."""
+    """The contents of `meta.json`. Without it the cache cannot be interpreted."""
 
     key: CacheKey
     source_file: str
@@ -115,7 +115,7 @@ class CacheMetadata:
 
 @dataclass(frozen=True, slots=True)
 class CacheEntry:
-    """Adresár cache pre jeden konkrétny import."""
+    """The cache directory of one specific import."""
 
     root: Path
     key: CacheKey
@@ -136,7 +136,7 @@ class CacheEntry:
         return self.directory / mesh
 
     def read(self) -> CacheMetadata:
-        """Načíta metadáta. Overí, že cache patrí k tomuto kľúču."""
+        """Read the metadata. Verifies that the cache belongs to this key."""
         if not self.exists:
             raise CacheError(
                 f"cache pre tento import neexistuje: {self.directory}. "
@@ -157,10 +157,10 @@ class CacheEntry:
         return metadata
 
     def write(self, metadata: CacheMetadata) -> None:
-        """Zapíše metadáta atomicky.
+        """Write the metadata atomically.
 
-        Atomicky preto, že prerušený zápis by zanechal cache, ktorá „existuje",
-        ale nedá sa prečítať — a to je horšie než žiadna cache.
+        Atomically because an interrupted write would leave a cache that "exists" but
+        cannot be read — and that is worse than no cache at all.
         """
         self.directory.mkdir(parents=True, exist_ok=True)
         temporary = self.metadata_path.with_suffix(".json.tmp")
@@ -175,7 +175,7 @@ class CacheEntry:
 
 
 def file_sha256(path: str | Path) -> str:
-    """Hash obsahu súboru. Číta po blokoch — STEP súbory majú stovky MB."""
+    """The hash of a file's content. Read in blocks — STEP files run to hundreds of MB."""
     file_path = Path(path)
     digest = hashlib.sha256()
     try:
@@ -188,15 +188,15 @@ def file_sha256(path: str | Path) -> str:
 
 
 def mesh_filename(mesh_key: str) -> str:
-    """Bezpečný názov súboru pre geometriu jednej **definície** dielu.
+    """A safe file name for the geometry of one part **definition**.
 
-    `mesh_key` je XCAF entry (`0:1:1:3`), nie cesta uzla — inštancie toho istého
-    dielu tak ukazujú na jeden zdieľaný súbor. Zostava s tisíckou skrutiek má
-    v cache jednu skrutku, nie tisíc kópií.
+    `mesh_key` is the XCAF entry (`0:1:1:3`), not a node path — instances of the same
+    part therefore point at one shared file. An assembly with a thousand screws has one
+    screw in the cache, not a thousand copies.
 
-    Kľúč môže obsahovať znaky, ktoré sa v názvoch súborov nepoužívajú (`:`),
-    preto sa sanitizuje. Krátky hash na konci zaručuje, že dva rôzne kľúče
-    neskončia po sanitizácii v tom istom súbore.
+    The key may contain characters not used in file names (`:`), so it is sanitised. The
+    short hash on the end guarantees that two different keys do not end up in the same
+    file after sanitising.
     """
     slug = "".join(char if char.isalnum() or char in "-_" else "_" for char in mesh_key)
     suffix = hashlib.sha256(mesh_key.encode("utf-8")).hexdigest()[:8]

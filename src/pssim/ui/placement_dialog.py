@@ -1,12 +1,12 @@
-"""Dialóg na umiestnenie modelu — posun a natočenie voči počiatku.
+"""The dialog for placing a model — translation and rotation relative to the origin.
 
-Zadáva sa v **milimetroch a stupňoch**, teda tak, ako je to zvykom v CAD.
-Prevod na interné metre a radiány robí `domain.placement`, nie tento dialóg —
-tu je len Qt.
+Values are entered in **millimetres and degrees**, as is usual in CAD. The conversion into
+internal metres and radians is done by `domain.placement`, not by this dialog — there is
+only Qt here.
 
-Zmena sa premietne do scény **okamžite** (živý náhľad). `Zrušiť` vráti stav,
-aký bol pri otvorení: bez toho by sa umiestnenie hľadalo po slepu, lebo
-z čísel sa výsledok predstaviť nedá.
+A change is reflected in the scene **immediately** (a live preview). `Cancel` restores the
+state as it was on opening: without that, finding the right placement would be blind
+guessing, because the result cannot be pictured from the numbers.
 """
 
 from __future__ import annotations
@@ -32,8 +32,8 @@ from pssim.domain.placement import (
     to_transform,
 )
 
-#: Rozsah posunu. 100 m na každú stranu pokryje aj veľkú linku a zároveň
-#: zabráni tomu, aby preklep poslal model tak daleko, že zmizne.
+#: The range of the translation. 100 m each way covers even a large line and at the same
+#: time stops a typo from sending the model so far away that it disappears.
 TRANSLATION_LIMIT_MM: Final = 100_000.0
 TRANSLATION_DECIMALS: Final = 3
 TRANSLATION_STEP_MM: Final = 10.0
@@ -44,10 +44,10 @@ ROTATION_STEP_DEG: Final = 15.0
 
 
 class PlacementDialog(QDialog):
-    """Šesť polí: posun v X/Y/Z a otočenie okolo X/Y/Z."""
+    """Six fields: translation in X/Y/Z and rotation about X/Y/Z."""
 
     placement_changed = Signal(object)
-    """Vyslaný pri každej zmene. Nesie `domain.machine.Transform`."""
+    """Emitted on every change. Carries a `domain.machine.Transform`."""
 
     def __init__(
         self,
@@ -56,7 +56,7 @@ class PlacementDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Model Placement"))
-        self.setModal(False)  # živý náhľad chce, aby sa dalo hýbať aj scénou
+        self.setModal(False)  # the live preview wants the scene to stay movable
 
         self._original = current
         self._emitting = True
@@ -68,7 +68,7 @@ class PlacementDialog(QDialog):
 
         self.set_placement(current)
 
-    # -- zloženie -----------------------------------------------------------
+    # -- assembly -----------------------------------------------------------
 
     def _build_translation_group(self) -> QGroupBox:
         group = QGroupBox(self.tr("Translation"), self)
@@ -106,9 +106,9 @@ class PlacementDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
-        # `OK`, `Cancel` a `Reset` prekladá Qt samo podľa nainštalovaného
-        # prekladu, takže sa tu nepremenovávajú — inak by pri prepnutí jazyka
-        # zostali v angličtine, kým zvyšok dialógu by sa preložil.
+        # `OK`, `Cancel` and `Reset` are translated by Qt itself according to the installed
+        # translation, so they are not renamed here — otherwise they would stay in English
+        # when the language is switched while the rest of the dialog got translated.
         reset = buttons.button(QDialogButtonBox.StandardButton.Reset)
         reset.clicked.connect(self.reset_placement)
 
@@ -130,7 +130,7 @@ class PlacementDialog(QDialog):
         spin.setDecimals(ROTATION_DECIMALS)
         spin.setSingleStep(ROTATION_STEP_DEG)
         spin.setSuffix(" °")
-        # Otočenie je cyklické — po 360° má nasledovať -360°, nie zaseknutie.
+        # Rotation is cyclic — 360° should be followed by -360°, not by getting stuck.
         spin.setWrapping(True)
         spin.valueChanged.connect(self._on_value_changed)
         return spin
@@ -139,7 +139,7 @@ class PlacementDialog(QDialog):
 
     @property
     def display(self) -> PlacementDisplay:
-        """Aktuálne hodnoty v jednotkách, ktoré vidí používateľ."""
+        """The current values in the units the user sees."""
         return PlacementDisplay(
             x_mm=self.x_spin.value(),
             y_mm=self.y_spin.value(),
@@ -151,14 +151,14 @@ class PlacementDialog(QDialog):
 
     @property
     def placement(self) -> Transform:
-        """Aktuálne umiestnenie v interných jednotkách."""
+        """The current placement in internal units."""
         return to_transform(self.display)
 
     def set_placement(self, placement: Transform) -> None:
-        """Nastaví polia. Signál sa počas plnenia **nevysiela**.
+        """Set the fields. The signal is **not emitted** while they are being filled.
 
-        Bez potlačenia by šesť polí vyslalo šesť medzistavov a scéna by pri
-        každom otvorení dialógu preblikla cez nezmyselné polohy.
+        Without suppressing it, six fields would emit six intermediate states and the scene
+        would flicker through meaningless positions every time the dialog opened.
         """
         display = from_transform(placement)
         self._emitting = False
@@ -174,7 +174,7 @@ class PlacementDialog(QDialog):
         self.placement_changed.emit(self.placement)
 
     def reset_placement(self) -> None:
-        """Vráti model do počiatku bez natočenia."""
+        """Return the model to the origin with no rotation."""
         self.set_placement(IDENTITY_PLACEMENT)
 
     # -- udalosti -----------------------------------------------------------
@@ -184,6 +184,6 @@ class PlacementDialog(QDialog):
             self.placement_changed.emit(self.placement)
 
     def reject(self) -> None:
-        """Zrušenie vráti stav, aký bol pri otvorení dialógu."""
+        """Cancelling restores the state as it was when the dialog opened."""
         self.placement_changed.emit(self._original)
         super().reject()

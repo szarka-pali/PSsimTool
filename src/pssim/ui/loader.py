@@ -1,13 +1,13 @@
-"""Import STEP súboru na pozadí.
+"""Importing a STEP file in the background.
 
-Tesselácia zostavy s tisíckami dielov trvá desiatky sekúnd až minúty. Keby
-bežala v hlavnom vlákne, okno by celý ten čas nereagovalo a Windows by ho
-označil ako zamrznuté.
+Tessellating an assembly of thousands of parts takes tens of seconds to minutes. If it ran
+in the main thread, the window would be unresponsive for all of it and Windows would mark it
+as frozen.
 
-Deľba práce je daná tým, čo je bezpečné mimo hlavného vlákna:
+The division of work follows from what is safe outside the main thread:
 
-- **worker** — čítanie STEP, tesselácia, zápis do cache (čistý Python a OCC)
-- **hlavné vlákno** — stavba scény z cache (Panda3D scene graph)
+- **the worker** — reading the STEP, tessellating, writing into the cache (pure Python and OCC)
+- **the main thread** — building the scene from the cache (the Panda3D scene graph)
 """
 
 from __future__ import annotations
@@ -24,24 +24,24 @@ logger = get_logger(__name__)
 
 DEFAULT_CACHE_ROOT: Final = Path("assets/cache")
 
-#: Jednotky, keď ich nemáme odkiaľ zistiť. Väčšina STEP súborov zo strojárskeho
-#: CAD je v milimetroch. Keď pribudne definícia stroja, prednosť dostane `units:`
-#: z `machines/*.yaml`.
+#: The units to assume when there is nowhere to get them from. Most STEP files from
+#: mechanical CAD are in millimetres. Once a machine definition is present, `units:` from
+#: `machines/*.yaml` takes precedence.
 ASSUMED_UNITS: Final = "mm"
 
 
 class StepImportThread(QThread):
-    """Naimportuje STEP do cache mimo hlavného vlákna.
+    """Import a STEP into the cache outside the main thread.
 
-    Signály sa doručujú späť do hlavného vlákna, takže sa na ne dá bezpečne
-    napojiť aktualizácia UI.
+    The signals are delivered back into the main thread, so a UI update can safely be
+    connected to them.
     """
 
     succeeded = Signal(object, object)
-    """`(CacheMetadata, Path)` — metadáta a adresár cache s geometriou."""
+    """`(CacheMetadata, Path)` — the metadata and the cache directory with the geometry."""
 
     failed = Signal(str)
-    """Text chyby určený používateľovi."""
+    """The error text intended for the user."""
 
     def __init__(
         self,
@@ -58,7 +58,7 @@ class StepImportThread(QThread):
         return self._step_file
 
     def run(self) -> None:
-        """Beží vo worker vlákne. Nesmie sa dotknúť ničoho z Qt ani z Panda3D."""
+        """Runs in the worker thread. Must not touch anything from Qt or from Panda3D."""
         from pssim.cad.step_import import ImportSettings, cache_key_for, import_step
         from pssim.domain.units import length_scale_to_m
 
@@ -74,7 +74,7 @@ class StepImportThread(QThread):
             logger.warning("import zlyhal", file=str(self._step_file), error=str(exc))
             self.failed.emit(str(exc))
             return
-        except Exception as exc:  # neočakávané — používateľ musí niečo vidieť
+        except Exception as exc:  # unexpected - the user has to see something
             logger.exception("import spadol", file=str(self._step_file))
             self.failed.emit(
                 QCoreApplication.translate(

@@ -1,11 +1,11 @@
-"""Hlavné okno aplikácie.
+"""The application's main window.
 
-Zatiaľ len shell: menu, stavový riadok a miesto, kam neskôr príde 3D viewport
-z `viz/`. Bez OPC UA, bez definície stroja.
+A shell for now: the menus, the status bar and the place the 3D viewport from `viz/` goes
+later. No OPC UA, no machine definition.
 
-Menu je zámerne rozdelené tak, ako bolo zadané — `Open` je **samostatná
-položka v menu bare**, nie podpoložka `File`. Zvyklosť je mať `Open` pod `File`;
-ak sa to má zmeniť, je to jednoriadková úprava v `_build_menu()`.
+The menus are deliberately split the way they were specified — `Open` is a **separate entry
+in the menu bar**, not a sub-item of `File`. The convention is to have `Open` under `File`;
+if that is to change, it is a one-line edit in `_build_menu()`.
 """
 
 from __future__ import annotations
@@ -54,21 +54,21 @@ from pssim.ui.recent_files import RecentProjects, shorten
 
 logger = get_logger(__name__)
 
-#: Ako sa vyrobí 3D plocha okna. Testy sem podstrčia obyčajný widget —
-#: `ShowBase` smie v procese existovať len raz a v testoch ho nechceme vôbec.
+#: How the 3D area of the window is created. The tests substitute a plain widget —
+#: `ShowBase` may exist only once per process and in the tests we do not want it at all.
 ViewportFactory = Callable[[], QWidget]
 
 APP_TITLE: Final = "PSsimTool"
 
 
 def cad_file_filter() -> str:
-    """Filter dialógu na výber súboru.
+    """The filter for the file dialog.
 
-    Funkcia, nie konštanta: preklad musí prebehnúť až keď je nainštalovaný
-    prekladač, nie pri importe modulu.
+    A function, not a constant: the translation must happen once the translator is
+    installed, not when the module is imported.
 
-    STEP je zatiaľ jediný podporovaný formát — viď docs/architecture.md,
-    IGES/JT/glTF sa dajú pridať v `cad/`.
+    STEP is the only supported format so far — see docs/architecture.md; IGES/JT/glTF can
+    be added in `cad/`.
     """
     return QCoreApplication.translate("MainWindow", "CAD files (*.step *.stp);;All files (*)")
 
@@ -76,8 +76,8 @@ def cad_file_filter() -> str:
 DEFAULT_SIZE: Final = (1200, 800)
 MINIMUM_SIZE: Final = (640, 480)
 
-#: Položky menu pohľadov v poradí, v akom sa zobrazia. Kľúče musia existovať
-#: v `viz.orbit.STANDARD_VIEWS` — je to jediný zdroj definície pohľadov.
+#: The view menu entries in the order they appear. The keys must exist in
+#: `viz.orbit.STANDARD_VIEWS` — that is the single source of the view definitions.
 VIEW_LABELS: Final[tuple[tuple[str, str], ...]] = (
     ("iso", "Isometric"),
     ("front", "Front"),
@@ -90,14 +90,14 @@ VIEW_LABELS: Final[tuple[tuple[str, str], ...]] = (
 
 
 class MainWindow(QMainWindow):
-    """Okno s hlavným menu.
+    """The window with the main menu.
 
-    Otvorenie súboru sa hlási signálom `file_opened`, nie priamym volaním —
-    keď pribudne viewport, pripojí sa naň bez zmeny tohto okna.
+    Opening a file is announced through the `file_opened` signal rather than by a direct
+    call — when the viewport arrives, it connects to it without this window changing.
     """
 
     file_opened = Signal(object)
-    """Vyslaný po výbere súboru. Nesie `pathlib.Path`."""
+    """Emitted after a file is picked. Carries a `pathlib.Path`."""
 
     def __init__(
         self,
@@ -514,14 +514,14 @@ class MainWindow(QMainWindow):
         self.remove_action.setEnabled(has_selection)
         self.fit_action.setEnabled(not self._models.is_empty)
 
-    # -- lišta pohľadov -----------------------------------------------------
+    # -- the view toolbar ---------------------------------------------------
 
     def _build_toolbar(self) -> None:
-        """Lišta s prepínaním pohľadov.
+        """The toolbar for switching views.
 
-        Jedno tlačidlo s rozbaľovacím menu, nie sedem samostatných ikon —
-        pohľad sa mení zriedka a sedem tlačidiel by zabralo lištu, do ktorej
-        pribudnú dôležitejšie nástroje.
+        One button with a dropdown menu, not seven separate icons — the view changes rarely
+        and seven buttons would take up a toolbar that more important tools are going to
+        arrive in.
         """
         toolbar = QToolBar(self.tr("View"), self)
         toolbar.setObjectName("view-toolbar")
@@ -556,13 +556,13 @@ class MainWindow(QMainWindow):
         self.toolbar = toolbar
 
     def set_view(self, name: str) -> None:
-        """Prepne 3D pohľad. Priblíženie zostáva, mení sa len uhol."""
+        """Switch the 3D view. The zoom stays, only the angle changes."""
         set_view = getattr(self._viewport, "set_view", None)
         if set_view is None:
-            logger.debug("viewport nepodporuje prepínanie pohľadov", view=name)
+            logger.debug("viewport does not support switching views", view=name)
             return
         set_view(name)
-        # Ikona tlačidla ukazuje, v akom pohľade sa práve nachádzame.
+        # The button icon shows which view we are currently in.
         self.view_button.setIcon(view_icon(name))
         self.statusBar().showMessage(self.tr("View: {0}").format(name))
 
@@ -643,18 +643,18 @@ class MainWindow(QMainWindow):
         self._placement_dialog = None
         self._placement_model_id = None
 
-    # -- otvorenie súboru ---------------------------------------------------
+    # -- opening a file -----------------------------------------------------
 
     @property
     def current_file(self) -> Path | None:
-        """Naposledy otvorený súbor, alebo `None`."""
+        """The file opened most recently, or `None`."""
         return self._current_file
 
     def open_file_dialog(self) -> Path | None:
-        """Zobrazí dialóg na výber súboru. Vracia vybranú cestu, alebo `None`.
+        """Show the file dialog. Returns the chosen path, or `None`.
 
-        Oddelené od `set_current_file()`, aby sa dala logika po výbere testovať
-        bez otvárania modálneho dialógu.
+        Separated from `set_current_file()` so the logic after the choice can be tested
+        without opening a modal dialog.
         """
         start_directory = str(self._current_file.parent) if self._current_file else ""
         filename, _ = QFileDialog.getOpenFileName(
@@ -664,18 +664,18 @@ class MainWindow(QMainWindow):
             cad_file_filter(),
         )
         if not filename:
-            logger.debug("výber súboru zrušený")
+            logger.debug("file selection cancelled")
             return None
         return self.open_path(Path(filename))
 
     def open_path(self, path: Path) -> Path:
-        """Otvorí súbor: zapamätá si ho a spustí načítanie geometrie."""
+        """Open a file: remember it and start loading the geometry."""
         self.set_current_file(path)
         self.load_file(path)
         return path
 
     def set_current_file(self, path: Path) -> Path:
-        """Zapamätá si vybraný súbor a ohlási to zvyšku aplikácie.
+        """Remember the chosen file and announce it to the rest of the application.
 
         Does **not** start loading — that is `load_file()`. Kept apart because
         "which file was picked" and "an import is running" are separate states.
@@ -690,21 +690,21 @@ class MainWindow(QMainWindow):
         self.file_opened.emit(path)
         return path
 
-    # -- načítanie geometrie ------------------------------------------------
+    # -- loading the geometry -----------------------------------------------
 
     @property
     def is_loading(self) -> bool:
         return self._import_thread is not None
 
     def load_file(self, path: Path) -> None:
-        """Spustí import STEP súboru na pozadí.
+        """Start importing a STEP file in the background.
 
-        Počas importu je `Open` zakázané — druhý súbeh by si prepísal cache
-        aj scénu. Veľká zostava sa importuje minúty, preto sa to nedá robiť
-        v hlavnom vlákne.
+        `Open` is disabled during the import — a second one running at the same time would
+        overwrite both the cache and the scene. A large assembly takes minutes to import,
+        which is why it cannot be done in the main thread.
         """
         if self._import_thread is not None:
-            logger.debug("import už beží, ignorujem", file=str(path))
+            logger.debug("an import is already running, ignoring", file=str(path))
             return
 
         self.open_action.setEnabled(False)
@@ -780,17 +780,17 @@ class MainWindow(QMainWindow):
 
 
 def _default_viewport() -> QWidget:
-    """Skutočný 3D viewport. Oddelené, aby sa dal v testoch nahradiť."""
+    """The real 3D viewport. Separated so it can be replaced in tests."""
     from pssim.ui.viewport import Panda3DViewport
 
     return Panda3DViewport()
 
 
 def run(argv: list[str] | None = None, language: str = SOURCE_LANGUAGE) -> int:
-    """Spustí aplikáciu a vráti návratový kód. Blokuje do zatvorenia okna.
+    """Run the application and return its exit code. Blocks until the window is closed.
 
-    Prekladač sa inštaluje **pred** vytvorením okna — texty sa prekladajú
-    v momente, keď sa widgety skladajú, nie priebežne.
+    The translator is installed **before** the window is created — the strings are
+    translated at the moment the widgets are assembled, not continuously.
     """
     from PySide6.QtWidgets import QApplication
 

@@ -1,7 +1,8 @@
-"""Vstupné body aplikácie.
+"""The application's entry points.
 
-Ťažké importy (`panda3d`, `OCP`, `asyncua`) sú **vnútri príkazov**, nie na module
-level — inak by `pssim --help` trval sekundy a unit testy by ťahali grafický stack.
+Heavy imports (`panda3d`, `OCP`, `asyncua`) are **inside the commands**, not at module
+level — otherwise `pssim --help` would take seconds and the unit tests would drag in the
+graphics stack.
 """
 
 from __future__ import annotations
@@ -25,11 +26,11 @@ if TYPE_CHECKING:
 
 
 def _ensure_utf8_console() -> None:
-    """Prepne konzolu na UTF-8.
+    """Switch the console to UTF-8.
 
-    Windows konzola má stále cp1252, v ktorom sa diakritika zakóduť nedá —
-    bez tohto spadne `pssim --help` na `UnicodeEncodeError`. Musí sa to stať
-    pri importe, nie v callbacku: `--help` sa vypíše ešte pred ním.
+    The Windows console still uses cp1252, which cannot encode accented characters —
+    without this, `pssim --help` dies with a `UnicodeEncodeError`. It has to happen at
+    import time, not in a callback: `--help` is printed before that runs.
     """
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -41,7 +42,7 @@ _ensure_utf8_console()
 
 app = typer.Typer(
     name="pssim",
-    help="3D simulácia strojov riadená live dátami z PLC cez OPC UA.",
+    help="3D machine simulation driven by live data from a PLC over OPC UA.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -70,16 +71,16 @@ def ui(
         typer.Option("--lang", envvar="PSSIM_LANG", help="Jazyk UI, napr. en alebo sk"),
     ] = None,
 ) -> None:
-    """Spustí desktopovú aplikáciu.
+    """Run the desktop application.
 
-    Zatiaľ bez PLC a bez definície stroja. Zdrojový jazyk UI je angličtina;
-    `--lang` vyberie preklad, ak je preň skompilovaný `.qm` súbor.
+    Without a PLC and without a machine definition for now. The source language of the UI
+    is English; `--lang` picks a translation, if a compiled `.qm` file exists for it.
     """
     try:
         from pssim.ui.i18n import SOURCE_LANGUAGE, available_languages
         from pssim.ui.main_window import run
-    except ImportError as exc:  # PySide6 je voliteľná závislosť
-        typer.echo("PySide6 nie je nainštalované — spusti `uv sync --extra ui`", err=True)
+    except ImportError as exc:  # PySide6 is an optional dependency
+        typer.echo("PySide6 is not installed - run `uv sync --extra ui`", err=True)
         raise typer.Exit(code=1) from exc
 
     language = lang or SOURCE_LANGUAGE
@@ -94,7 +95,7 @@ def ui(
 
 @app.command()
 def validate(machine: MachineArg) -> None:
-    """Overí definíciu stroja bez pripojenia k PLC a bez otvorenia okna."""
+    """Validate a machine definition without connecting to a PLC and without opening a window."""
     from pssim.config.loader import load_machine
 
     loaded = _guard(lambda: load_machine(machine))
@@ -106,19 +107,19 @@ def validate(machine: MachineArg) -> None:
     typer.echo(f"STEP:       {loaded.step_file}")
     typer.echo(f"jednotky:   {loaded.units} (scale {loaded.scale_to_m})")
     typer.echo(
-        f"cache:      {'existuje' if _cache_exists(loaded) else 'CHÝBA — spusti import-step'}"
+        f"cache:      {'existuje' if _cache_exists(loaded) else 'MISSING - run import-step'}"
     )
-    typer.echo("definícia je v poriadku")
+    typer.echo("the definition is in order")
 
 
 @app.command("import-step")
 def import_step_command(
-    step_file: Annotated[Path, typer.Argument(help="Cesta k .step súboru")],
+    step_file: Annotated[Path, typer.Argument(help="Path to the .step file")],
     machine: Annotated[Path | None, typer.Option("--machine", "-m")] = None,
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = DEFAULT_CACHE_DIR,
-    force: Annotated[bool, typer.Option("--force", help="Ignoruj existujúcu cache")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Ignore the existing cache")] = False,
 ) -> None:
-    """Naimportuje STEP do cache. Trvá minúty — preto je to samostatný príkaz."""
+    """Import a STEP into the cache. Takes minutes — which is why it is a separate command."""
     from pssim.cad.step_import import ImportSettings, import_step
 
     units, linear, angular, scale = "mm", 0.5, 0.35, 1e-3
@@ -149,7 +150,7 @@ def run(
     endpoint: EndpointOpt = None,
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = DEFAULT_CACHE_DIR,
 ) -> None:
-    """Spustí simuláciu proti živému OPC UA serveru."""
+    """Run the simulation against a live OPC UA server."""
     from pssim.cad.cache import CacheEntry
     from pssim.cad.step_import import cache_key_for
     from pssim.config.loader import load_machine
@@ -170,9 +171,9 @@ def record(
     machine: MachineArg,
     output: Annotated[Path, typer.Option("--output", "-o")],
     endpoint: EndpointOpt = None,
-    duration_s: Annotated[float, typer.Option("--duration", help="0 = do prerušenia")] = 0.0,
+    duration_s: Annotated[float, typer.Option("--duration", help="0 = until interrupted")] = 0.0,
 ) -> None:
-    """Zaznamená dátový tok z PLC do JSONL. Bez okna."""
+    """Record the data stream from a PLC into JSONL. No window."""
     import time
 
     from pssim.config.loader import load_machine
@@ -198,13 +199,13 @@ def record(
 
 @app.command()
 def replay(
-    recording: Annotated[Path, typer.Argument(help="JSONL záznam")],
+    recording: Annotated[Path, typer.Argument(help="the JSONL recording")],
     machine: MachineArg,
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = DEFAULT_CACHE_DIR,
-    speed: Annotated[float, typer.Option("--speed", help="1.0 = pôvodné tempo")] = 1.0,
+    speed: Annotated[float, typer.Option("--speed", help="1.0 = the original pace")] = 1.0,
     loop: Annotated[bool, typer.Option("--loop")] = False,
 ) -> None:
-    """Prehrá zaznamenaný tok. Hlavný nástroj na reprodukciu chýb z prevádzky."""
+    """Replay a recorded stream. The main tool for reproducing faults from the field."""
     from pssim.cad.cache import CacheEntry
     from pssim.cad.step_import import cache_key_for
     from pssim.config.loader import load_machine
@@ -228,16 +229,16 @@ def screenshot(
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = DEFAULT_CACHE_DIR,
     values: Annotated[
         str | None,
-        typer.Option("--values", help='Polohy kĺbov, napr. "os_x=1.2,os_c=1.57"'),
+        typer.Option("--values", help='Joint positions, e.g. "os_x=1.2,os_c=1.57"'),
     ] = None,
     view: Annotated[
         str, typer.Option("--view", help="iso | front | back | left | right | top")
     ] = "iso",
 ) -> None:
-    """Vyrenderuje scénu do PNG bez otvorenia okna a bez PLC.
+    """Render the scene into a PNG without opening a window and without a PLC.
 
-    Overí, že je stroj naozaj vidieť — na rozdiel od testov polôh uzlov,
-    ktoré prejdú aj vtedy, keď je okno prázdne.
+    Verifies that the machine can actually be seen — unlike tests of node positions, which
+    pass even when the window is empty.
     """
     from pssim.cad.cache import CacheEntry
     from pssim.cad.step_import import cache_key_for
@@ -262,7 +263,7 @@ def screenshot(
 
 
 def _parse_values(raw: str | None) -> dict[str, float]:
-    """Rozparsuje `os_x=1.2,os_c=1.57` na hodnoty kĺbov."""
+    """Parse `os_x=1.2,os_c=1.57` into joint values."""
     if not raw:
         return {}
     values: dict[str, float] = {}
@@ -278,7 +279,7 @@ def _parse_values(raw: str | None) -> dict[str, float]:
 
 
 class _StaticSource:
-    """Zdroj dát, ktorý nič neposiela. Pre režimy bez PLC (screenshot)."""
+    """A data source that sends nothing. For the modes without a PLC (screenshot)."""
 
     def __init__(self, store: StateStore) -> None:
         self._store = store
@@ -302,7 +303,7 @@ class _StaticSource:
 def mock_server(
     endpoint: Annotated[str, typer.Option("--endpoint", "-e")] = "opc.tcp://0.0.0.0:4840/pssim/",
 ) -> None:
-    """Spustí simulovaný OPC UA server. Vývoj a testy bez PLC."""
+    """Run the simulated OPC UA server. Development and tests without a PLC."""
     from pssim.io.mock_server import main as run_server
 
     run_server(endpoint)
@@ -311,9 +312,11 @@ def mock_server(
 @app.command()
 def probe(
     endpoint: Annotated[str, typer.Argument(help="opc.tcp://...")],
-    browse: Annotated[str | None, typer.Option("--browse", help="Vypíš nody v namespace")] = None,
+    browse: Annotated[
+        str | None, typer.Option("--browse", help="List the nodes in a namespace")
+    ] = None,
 ) -> None:
-    """Zistí, čo OPC UA server ponúka. Prvý krok pri diagnostike."""
+    """Find out what an OPC UA server offers. The first step in a diagnosis."""
     _guard(lambda: asyncio.run(_probe(endpoint, browse)))
 
 
@@ -328,11 +331,11 @@ async def _probe(endpoint: str, browse: str | None) -> None:
             typer.echo(f"  {child.nodeid.to_string()}  {name.Name}")
 
 
-# -- pomocné ---------------------------------------------------------------
+# -- helpers ----------------------------------------------------------------
 
 
 def _settings(loaded: LoadedMachine) -> ImportSettings:
-    """Zloží `ImportSettings` z načítaného stroja — cache kľúč musí sedieť s importom."""
+    """Assemble `ImportSettings` from a loaded machine — the cache key must match the import."""
     from pssim.cad.step_import import ImportSettings
 
     return ImportSettings(
@@ -355,9 +358,9 @@ def _cache_exists(loaded: LoadedMachine) -> bool:
 
 
 def _guard[T](action: Callable[[], T]) -> T:
-    """Preloží doménové chyby na čitateľný výstup namiesto tracebacku.
+    """Translate domain errors into readable output instead of a traceback.
 
-    Bug (neočakávaná výnimka) traceback naopak **ponechá** — ten chceme vidieť.
+    A bug (an unexpected exception) **keeps** its traceback — that one we want to see.
     """
     try:
         return action()

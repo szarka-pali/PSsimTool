@@ -1,11 +1,11 @@
-"""Texty pre používateľa, ktoré sa skladajú z čísel.
+"""User-facing text that is assembled from numbers.
 
-Formátovanie hlášok je **UI záležitosť, nie doménová** — potrebuje preklad
-a doména nemá ako vedieť, v akom jazyku appka práve beží. Preto tu, nie
-v `domain/`.
+Formatting messages is a **UI matter, not a domain one** — it needs translation, and the
+domain has no way of knowing what language the application is currently running in. Hence
+here, not in `domain/`.
 
-Všetky texty idú cez `QCoreApplication.translate()`, aby sa dali vyextrahovať
-do `.ts` súboru. Viď `ui/translations/README.md`.
+All the text goes through `QCoreApplication.translate()` so it can be extracted into the
+`.ts` file. See `ui/translations/README.md`.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pssim.cad.model import CadAssembly
 from pssim.domain.machine import Transform
 from pssim.domain.placement import from_transform, is_identity
 
-#: Kontext pre `lupdate`. Musí byť konštantný, inak sa preklady rozsypú.
+#: The context for `lupdate`. It must be constant, or the translations fall apart.
 CONTEXT: Final = "labels"
 
 
@@ -27,16 +27,16 @@ def _tr(text: str) -> str:
 
 
 def describe_placement(transform: Transform) -> str:
-    """Jednoveta o umiestnení modelu pre stavový riadok.
+    """A one-line statement about a model's placement, for the status bar.
 
-    Uvádza jednotky, ktoré používateľ zadával (mm, stupne), nie tie interné —
-    inak by po zadaní „100 mm" videl „0.1" a hľadal by, kde sa to stratilo.
+    It states the units the user entered (mm, degrees), not the internal ones — otherwise
+    after typing "100 mm" they would see "0.1" and go looking for where it went.
     """
     if is_identity(transform):
         return _tr("Model at origin, no rotation")
 
     display = from_transform(transform)
-    # Zástupné znaky, nie zlepovanie viet — v inom jazyku môže byť poradie iné.
+    # Placeholders, not sentences glued together — another language may need a different order.
     return _tr("Moved {0}, {1}, {2} mm; rotated {3}, {4}, {5}°").format(
         f"{display.x_mm:g}",
         f"{display.y_mm:g}",
@@ -48,12 +48,12 @@ def describe_placement(transform: Transform) -> str:
 
 
 def describe_assembly(assembly: CadAssembly | None) -> str:
-    """Jednoveta o naimportovanom modeli pre stavový riadok."""
+    """A one-line statement about an imported model, for the status bar."""
     if assembly is None:
         return _tr("Model loaded")
     return _tr("{0} parts, {1} triangles").format(len(assembly.nodes), assembly.triangle_count)
 
 
 def missing_geometry_suffix(missing: int) -> str:
-    """Doplnok hlášky, keď časti modelu chýba geometria v cache."""
+    """The addition to the message when part of the model has no geometry in the cache."""
     return _tr(" — geometry missing for {0} part(s)").format(missing)

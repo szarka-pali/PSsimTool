@@ -1,12 +1,12 @@
-"""Ikony kreslené za behu, bez binárnych assetov.
+"""Icons drawn at run time, with no binary assets.
 
-Ikona pohľadu ukazuje **osi X/Y/Z tak, ako ich z toho pohľadu naozaj vidno** —
-z čelného pohľadu je X doprava a Z hore, zhora je X doprava a Y hore. Premietanie
-robí tá istá kamera ako scéna (`viz.orbit.OrbitCamera.project`), takže ikona
-nemôže tvrdiť niečo iné než to, čo sa po kliknutí stane.
+A view icon shows the **X/Y/Z axes as they are really seen from that view** — from the front
+X is to the right and Z is up, from the top X is to the right and Y is up. The projection is
+done by the same camera as the scene (`viz.orbit.OrbitCamera.project`), so an icon cannot
+claim anything other than what happens after the click.
 
-Kreslenie za behu má dve výhody: v repozitári nie sú binárky a ikony sa
-prispôsobia DPI displeja.
+Drawing at run time has two advantages: there are no binaries in the repository, and the
+icons adapt to the display's DPI.
 """
 
 from __future__ import annotations
@@ -21,13 +21,13 @@ from pssim.viz.orbit import OrbitCamera
 
 DEFAULT_ICON_PX: Final = 24
 
-#: Vykresľujeme vo väčšom rozlíšení a zmenšíme — inak sú šikmé čiary zubaté.
+#: We render at a larger resolution and scale down — otherwise diagonal lines are jagged.
 SUPERSAMPLE: Final = 2
 
-#: Dĺžka ramena ako podiel polovice ikony.
+#: The arm length as a fraction of half the icon.
 ARM_RATIO: Final = 0.72
 
-#: Os kratšia než toto mieri (skoro) do obrazovky a kreslí sa ako bodka.
+#: An axis shorter than this points (almost) into the screen and is drawn as a dot.
 INTO_SCREEN_THRESHOLD: Final = 0.2
 
 LINE_WIDTH_PX: Final = 2.0
@@ -35,9 +35,9 @@ DOT_RADIUS_PX: Final = 2.0
 
 
 def view_icon(view: str, size_px: int = DEFAULT_ICON_PX) -> QIcon:
-    """Ikona štandardného pohľadu — premietnuté osi.
+    """The icon of a standard view — the projected axes.
 
-    Neznámy názov pohľadu je `ValueError` (vyhodí ho `with_view`).
+    An unknown view name is a `ValueError` (raised by `with_view`).
     """
     camera = OrbitCamera().with_view(view)
     scale = SUPERSAMPLE
@@ -59,7 +59,7 @@ def _draw_axes(painter: QPainter, camera: OrbitCamera, size_px: int) -> None:
     center = size_px / 2.0
     arm = center * ARM_RATIO
 
-    # Osi mieriace do obrazovky kreslíme prvé, aby ich tie viditeľné prekryli.
+    # The axes pointing into the screen are drawn first, so the visible ones cover them.
     projected = {name: camera.project(direction) for name, direction in AXIS_DIRECTIONS.items()}
     order = sorted(projected, key=lambda name: _length(projected[name]))
 
@@ -72,7 +72,7 @@ def _draw_axes(painter: QPainter, camera: OrbitCamera, size_px: int) -> None:
         painter.setPen(pen)
 
         if _length((screen_x, screen_y)) < INTO_SCREEN_THRESHOLD:
-            # Os mieri do obrazovky — z tohto pohľadu je to bod, nie čiara.
+            # The axis points into the screen — from this view it is a dot, not a line.
             painter.setBrush(color)
             painter.drawEllipse(
                 QPointF(center, center),
@@ -84,7 +84,7 @@ def _draw_axes(painter: QPainter, camera: OrbitCamera, size_px: int) -> None:
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawLine(
             QPointF(center, center),
-            # Qt má Y nadol, scéna nahor — preto mínus.
+            # Qt has Y downwards, the scene upwards — hence the minus.
             QPointF(center + screen_x * arm, center - screen_y * arm),
         )
 
@@ -94,7 +94,7 @@ def _length(point: tuple[float, float]) -> float:
 
 
 def fit_icon(size_px: int = DEFAULT_ICON_PX) -> Any:
-    """Ikona pre „zobraz celý model" — štvorec s rohovými značkami."""
+    """The icon for "show the whole model" — a square with corner marks."""
     scale = SUPERSAMPLE
     pixmap = QPixmap(size_px * scale, size_px * scale)
     pixmap.fill(Qt.GlobalColor.transparent)

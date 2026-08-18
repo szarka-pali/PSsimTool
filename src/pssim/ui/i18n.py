@@ -1,33 +1,33 @@
-"""Preklady UI.
+"""UI translations.
 
-Používa **štandardný mechanizmus Qt**, nie vlastný slovník. Dôvod: Qt už rieši
-veci, ktoré by vlastná implementácia riešila zle — množné čísla, fallback na
-zdrojový text, preklad vlastných dialógov Qt (`OK`, `Cancel`, názvy tlačidiel
-v `QFileDialog`) a nástroje na extrakciu textov.
+Uses the **standard Qt mechanism**, not a dictionary of our own. The reason: Qt already
+solves the things a homegrown implementation would get wrong — plurals, falling back to the
+source text, translating Qt's own dialogs (`OK`, `Cancel`, the button names in
+`QFileDialog`) and the tooling for extracting strings.
 
-**Zdrojový jazyk je angličtina.** Texty v kóde sú obalené v `tr()` alebo
-`QCoreApplication.translate()`; bez nainštalovaného prekladu sa použijú tak,
-ako sú. Vďaka tomu appka funguje aj keď žiadny `.qm` súbor neexistuje.
+**The source language is English.** The strings in the code are wrapped in `tr()` or
+`QCoreApplication.translate()`; with no translation installed they are used as they are.
+That way the application works even when no `.qm` file exists.
 
-## Ako pridať jazyk
+## How to add a language
 
-1. Vyextrahuj texty do `.ts` súboru:
+1. Extract the strings into a `.ts` file:
 
    ```
    uv run pyside6-lupdate src/pssim/ui/*.py -ts src/pssim/ui/translations/pssim_sk.ts
    ```
 
-2. Prelož ho (Qt Linguist alebo ručne v XML).
-3. Skompiluj na `.qm`:
+2. Translate it (Qt Linguist, or by hand in the XML).
+3. Compile it to `.qm`:
 
    ```
    uv run pyside6-lrelease src/pssim/ui/translations/pssim_sk.ts
    ```
 
-4. Pridaj kód jazyka do `LANGUAGES` nižšie.
+4. Add the language code to `LANGUAGES` below.
 
-Voľba jazyka v menu zatiaľ nie je — `install_translator()` je miesto, na ktoré
-sa napojí. Dovtedy sa dá jazyk vybrať prepínačom `pssim ui --lang`.
+A language choice in the menu does not exist yet — `install_translator()` is where it will
+hook in. Until then the language can be picked with the `pssim ui --lang` switch.
 """
 
 from __future__ import annotations
@@ -39,11 +39,11 @@ from pssim.observability import get_logger
 
 logger = get_logger(__name__)
 
-#: Zdrojový jazyk. Texty v kóde sú v ňom napísané, takže preklad netreba.
+#: The source language. The strings in the code are written in it, so it needs no translation.
 SOURCE_LANGUAGE: Final = "en"
 
-#: Jazyky, ktoré appka ponúka. Kľúč je ISO kód, hodnota názov v tom jazyku —
-#: budúce menu voľby jazyka má zobrazovať „Slovenčina", nie „Slovak".
+#: The languages the application offers. The key is the ISO code, the value the name in that
+#: language — a future language menu should show "Slovenčina", not "Slovak".
 LANGUAGES: Final[dict[str, str]] = {
     "en": "English",
     "sk": "Slovenčina",
@@ -51,16 +51,16 @@ LANGUAGES: Final[dict[str, str]] = {
 
 TRANSLATIONS_DIR: Final = Path(__file__).parent / "translations"
 
-#: Prefix názvov `.qm` súborov: `pssim_sk.qm`, `pssim_de.qm`, …
+#: The prefix of the `.qm` file names: `pssim_sk.qm`, `pssim_de.qm`, …
 FILE_PREFIX: Final = "pssim_"
 
 
 def available_languages() -> dict[str, str]:
-    """Jazyky, ktoré sa naozaj dajú použiť.
+    """The languages that can actually be used.
 
-    Zdrojový jazyk je vždy k dispozícii; ostatné len ak k nim existuje
-    skompilovaný `.qm` súbor. Menu tak nikdy nenabídne jazyk, po prepnutí
-    na ktorý by zostala angličtina.
+    The source language is always available; the others only when a compiled `.qm` file
+    exists for them. The menu therefore never offers a language that would leave the UI in
+    English after switching to it.
     """
     usable = {SOURCE_LANGUAGE: LANGUAGES[SOURCE_LANGUAGE]}
     for code, name in LANGUAGES.items():
@@ -70,25 +70,25 @@ def available_languages() -> dict[str, str]:
 
 
 def translation_file(language: str) -> Path:
-    """Cesta k `.qm` súboru daného jazyka. Existovať nemusí."""
+    """The path to a language's `.qm` file. It need not exist."""
     return TRANSLATIONS_DIR / f"{FILE_PREFIX}{language}.qm"
 
 
 def install_translator(application: Any, language: str = SOURCE_LANGUAGE) -> bool:
-    """Nainštaluje preklad do aplikácie. Vracia `True`, ak sa naozaj načítal.
+    """Install a translation into the application. Returns `True` if it really loaded.
 
-    Chýbajúci preklad **nie je chyba** — appka zostane v zdrojovom jazyku.
-    Tvrdé zlyhanie by znamenalo, že preklep v kóde jazyka zhodí štart.
+    A missing translation **is not an error** — the application stays in the source
+    language. Failing hard would mean a typo in a language code brings down startup.
 
-    Prekladač si aplikácia musí držať (`application._pssim_translator`), inak
-    ho Python odalokuje a preklady prestanú fungovať bez akejkoľvek chyby.
+    The application has to hold on to the translator (`application._pssim_translator`), or
+    Python deallocates it and the translations stop working without any error at all.
     """
     if language == SOURCE_LANGUAGE:
         return False
 
     if language not in LANGUAGES:
         logger.warning(
-            "neznámy jazyk, ostávam pri zdrojovom",
+            "unknown language, staying with the source one",
             language=language,
             known=sorted(LANGUAGES),
         )
@@ -96,18 +96,19 @@ def install_translator(application: Any, language: str = SOURCE_LANGUAGE) -> boo
 
     path = translation_file(language)
     if not path.is_file():
-        logger.warning("preklad nie je skompilovaný", language=language, file=str(path))
+        logger.warning("translation is not compiled", language=language, file=str(path))
         return False
 
     from PySide6.QtCore import QTranslator
 
     translator = QTranslator(application)
     if not translator.load(str(path)):
-        logger.warning("preklad sa nedá načítať", file=str(path))
+        logger.warning("translation cannot be loaded", file=str(path))
         return False
 
     application.installTranslator(translator)
-    # Referenciu drží aplikácia — bez nej by prekladač zmizol s garbage collectorom.
+    # The application holds the reference — without it the translator would vanish with
+    # the garbage collector.
     application._pssim_translator = translator  # noqa: SLF001
-    logger.info("preklad nainštalovaný", language=language)
+    logger.info("translation installed", language=language)
     return True

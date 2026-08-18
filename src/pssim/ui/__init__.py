@@ -1,9 +1,9 @@
-"""Desktopový shell v PySide6.
+"""The desktop shell in PySide6.
 
-Najvyššia vrstva — smie importovať všetko ostatné, ale nič ju importovať nesmie.
-Viď docs/architecture.md R9: shell rieši okno, menu a panely, samotný 3D viewport
-bude `viz/` vložené do `QWidget`.
+The topmost layer — it may import everything else, but nothing may import it. See
+docs/architecture.md R9: the shell handles the window, the menus and the panels, while the
+3D viewport itself is `viz/` embedded in a `QWidget`.
 
-`PySide6` je voliteľná závislosť (`uv sync --extra ui`), preto sa importuje
-až vnútri funkcií — `pssim --help` ani unit testy ju ťahať nemusia.
+`PySide6` is an optional dependency (`uv sync --extra ui`), so it is imported inside
+functions — neither `pssim --help` nor the unit tests need to drag it in.
 """

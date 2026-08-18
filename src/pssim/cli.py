@@ -51,7 +51,7 @@ logger = get_logger(__name__)
 
 DEFAULT_CACHE_DIR = Path("assets/cache")
 
-MachineArg = Annotated[Path, typer.Argument(help="Cesta k machines/*.yaml")]
+MachineArg = Annotated[Path, typer.Argument(help="Path to machines/*.yaml")]
 EndpointOpt = Annotated[
     str | None,
     typer.Option("--endpoint", "-e", envvar="PSSIM_OPCUA_ENDPOINT", help="OPC UA endpoint"),
@@ -68,7 +68,7 @@ def main(log_level: LogLevelOpt = None) -> None:
 def ui(
     lang: Annotated[
         str | None,
-        typer.Option("--lang", envvar="PSSIM_LANG", help="Jazyk UI, napr. en alebo sk"),
+        typer.Option("--lang", envvar="PSSIM_LANG", help="UI language, e.g. en or sk"),
     ] = None,
 ) -> None:
     """Run the desktop application.
@@ -99,15 +99,15 @@ def validate(machine: MachineArg) -> None:
     from pssim.config.loader import load_machine
 
     loaded = _guard(lambda: load_machine(machine))
-    typer.echo(f"stroj:      {loaded.machine.name}")
+    typer.echo(f"machine:    {loaded.machine.name}")
     typer.echo(
         f"joints:     {len(loaded.machine.joints)} ({len(loaded.machine.moving_joints)} moving)"
     )
     typer.echo(f"signals:    {len(loaded.bindings)}")
     typer.echo(f"STEP:       {loaded.step_file}")
-    typer.echo(f"jednotky:   {loaded.units} (scale {loaded.scale_to_m})")
+    typer.echo(f"units:      {loaded.units} (scale {loaded.scale_to_m})")
     typer.echo(
-        f"cache:      {'existuje' if _cache_exists(loaded) else 'MISSING - run import-step'}"
+        f"cache:      {'present' if _cache_exists(loaded) else 'MISSING - run import-step'}"
     )
     typer.echo("the definition is in order")
 

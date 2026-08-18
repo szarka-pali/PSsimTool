@@ -1,65 +1,58 @@
----
-paths:
-  - "tests/**"
-description: Konvencie pre písanie testov
----
+# Tests
 
-# Testy
+## Structure
 
-## Štruktúra
-
-- `tests/unit/` — bez I/O, bez siete, **bez otvorenia okna, bez OPC UA**.
-  Celé musí bežať do 5 s.
-- `tests/integration/` — proti `pssim mock-server`. Označ `@pytest.mark.integration`.
-  Spúšťa sa `uv run pytest -m integration`.
-- Jeden testovací súbor zrkadlí jeden modul:
+- `tests/unit/` — no I/O, no network, **no window, no OPC UA**.
+  The whole directory must run in under 5 s.
+- `tests/integration/` — against `pssim mock-server`. Mark with `@pytest.mark.integration`.
+  Run with `uv run pytest -m integration`.
+- One test file mirrors one module:
   `src/pssim/domain/kinematics.py` → `tests/unit/domain/test_kinematics.py`.
-- Fixtures a factories: `tests/factories.py`. Nevytváraj testovacie dáta ručne inline.
+- Fixtures and factories: `tests/factories.py`. Do not build test data by hand inline.
 
-## Ako píšeme testy
+## How we write tests
 
-- Názov testu opisuje **správanie, nie implementáciu**:
-  `test_prismatic_joint_posunie_po_osi`, nie `test_joint_transform_returns_tuple`.
-- Vzor arrange / act / assert, oddelený prázdnym riadkom.
-- **Jedno tvrdenie na test**, ak to nie je nezmyselné. Radšej päť malých testov než jeden veľký.
-- Mockuj **len hranicu systému** (OPC UA klient, čas, súborový systém).
-  Nikdy nemockuj vlastnú doménovú logiku — ak to test potrebuje, návrh je zlý.
+- The test name describes **behaviour, not implementation**:
+  `test_prismatic_joint_moves_along_its_axis`, not `test_joint_transform_returns_tuple`.
+- Arrange / act / assert, separated by blank lines.
+- **One assertion per test** unless that is nonsense. Five small tests beat one big one.
+- Mock **only the system boundary** (the OPC UA client, time, the filesystem).
+  Never mock your own domain logic — if a test needs that, the design is wrong.
 
-## Špecifiká tohto projektu
+## Specific to this project
 
-- **Čas nikdy neber z `time.monotonic()` v teste.** Interpolácia a store berú čas
-  ako argument (`sample_all(at_time=...)`) presne preto, aby sa dal v teste zadať.
-  Ak píšeš kód, ktorý si čas berie sám, je to chyba návrhu — nahlás ju.
-- **Čísla porovnávaj s toleranciou:** `pytest.approx(..., abs=1e-9)`. Kinematika je float
-  aritmetika, presná rovnosť je náhoda.
-- **Jednotky testuj explicitne.** Ku každému prevodu (mm→m, deg→rad, `scale`/`offset`
-  z YAML) musí existovať test s konkrétnym číslom. Toto je v tomto projekte
-  najpravdepodobnejší tichý bug.
-- **Hraničné hodnoty kĺbov** testuj vždy: pod dolným limitom, presne na limite,
-  nad horným limitom, kĺb bez limitov.
-- **Interpoláciu** testuj aj na degenerovaných vstupoch: prázdny buffer, jediná vzorka,
-  vzorky s rovnakou časovou známkou, dopyt na čas pred prvou a po poslednej vzorke.
-- **Vlákna:** `StateStore` testuj aj súbežným zápisom a čítaním z viacerých vlákien.
-  Bez `sleep()` — použi `threading.Barrier`.
-- Panda3D a OCP sa v `tests/unit/` **neimportujú**. Ak by test niektorý potreboval,
-  patrí do `tests/integration/`.
+- **Never take time from `time.monotonic()` in a test.** Interpolation and the store take
+  time as an argument (`sample_all(at_time=...)`) precisely so it can be supplied by a test.
+  If you write code that fetches time itself, that is a design flaw — report it.
+- **Compare numbers with a tolerance:** `pytest.approx(..., abs=1e-9)`. Kinematics is float
+  arithmetic; exact equality is a coincidence.
+- **Test units explicitly.** Every conversion (mm→m, deg→rad, `scale`/`offset` from YAML)
+  must have a test with a concrete number. This is the most likely silent bug in this project.
+- **Joint limits** always get tested: below the lower limit, exactly on it, above the upper
+  limit, and a joint with no limits.
+- **Interpolation** gets tested on degenerate input too: an empty buffer, a single sample,
+  samples with the same timestamp, a query before the first and after the last sample.
+- **Threads:** test `StateStore` with concurrent writes and reads from several threads.
+  Without `sleep()` — use a `threading.Barrier`.
+- Panda3D and OCP are **not imported** in `tests/unit/`. A test that needs either belongs in
+  `tests/integration/`.
 
-## Čo je zakázané
+## Forbidden
 
-- Testy, ktoré len opakujú implementáciu (`assert mock.called_once()` ako jediné tvrdenie).
-- `sleep()` na synchronizáciu — použi barrier, event alebo explicitný čas ako argument.
-- Testy závislé od poradia spustenia alebo od zdieľaného globálneho stavu.
-- Preskakovanie (`skip`) bez komentára s dôvodom.
-- Testy načítavajúce reálne STEP súbory z `models/` — tie v repozitári nie sú.
-  Použi generovanú geometriu alebo malý fixture v `tests/data/`.
+- Tests that merely restate the implementation (`assert mock.called_once()` as the only assertion).
+- `sleep()` for synchronisation — use a barrier, an event, or explicit time as an argument.
+- Tests that depend on execution order or on shared global state.
+- Skipping (`skip`) without a comment giving the reason.
+- Tests loading real STEP files from `models/` — those are not in the repository.
+  Use generated geometry or a small fixture in `tests/data/`.
 
-## Pri pridávaní funkcionality
+## When adding functionality
 
-1. Najprv napíš test, ktorý **padne** a zachytáva požadované správanie.
-2. Ukáž mi, že padá, **a prečo padá** — padajúci test, ktorý padá na `ImportError`,
-   nedokazuje nič.
-3. Až potom implementuj.
-4. Spusti `uv run pytest tests/unit -q` a ukáž výstup.
+1. First write a test that **fails** and captures the wanted behaviour.
+2. Show me that it fails, **and why it fails** — a failing test that fails on `ImportError`
+   proves nothing.
+3. Only then implement.
+4. Run `uv run pytest tests/unit -q` and show the output.
 
-Pri oprave bugu vždy najprv **reprodukčný test**. Bug bez regresného testu sa nepovažuje
-za opravený.
+When fixing a bug, always start with a reproducing test. A bug without a regression test is
+not considered fixed.

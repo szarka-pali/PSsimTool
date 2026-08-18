@@ -1,93 +1,91 @@
----
-paths:
-  - "src/**"
-description: Štýl a štruktúra produkčného kódu (Python)
----
+# Code style
 
-# Štýl kódu
+Formatting is settled by `ruff format`, not by discussion — do not worry about indentation
+or brackets. These are the rules the linter does not catch.
 
-Formátovanie riešime `ruff format`, nie diskusiou — nerieš odsadenie ani zátvorky.
-Toto sú pravidlá, ktoré linter nezachytí.
+## Naming
 
-## Pomenovanie
+- Functions are **actions** (`sample_signal`, `build_scene`), variables are **things** (`position`).
+- **Everything in English** — identifiers, comments, docstrings, logs and user-facing text.
+  The reason is in `CLAUDE.md`, section *Language*. Translate old Slovak comments only when
+  you touch the file for another reason.
+  Keep domain terms in the form given by the glossary (`joint`, `signal`, `deflection`).
+- **User-facing text** must be wrapped in `self.tr()` (inside a `QObject`) or
+  `QCoreApplication.translate("Context", "text")` (at module level). Unwrapped text never
+  reaches the `.ts` file and will never be translated.
+  See `src/pssim/ui/translations/README.md`.
+- **Logs are not translated** through `tr()` — they are for the developer, not the user.
+  But they are written in English, like everything else.
+- No abbreviations except the established ones (`id`, `url`, `cad`, `hpr`, `rpy`).
+  Not `jnt_cnt` but `joint_count`.
+- Booleans start with `is_`/`has_`/`can_` (`is_stale`, `has_limits`).
+- If you need `and`/`or` in a name, the function does two things — split it.
+- **Units in the name when the type does not make them obvious:** `delay_s`, `interval_ms`,
+  `angle_rad`, `length_mm`. This is the most common source of bugs in this project — do not
+  save characters on it.
 
-- Funkcie sú **činnosti** (`sample_signal`, `build_scene`), premenné sú **veci** (`position`).
-- **Všetko po anglicky** — identifikátory, komentáre, docstringy, logy aj texty
-  pre používateľa. Dôvod je v `CLAUDE.md`, sekcia *Language*. Staré slovenské
-  komentáre prekladaj len keď na súbor siahaš z iného dôvodu.
-  Doménové pojmy nechávaj v tvare zo slovníka (`joint`, `signal`, `deflection`).
-- **Texty pre používateľa** musia byť obalené v `self.tr()` (v `QObject`) alebo
-  `QCoreApplication.translate("Kontext", "text")` (na module level). Neobalený
-  text sa nedostane do `.ts` a nikdy sa nepreloží.
-  Viď `src/pssim/ui/translations/README.md`.
-- **Logy sa neprekladajú** cez `tr()` — sú pre vývojára, nie pre používateľa.
-  Ale píšu sa po anglicky, ako všetko ostatné.
-- Žiadne skratky okrem ustálených (`id`, `url`, `cad`, `hpr`, `rpy`). Nie `jnt_cnt`, ale `joint_count`.
-- Boolean začína `is_`/`has_`/`can_` (`is_stale`, `has_limits`).
-- Ak potrebuješ v názve `and`/`or`, funkcia robí dve veci — rozdeľ ju.
-- **Jednotky do názvu, ak nie sú z typu zrejmé:** `delay_s`, `interval_ms`, `angle_rad`,
-  `length_mm`. Toto je v tomto projekte najčastejší zdroj chýb — nešetri znakmi.
+## Types
 
-## Typy
+- Every public function has **full type annotations**. `pyright` runs in `strict` mode on `src/`.
+- No `Any` without a comment explaining why. No `# type: ignore` without a stated reason.
+- Data carriers: `@dataclass(frozen=True, slots=True)`. Mutable state only where it has an
+  owner and a lock (`io/store.py`).
+- Define boundaries between layers as a `typing.Protocol`, not an abstract base class.
+  The implementation then does not have to be imported into the module that consumes it.
 
-- Každá verejná funkcia má **plné typové anotácie**. `pyright` beží v `strict` režime na `src/`.
-- Žiadne `Any` bez komentára prečo. Žiadne `# type: ignore` bez uvedeného dôvodu.
-- Dátové nosiče: `@dataclass(frozen=True, slots=True)`. Mutovateľný stav len tam,
-  kde má vlastníka a lock (`io/store.py`).
-- Hranice medzi vrstvami definuj ako `typing.Protocol`, nie ako abstraktnú triedu.
-  Implementácia sa nemusí importovať do modulu, ktorý ju konzumuje.
+## Functions and modules
 
-## Funkcie a moduly
+- A function fits on a screen (~40 lines). If it does not, it is missing a helper.
+- At most 3 levels of nesting. Use early returns instead of `else`.
+- Arguments: at most 4. More → a frozen dataclass with named fields.
+- No boolean flags in a signature that switch behaviour (`load(path, tessellate=True)`).
+  Two functions is better.
 
-- Funkcia sa vojde na obrazovku (~40 riadkov). Ak nie, chýba jej pomocná funkcia.
-- Maximálne 3 úrovne vnorenia. Používaj early return namiesto `else`.
-- Argumenty: max 4. Viac → frozen dataclass s pomenovanými poliami.
-- Žiadne boolean flagy v signatúre, ktoré prepínajú správanie (`load(path, tessellate=True)`).
-  Radšej dve funkcie.
+## Errors
 
-## Chyby
-
-- Vyhadzuj typované chyby z `src/pssim/domain/errors.py`, nie generický `Exception`.
-- **Nikdy** neprehltni výnimku naprázdno. Buď ju spracuj, alebo prepošli s kontextom
+- Raise the typed errors from `src/pssim/domain/errors.py`, not a bare `Exception`.
+- **Never** swallow an exception silently. Either handle it or re-raise it with context
   (`raise ConfigError(...) from exc`).
-- Validuj vstup na hranici systému (`config/`, `io/`, `cad/`), nie hlboko v doméne.
-  `domain/` môže predpokladať, že dáta sú platné a v správnych jednotkách.
-- Chyba pri jednom signáli **nesmie zhodiť render loop**. `viz/` musí prežiť
-  chýbajúci alebo neplatný signál — zobrazí posledný známy stav a označí ho ako zastaraný.
+- Validate input at the system boundary (`config/`, `io/`, `cad/`), not deep in the domain.
+  `domain/` may assume the data is valid and in the right units.
+- An error in one signal **must not** bring down the render loop. `viz/` has to survive a
+  missing or invalid signal — it shows the last known state and marks it as stale.
 
-## Vlákna a asyncio
+## Threads and asyncio
 
-- `asyncio` beží **len** v `io/`. Nikde inde `async def`.
-- Zdieľaný stav medzi vláknami existuje na jedinom mieste: `io/store.StateStore`.
-  Nepridávaj druhý. Ak potrebuješ zdieľať niečo ďalšie, rozšír store.
-- Lock drž čo najkratšie: pod lockom sa kopírujú dáta, nepočíta sa.
-- Žiadne `time.sleep()` v produkčnom kóde mimo `io/replay.py`.
+- `asyncio` runs **only** in `io/`. No `async def` anywhere else.
+- Shared state between threads exists in exactly one place: `io/store.StateStore`.
+  Do not add a second one. If you need to share something else, extend the store.
+- Hold the lock as briefly as possible: copy data under the lock, do not compute under it.
+- No `time.sleep()` in production code outside `io/replay.py`.
 
 ## Panda3D
 
-- Panda3D typy (`NodePath`, `LVector3`, `LQuaternion`, `Geom`) sa nesmú objaviť
-  v signatúrach mimo `viz/`.
-- Žiadna práca v render tasku, ktorá sa dá spraviť raz pri stavbe scény.
-- Načítanie assetu nikdy synchrónne počas behu — cez `loader.loadModel(..., blocking=False)`
-  alebo pred prvým frame.
+- Panda3D types (`NodePath`, `LVector3`, `LQuaternion`, `Geom`) must not appear in
+  signatures outside `viz/`.
+- No work in the render task that could be done once while building the scene.
+- Never load an asset synchronously at run time — use `loader.loadModel(..., blocking=False)`
+  or load before the first frame.
 
-## Komentáre
+## Comments
 
-- Komentár vysvetľuje **prečo**, nikdy **čo**. `# zvýš i o 1` je šum.
-- Netriviálne rozhodnutie → jedna veta prečo, ideálne s odkazom na `docs/architecture.md`
-  (napr. `# viď R4: asyncua nemôže bežať v Panda3D task manageri`).
-- Žiadne `TODO` bez menovca. Žiadny zakomentovaný mŕtvy kód — zmaž ho, git si to pamätá.
+- A comment explains **why**, never **what**. `# increment i by 1` is noise.
+- A non-trivial decision → one sentence on why, ideally with a reference to
+  `docs/architecture.md` (e.g. `# see R4: asyncua cannot run in the Panda3D task manager`).
+- No `TODO` without a name attached. No commented-out dead code — delete it, git remembers.
 
-## Závislosti
+## Dependencies
 
-- Nové závislosti **len po schválení**. Napíš, prečo nestačí stdlib alebo už prítomná knižnica.
-- `domain/` importuje **výhradne stdlib**. Ani numpy, ani pydantic.
-- Ťažké importy (`OCP`, `panda3d`, `PySide6`) nikdy na module level v `cli.py` —
-  importuj ich vnútri príkazu, ktorý ich potrebuje. Inak `pssim --help` trvá sekundy.
+- New dependencies **only after approval**. Write down why the stdlib or a library already
+  present is not enough.
+- `domain/` imports **stdlib only**. Not numpy, not pydantic.
+- Heavy imports (`OCP`, `panda3d`, `PySide6`) never at module level in `cli.py` — import them
+  inside the command that needs them. Otherwise `pssim --help` takes seconds.
 
-## Zmeny existujúceho kódu
+## Changing existing code
 
-- Napodobňuj vzor, ktorý v okolí už je, aj keby si to sám napísal inak.
-  Konzistencia je cennejšia než tvoja preferencia.
-- Nerefaktoruj nesúvisiaci kód „popri tom". Ak vidíš problém, spomeň ho, ale nemeň.
-- Zachovaj verejné signatúry, ak nemáš výslovný pokyn ich meniť.
+- Imitate the pattern already present around you, even if you would have written it differently.
+  Consistency is worth more than your preference.
+- Do not refactor unrelated code "while you are there". If you see a problem, mention it,
+  but do not change it.
+- Preserve public signatures unless you have an explicit instruction to change them.

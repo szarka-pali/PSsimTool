@@ -1,85 +1,88 @@
 ---
 paths:
   - "src/pssim/cad/**"
-description: Pravidlá pre import CAD geometrie (STEP, OpenCASCADE, tesselácia)
+description: Rules for importing CAD geometry (STEP, OpenCASCADE, tessellation)
 ---
 
-# Vrstva `cad/` — import geometrie
+# The `cad/` layer — geometry import
 
-## Čo použiť
+## What to use
 
-- STEP čítame cez **`STEPCAFControlReader` + `XCAFDoc`** (balík `cadquery-ocp`),
-  **nie** cez `STEPControl_Reader`. Rozdiel: CAF verzia dá assembly tree s názvami,
-  transformáciami a farbami. Bez toho nemáš na čo namapovať kĺby.
-- Tesselácia: `BRepMesh_IncrementalMesh` s explicitne zadanou lineárnou aj uhlovou
-  deviáciou. Nikdy sa nespoliehaj na default.
-- `OCP` je ťažký import (stovky MB). Importuj ho **vnútri funkcie**, nie na module level —
-  inak `pssim --help` a unit testy platia jeho načítanie.
+- Read STEP through **`STEPCAFControl_Reader` + `XCAFDoc`** (the `cadquery-ocp` package),
+  **not** through `STEPControl_Reader`. The difference: the CAF version gives you the
+  assembly tree with names, transformations and colours. Without it there is nothing to map
+  joints onto.
+- Tessellation: `BRepMesh_IncrementalMesh` with both the linear and the angular deviation
+  given explicitly. Never rely on the defaults.
+- `OCP` is a heavy import (hundreds of MB). Import it **inside the function**, not at module
+  level — otherwise `pssim --help` and the unit tests pay for loading it.
 
-## Jednotky
+## Units
 
-- STEP je najčastejšie v **milimetroch**, scéna je v **metroch**. Škáluj **pri importe**,
-  nikdy neskôr.
-- Jednotku čítaj zo súboru, ak ju obsahuje; ak nie, ber ju z `units:` v `machines/*.yaml`
-  a to, ktorú si použil, **zapíš do cache metadát**. Inak nikto nezistí, prečo je stroj
-  tisíckrát väčší.
-- Transformácie z assembly tree sú tiež v jednotkách STEP — škáluj aj ich translačnú časť,
-  nie len vrcholy.
+- STEP is most often in **millimetres**, the scene is in **metres**. Scale **at import**,
+  never later.
+- Read the unit from the file if it carries one; if not, take it from `units:` in
+  `machines/*.yaml` and **write the one you used into the cache metadata**. Otherwise nobody
+  will work out why the machine is a thousand times too large.
+- The transformations from the assembly tree are in STEP units too — scale their translation
+  part as well, not only the vertices.
 
 ## Cache
 
-- Cache kľúč = hash z **(obsah STEP súboru + parametre tesselácie + verzia importéra)**.
-  Ak zmeníš importér tak, že sa mení výstup, **zvýš `IMPORTER_VERSION`** — inak sa bude
-  používať stará cache a nikto nepochopí, prečo sa zmena neprejavila.
-- Cache je **plne zahoditeľná**. Nikdy do nej neukladaj nič, čo sa nedá znovu vyrobiť
-  zo `models/` a `machines/`.
-- Do cache patria aj metadáta (JSON): pôvodný súbor, jednotky, parametre, assembly tree,
-  mapovanie názvov uzlov na mesh súbory. Bez nich je cache neinterpretovateľná.
+- Cache key = a hash of **(STEP file content + tessellation parameters + importer version)**.
+  If you change the importer so that its output changes, **bump `IMPORTER_VERSION`** —
+  otherwise the old cache is used and nobody understands why the change had no effect.
+- The cache is **entirely disposable**. Never store anything in it that cannot be rebuilt
+  from `models/` and `machines/`.
+- The cache also holds metadata (JSON): the source file, units, parameters, the assembly
+  tree, and the mapping from node names to mesh files. Without those the cache cannot be
+  interpreted.
 
-## Geometria
+## Geometry
 
-- Formát meshu je `.npz` (`cad/mesh.py`), **nie** `.bam` ani glTF — dôvody v
-  `docs/architecture.md` R2b. Vrcholy sú v **metroch**, indexy **0-based**
-  (OCC je 1-based, prevod je pri importe).
-- Mesh sa kľúčuje podľa **definície dielu** (XCAF entry), nie podľa cesty uzla.
-  Inštancie toho istého dielu zdieľajú jeden súbor.
-- **Vrcholy sa medzi plochami nezdieľajú.** Na hrane kvádra majú susedné steny rôzne
-  normály; zdieľaný vrchol by ich spriemeroval a diel by vyzeral zaoblene.
-- Orientácia plochy (`TopAbs_REVERSED`) určuje poradie indexov trojuholníka.
-  Ak sa zabudne obrátiť, normály mieria dovnútra a diel vyzerá „naruby".
-  Stráži to `test_normaly_kvadra_mieria_von`.
-- Meniť konvenciu uhlov (`gp_Intrinsic_XYZ`) sa nesmie bez prepísania
-  `viz/transforms.rpy_to_quat` — rozsypali by sa všetky existujúce `machines/*.yaml`.
+- The mesh format is `.npz` (`cad/mesh.py`), **not** `.bam` or glTF — reasons in
+  `docs/architecture.md` R2b. Vertices are in **metres**, indices are **0-based**
+  (OCC is 1-based; the conversion happens at import).
+- A mesh is keyed by the **part definition** (the XCAF entry), not by the node path.
+  Instances of the same part share one file.
+- **Vertices are not shared between faces.** On the edge of a box the adjacent faces have
+  different normals; a shared vertex would average them and the part would look rounded.
+- Face orientation (`TopAbs_REVERSED`) decides the index order of a triangle.
+  Forget to flip it and the normals point inwards, so the part looks inside out.
+  `test_normaly_kvadra_mieria_von` guards this.
+- The angle convention (`gp_Intrinsic_XYZ`) must not change without rewriting
+  `viz/transforms.rpy_to_quat` — every existing `machines/*.yaml` would fall apart.
 
-## Výkon
+## Performance
 
-- Tesselácia veľkého assembly trvá **minúty**. Nikdy ju nespúšťaj počas štartu aplikácie —
-  len cez `pssim import-step`. Ak cache chýba, aplikácia to má **ohlásiť ako chybu**
-  s návodom, nie sa na 5 minút zaseknúť.
-- Deviáciu voľ podľa veľkosti dielu, nie absolútne — jemná deviácia na 3-metrovom ráme
-  vygeneruje milióny trojuholníkov.
-- Diely, ktoré nie sú kĺbom ani jeho potomkom, sa dajú v exporte spojiť.
-  Rozhodnutie čo je pohyblivé patrí do `viz/scene_builder.py`, `cad/` len dodá suroviny
-  a zachová hierarchiu.
+- Tessellating a large assembly takes **minutes**. Never run it during application startup —
+  only through `pssim import-step`. If the cache is missing, the application must **report it
+  as an error** with instructions, not hang for five minutes.
+- Choose the deviation relative to part size, not absolutely — a fine deviation on a 3-metre
+  frame generates millions of triangles.
+- Parts that are neither a joint nor a descendant of one can be merged during export.
+  Deciding what is movable belongs to `viz/scene_builder.py`; `cad/` only supplies the raw
+  material and preserves the hierarchy.
 
-## Robustnosť
+## Robustness
 
-- Reálne STEP súbory z praxe sú **rozbité**: prázdne shapes, nulové transformácie,
-  duplicitné názvy uzlov, cyklické referencie, diely bez farby. Každý z týchto prípadov
-  ošetri explicitne a zaloguj — nikdy nespadni s `AttributeError` z hlbín OCP.
-- Duplicitné názvy uzlov sú bežné (`Part1` desaťkrát). Generuj stabilné cesty
-  (`base/portal/Part1[2]`), nie len názvy — YAML sa na ne odkazuje.
-- Ak sa uzol z `machines/*.yaml` v assembly nenájde, je to `ConfigError` s výpisom
-  **podobných** dostupných názvov. Nie tiché ignorovanie.
+- Real STEP files from the field are **broken**: empty shapes, zero transformations,
+  duplicate node names, cyclic references, parts without colour. Handle each of these cases
+  explicitly and log it — never crash with an `AttributeError` from the depths of OCP.
+- Duplicate node names are common (`Part1` ten times). Generate stable paths
+  (`base/portal/Part1[2]`), not just names — the YAML refers to them.
+- If a node named in `machines/*.yaml` is not found in the assembly, that is a `ConfigError`
+  listing the **similar** names that are available. Not silent ignoring.
 
-## Testovanie
+## Testing
 
-- Do `tests/unit/` patrí **cache logika, hashovanie, škálovanie jednotiek a spracovanie
-  assembly tree** — všetko čisté funkcie nad dátovými štruktúrami.
-- Volania OCP patria do `tests/integration/test_step_import.py` (marker `cad`).
-  Bežia proti `tests/data/fixture.step`, ktorý generuje `tools/make_step_fixture.py`.
-  Reálne súbory z `models/` v repozitári nie sú.
-- Ak potrebuješ do fixture pridať ďalší prípad (viac úrovní vnorenia, diel bez názvu,
-  zrkadlená inštancia), **rozšír generátor a fixture pregeneruj** — needituj STEP ručne.
-- **Po povýšení `cadquery-ocp` vždy spusti `uv run pytest -m cad`.** Bindings sa medzi
-  verziami menia v detailoch a tieto testy sú jediné, čo to zachytí.
+- `tests/unit/` is the place for **cache logic, hashing, unit scaling and assembly tree
+  processing** — all pure functions over data structures.
+- OCP calls belong in `tests/integration/test_step_import.py` (marker `cad`).
+  They run against `tests/data/fixture.step`, generated by `tools/make_step_fixture.py`.
+  Real files from `models/` are not in the repository.
+- If you need another case in the fixture (more nesting levels, a part without a name, a
+  mirrored instance), **extend the generator and regenerate the fixture** — do not edit the
+  STEP by hand.
+- **After upgrading `cadquery-ocp`, always run `uv run pytest -m cad`.** The bindings change
+  in details between versions and these tests are the only thing that catches it.

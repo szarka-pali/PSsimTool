@@ -1,64 +1,66 @@
 # PSsimTool
 
-## Čo to je
+## What this is
 
-Desktopová aplikácia na **3D simuláciu strojov** v reálnom čase. Načíta geometriu stroja
-z CAD súborov (minimálne STEP), poskladá z nej kinematickú hierarchiu podľa definície stroja
-a jej pohyblivé časti riadi **live hodnotami z PLC cez OPC UA** — polohy, natočenia
-a vlastnosti objektov.
+A desktop application for **real-time 3D machine simulation**. It loads machine geometry
+from CAD files (STEP at minimum), assembles a kinematic hierarchy from it according to a
+machine definition, and drives the moving parts with **live values from a PLC over OPC UA**
+— positions, rotations and object properties.
 
-Používateľ je inžinier uvádzajúci stroj do prevádzky alebo programátor PLC, ktorý potrebuje
-vidieť, čo riadiaci program naozaj robí. Nie je to hra ani fyzikálny simulátor:
-**dáta prichádzajú z PLC, aplikácia ich len zobrazuje.** Vlastnú dynamiku nepočíta.
+The user is an engineer commissioning a machine, or a PLC programmer who needs to see what
+the control program is actually doing. This is not a game and not a physics simulator:
+**the data comes from the PLC, the application only displays it.** It computes no dynamics
+of its own.
 
-Hranica systému: aplikácia je **OPC UA klient**. Neobsahuje PLC logiku, needituje CAD,
-nezapisuje do PLC (okrem výslovne označených ovládacích prvkov, ktoré zatiaľ neexistujú).
+System boundary: the application is an **OPC UA client**. It contains no PLC logic, does not
+edit CAD, and does not write to the PLC (except for explicitly marked controls, which do not
+exist yet).
 
-## Príkazy
+## Commands
 
-Projekt beží na **Python 3.12** (nie novšom — `panda3d` a `cadquery-ocp` nemajú wheels
-pre 3.13+). `uv` si správnu verziu stiahne sám.
+The project runs on **Python 3.12** (not newer — `panda3d` and `cadquery-ocp` have no wheels
+for 3.13+). `uv` fetches the right version itself.
 
-| Účel | Príkaz |
+| Purpose | Command |
 |---|---|
-| Inštalácia závislostí | `uv sync --all-extras` |
-| Spustenie desktopovej appky | `uv run pssim ui` |
-| Spustenie so živým PLC | `uv run pssim run machines/priklad.yaml` |
-| Mock PLC (druhý terminál) | `uv run pssim mock-server` |
-| **Testy (rýchle)** | `uv run pytest tests/unit -q` |
-| Testy proti mock PLC | `uv run pytest -m integration` |
-| Testy importu STEP | `uv run pytest -m cad` (treba `uv sync --extra cad`) |
-| Testy okna (headless) | `uv run pytest -m ui` (treba `uv sync --extra ui`) |
-| Testy (všetky, pomalé) | `uv run pytest` |
-| Lint + formát | `uv run ruff format . && uv run ruff check --fix .` |
-| Typová kontrola | `uv run pyright` |
-| Import STEP do cache | `uv run pssim import-step <subor.step>` |
-| Build distribúcie | `uv run python setup_dist.py bdist_apps` |
+| Install dependencies | `uv sync --all-extras` |
+| Run the desktop app | `uv run pssim ui` |
+| Run against a live PLC | `uv run pssim run machines/priklad.yaml` |
+| Mock PLC (second terminal) | `uv run pssim mock-server` |
+| **Tests (fast)** | `uv run pytest tests/unit -q` |
+| Tests against the mock PLC | `uv run pytest -m integration` |
+| STEP import tests | `uv run pytest -m cad` (needs `uv sync --extra cad`) |
+| Window tests (headless) | `uv run pytest -m ui` (needs `uv sync --extra ui`) |
+| Tests (all, slow) | `uv run pytest` |
+| Lint + format | `uv run ruff format . && uv run ruff check --fix .` |
+| Type check | `uv run pyright` |
+| Import a STEP file into the cache | `uv run pssim import-step <file.step>` |
+| Build a distribution | `uv run python setup_dist.py bdist_apps` |
 
-> Po každej zmene kódu spusti `uv run ruff check . && uv run pytest tests/unit -q`.
-> Ak neprejde, oprav to pred tým, než mi ohlásiš hotovo.
+> After every code change run `uv run ruff check . && uv run pytest tests/unit -q`.
+> If it does not pass, fix it before reporting back to me.
 
-## Štruktúra
+## Structure
 
 ```
 src/pssim/
-  domain/       čistá logika: model stroja, kinematika, interpolácia, jednotky, chyby
-                NEIMPORTUJE panda3d, asyncua, pydantic ani OCP
-  config/       pydantic schémy YAML definícií strojov + loader do domain modelu
-  io/           zdroje dát: OPC UA klient, replay, mock server, thread-safe state store
-  cad/          import STEP → tesselácia → cache; nič o Panda3D nevie
-  viz/          Panda3D: scéna, mapovanie kĺbov na NodePath, HUD
-  ui/           PySide6 shell (okno, stromy, property grid) — hostí viz viewport
-  cli.py        vstupné body (typer)
-machines/       YAML definície strojov (verzované)
-models/         vstupné CAD súbory — VEĽKÉ BINÁRKY, needituj, negituj
-assets/cache/   GENEROVANÉ tesselované meshe — needituj ručne, kľudne zmaž
-recordings/     zaznamenané dátové toky na replay (negitované)
-tools/          pomocné skripty (generátor STEP fixture)
-tests/unit/     rýchle, bez I/O, bez okna, bez OPC UA
-tests/integration/  markery `integration` (mock PLC) a `cad` (OpenCASCADE)
-tests/data/     malé fixture súbory — verzované, na rozdiel od models/
-docs/           architektúra a rozhodnutia
+  domain/       pure logic: machine model, kinematics, interpolation, units, errors
+                DOES NOT IMPORT panda3d, asyncua, pydantic or OCP
+  config/       pydantic schemas for the YAML machine definitions + loader into the domain model
+  io/           data sources: OPC UA client, replay, mock server, thread-safe state store
+  cad/          STEP import → tessellation → cache; knows nothing about Panda3D
+  viz/          Panda3D: scene, mapping joints onto NodePaths, HUD
+  ui/           PySide6 shell (window, trees, property grid) — hosts the viz viewport
+  cli.py        entry points (typer)
+machines/       YAML machine definitions (versioned)
+models/         input CAD files — LARGE BINARIES, do not edit, do not commit
+assets/cache/   GENERATED tessellated meshes — do not edit by hand, deleting them is fine
+recordings/     recorded data streams for replay (not committed)
+tools/          helper scripts (STEP fixture generator)
+tests/unit/     fast, no I/O, no window, no OPC UA
+tests/integration/  markers `integration` (mock PLC) and `cad` (OpenCASCADE)
+tests/data/     small fixture files — versioned, unlike models/
+docs/           architecture and decisions
 ```
 
 ## Language
@@ -66,57 +68,57 @@ docs/           architektúra a rozhodnutia
 **Write everything in English.** Chat replies, commit messages, code, comments,
 docstrings, log messages, user-facing UI strings and documentation.
 
-The reason is token cost: Slovak diacritics tokenize badly (roughly 1.5–2× the
-tokens of the same text in English), and everything you write is re-read on every
-turn. English is also the norm for code and keeps the project readable for anyone
-who joins later.
+The reason is token cost: Slovak tokenizes badly (measured on this project's own
+prose: 1.77× the tokens of the same text in English, and the same holds for
+identifiers), and everything written here is re-read on every turn. English is
+also the norm for code and keeps the project readable for anyone who joins later.
 
-Two things stay as they are:
+One thing stays as it is: UI strings must still go through `tr()` — see
+`src/pssim/ui/translations/README.md`. English is the source language, other
+languages are translations.
 
-- Text already written in Slovak is **not** retrofitted wholesale. Translate a
-  file when you touch it for another reason, not as a separate sweep.
-- UI strings must still go through `tr()` — see `src/pssim/ui/translations/README.md`.
-  English is the source language, other languages are translations.
+## Conventions that hold without exception
 
-## Konvencie, ktoré platia bez výnimky
+- **Dependencies point inwards only.** `domain/` imports nothing from `viz/`, `io/`, `cad/`,
+  `ui/` or any external framework. If data has to reach the domain, pass it as an argument.
+- **Units: the scene is in metres and radians.** CAD is typically in mm, a PLC often sends
+  mm and degrees. Conversion happens **at the boundary** (`config/loader.py`, `cad/`, `io/`),
+  never in `domain/` and never in `viz/`. See `src/pssim/domain/units.py`.
+- **Time: always the `SourceTimestamp` from OPC UA**, not the local arrival time. Internally
+  seconds as `float` on a monotonic scale. Conversion in `io/`.
+- **Never touch OPC UA in the render loop.** Data arrives through subscriptions into
+  `io/store.StateStore`; the render thread only reads an interpolated snapshot from it.
+- **Errors:** raise the typed errors from `src/pssim/domain/errors.py`, not a bare `Exception`.
+- **Logging:** `structlog` through `pssim.observability.get_logger()`, never `print()`.
+- **Panda3D objects never leave `viz/`.** No `NodePath`, `LVector3` or `LQuaternion` in
+  signatures outside `viz/`. The domain returns a `JointPose` (axis + angle / offset) and
+  viz translates it.
+- **New dependencies only after approval.** Write down why the stdlib or a library already
+  present is not enough.
 
-- **Závislosti idú len dovnútra.** `domain/` neimportuje nič z `viz/`, `io/`, `cad/`, `ui/`
-  ani žiadny externý framework. Ak treba dostať dáta do domény, pošli ich ako argument.
-- **Jednotky: scéna je v metroch a radiánoch.** CAD je typicky v mm, PLC posiela často
-  mm a stupne. Konverzia sa deje **na hranici** (`config/loader.py`, `cad/`, `io/`),
-  nikdy nie v `domain/` a nikdy nie v `viz/`. Pozri `src/pssim/domain/units.py`.
-- **Čas: vždy `SourceTimestamp` z OPC UA**, nie lokálny čas príchodu. Interne sekundy
-  ako `float` v monotónnej škále. Konverzia v `io/`.
-- **Nikdy nepolluj OPC UA v render loope.** Dáta chodia cez subscriptions do
-  `io/store.StateStore`, render vlákno z neho len číta interpolovaný snapshot.
-- **Chyby:** vyhadzuj typované chyby z `src/pssim/domain/errors.py`, nie generický `Exception`.
-- **Logovanie:** `structlog` cez `pssim.observability.get_logger()`, nikdy `print()`.
-- **Panda3D objekty nikdy neopúšťajú `viz/`.** Žiadny `NodePath`, `LVector3` ani `LQuaternion`
-  v signatúrach mimo `viz/`. Domain vracia `JointPose` (os + uhol / posun), viz to preloží.
-- **Nové závislosti len po schválení.** Napíš, prečo nestačí stdlib alebo už prítomná knižnica.
+## What NOT to do
 
-## Čo NEROBIŤ
+- Do not edit: `assets/cache/**`, `models/**`, `uv.lock`, `.env*`, `recordings/**`
+- Do not run: anything that **writes** to the OPC UA server of a real machine. Test writes
+  exclusively against `pssim mock-server`.
+- Do not change the YAML machine definition format in `config/schema.py` incompatibly —
+  existing `machines/*.yaml` must stay loadable. Add a migration path when changing it.
+- Do not add numpy or pydantic to `domain/` "for convenience" — it is testable precisely
+  because there is nothing like that in there.
+- Do not add comments that merely repeat the code.
 
-- Needituj: `assets/cache/**`, `models/**`, `uv.lock`, `.env*`, `recordings/**`
-- Nespúšťaj: nič, čo **zapisuje** do OPC UA servera na reálnom stroji. Zápis testuj
-  výhradne proti `pssim mock-server`.
-- Nemeň formát YAML definície stroja v `config/schema.py` nekompatibilne — existujúce
-  `machines/*.yaml` musia zostať načítateľné. Pri zmene doplň migračnú cestu.
-- Nepridávaj do `domain/` numpy/pydantic „pre pohodlie" — je to testovateľné práve preto,
-  že tam nič také nie je.
-- Nepridávaj komentáre, ktoré len opakujú kód.
+## When you are not sure
 
-## Keď si nie si istý
+- If a task allows two reasonable readings, **ask** before implementing.
+- If more than about 5 files need changing, write a plan first and have it approved.
+- Patterns worth imitating:
+  - `src/pssim/domain/kinematics.py` — this is what a pure, fully tested domain layer looks like
+  - `src/pssim/io/base.py` — this is how we define a boundary to the outside world
+    (a Protocol, not an ABC)
+- **Do not write code against a library API you have not verified.** `asyncua` and `OCP` have
+  large and unintuitive APIs. If you are unsure about a call, check it in a REPL or in the
+  documentation and write that into the commit message.
 
-- Ak zadanie pripúšťa dva rozumné výklady, **spýtaj sa** pred implementáciou.
-- Ak treba zmeniť viac ako ~5 súborov, najprv napíš plán a nechaj ho schváliť.
-- Vzory, ktoré chceme napodobňovať:
-  - `src/pssim/domain/kinematics.py` — takto vyzerá čistá, plne otestovaná doménová vrstva
-  - `src/pssim/io/base.py` — takto definujeme hranicu k vonkajšiemu svetu (Protocol, nie ABC)
-- **Nepíš kód proti API knižnice, ktoré si neoveril.** `asyncua` a `OCP` majú rozsiahle
-  a neintuitívne API. Ak si nie si istý volaním, over ho v REPL alebo v dokumentácii
-  a napíš to do commit správy.
-
-## Ďalší kontext
+## Further context
 
 @docs/architecture.md

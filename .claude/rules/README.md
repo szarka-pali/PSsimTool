@@ -1,38 +1,38 @@
 # .claude/rules/
 
-Modulárna alternatíva k jednému veľkému `CLAUDE.md`.
+A modular alternative to one large `CLAUDE.md`.
 
-Rozdiel:
+The difference:
 
-- **`CLAUDE.md`** — načíta sa **vždy**, pri každom štarte session. Preto krátky.
-- **`rules/*.md` bez `paths:`** — načíta sa tiež vždy (rovnaká priorita ako `CLAUDE.md`),
-  len je to tematicky rozdelené do súborov.
-- **`rules/*.md` s `paths:`** — načíta sa **až keď** Claude siahne na súbor,
-  ktorý matchuje glob. Toto je ten dôvod, prečo rules existujú: pravidlá pre OPC UA
-  ťa nestoja kontext, kým nerobíš na `io/`.
+- **`CLAUDE.md`** — loaded **always**, at every session start. Hence: keep it short.
+- **`rules/*.md` without `paths:`** — also loaded always (same priority as `CLAUDE.md`),
+  just split into files by topic.
+- **`rules/*.md` with `paths:`** — loaded **only when** Claude touches a file matching the
+  glob. This is the reason rules exist: the OPC UA rules cost you no context until you
+  are working on `io/`.
 
-## Čo je v tomto projekte
+## What is in this project
 
-| Súbor | `paths:` | Kedy sa načíta |
+| File | `paths:` | When it loads |
 |---|---|---|
-| `git-workflow.md` | — | vždy |
-| `code-style.md` | `src/**` | pri práci na produkčnom kóde |
-| `testing.md` | `tests/**` | pri práci na testoch |
-| `io-opcua.md` | `src/pssim/io/**`, `tests/integration/**` | pri práci na zdrojoch dát |
-| `cad-import.md` | `src/pssim/cad/**` | pri práci na importe geometrie |
+| `git-workflow.md` | — | always |
+| `code-style.md` | `src/**` | when working on production code |
+| `testing.md` | `tests/**` | when working on tests |
+| `io-opcua.md` | `src/pssim/io/**`, `tests/integration/**` | when working on data sources |
+| `cad-import.md` | `src/pssim/cad/**` | when working on geometry import |
 
-Dlhý referenčný materiál (doménový slovník, mapovanie OPC UA signálov, poznámky k API
-OpenCASCADE) **nie je** v rules — je v `.claude/skills/domenovy-kontext/`, lebo skill
-sa načíta až keď je relevantný a jeho referencie až na požiadanie.
+Long reference material (the domain glossary, the OPC UA signal mapping, notes on the
+OpenCASCADE API) is **not** in rules — it is in `.claude/skills/domenovy-kontext/`, because
+a skill loads only when it is relevant and its references only on demand.
 
-## Ako to rozdeliť pri pridávaní ďalších pravidiel
+## How to split further rules
 
-| Obsah | Kam |
+| Content | Where |
 |---|---|
-| Príkazy na build/test, hranice architektúry, čo needitovať | `CLAUDE.md` |
-| Štýl kódu pre konkrétny jazyk alebo vrstvu | `rules/*.md` s `paths:` |
-| Pravidlá pre testy | `rules/testing.md` |
-| Dlhý referenčný materiál (protokol, doména, cudzie API) | **skill**, nie rule |
+| Build/test commands, architectural boundaries, what not to edit | `CLAUDE.md` |
+| Code style for a specific language or layer | `rules/*.md` with `paths:` |
+| Rules for tests | `rules/testing.md` |
+| Long reference material (a protocol, the domain, a foreign API) | a **skill**, not a rule |
 
-Podadresáre sú povolené a na načítanie nemajú vplyv — sú len na organizáciu.
-Rovnaká štruktúra funguje aj v `~/.claude/rules/` pre pravidlá platné vo všetkých projektoch.
+Subdirectories are allowed and have no effect on loading — they are only for organisation.
+The same structure works in `~/.claude/rules/` for rules that apply across all projects.

@@ -1,326 +1,329 @@
-# Architektúra PSsimTool
+# PSsimTool architecture
 
-Tento dokument popisuje **prečo** je systém rozdelený tak, ako je. Konkrétne konvencie
-sú v `CLAUDE.md` a `.claude/rules/`.
+This document describes **why** the system is split the way it is. The concrete conventions
+live in `CLAUDE.md` and `.claude/rules/`.
 
-## Tok dát
+## Data flow
 
 ```
-   PLC (OPC UA server)                          .step súbor
+   PLC (OPC UA server)                          .step file
           │                                          │
-          │ subscription (MonitoredItem)             │ jednorazovo, offline
+          │ subscription (MonitoredItem)             │ once, offline
           ▼                                          ▼
   ┌───────────────────┐                     ┌─────────────────────┐
   │ io/opcua_source   │                     │ cad/step_import     │
-  │ vlákno B, asyncio │                     │ OCP: STEPCAF reader │
-  └─────────┬─────────┘                     │  → tesselácia       │
+  │ thread B, asyncio │                     │ OCP: STEPCAF reader │
+  └─────────┬─────────┘                     │  → tessellation     │
             │ put(signal, value, t)         │  → assembly tree    │
             ▼                               └──────────┬──────────┘
-  ┌───────────────────┐                                │ .npz (vrcholy)
-  │ io/store          │  latest-value + ring buffer    ▼
+  ┌───────────────────┐                                │ .npz (vertices)
+  │ io/store          │  latest value + ring buffer    ▼
   │ StateStore (lock) │                     ┌─────────────────────┐
   └─────────┬─────────┘                     │ assets/cache/       │
             │ sample_all(t)                 └──────────┬──────────┘
-            ▼  vlákno A, 60 fps                        │
+            ▼  thread A, 60 fps                        │
   ┌───────────────────────────────────────────────────┐│
   │ viz/app: Panda3D task                             ││
-  │  1. prečítaj snapshot z StateStore                │◄┘
-  │  2. domain/kinematics: hodnota → JointPose        │
-  │  3. NodePath.setPosQuat()                         │
+  │  1. read a snapshot from StateStore                │◄┘
+  │  2. domain/kinematics: value → JointPose          ││
+  │  3. NodePath.setPosQuat()                         ││
   └───────────────────────────────────────────────────┘
 ```
 
-`machines/*.yaml` viaže tieto dva svety: hovorí, ktorý **uzol assembly** je ktorý **kĺb**
-a ktorý **OPC UA node** ho riadi.
+`machines/*.yaml` ties these two worlds together: it says which **assembly node** is which
+**joint**, and which **OPC UA node** drives it.
 
-## Vrstvy a prečo sú oddelené
+## The layers and why they are separated
 
-| Vrstva | Zodpovednosť | Smie importovať |
+| Layer | Responsibility | May import |
 |---|---|---|
-| `domain/` | model stroja, kinematika, interpolácia, jednotky, chyby | len stdlib |
-| `config/` | YAML schéma, validácia, preklad do `domain` | `domain`, pydantic, yaml |
-| `io/` | zdroje dát a ich životný cyklus, thread-safe store | `domain`, `config`, asyncua |
+| `domain/` | machine model, kinematics, interpolation, units, errors | stdlib only |
+| `config/` | YAML schema, validation, translation into `domain` | `domain`, pydantic, yaml |
+| `io/` | data sources and their lifecycle, thread-safe store | `domain`, `config`, asyncua |
 | `cad/` | STEP → mesh, cache | `domain`, OCP, trimesh, numpy |
-| `viz/` | Panda3D scéna a render task | všetko okrem `ui` |
-| `ui/` | PySide6 shell | všetko |
+| `viz/` | Panda3D scene and render task | everything except `ui` |
+| `ui/` | PySide6 shell | everything |
 
-Dôvod pre prísny `domain/` bez závislostí je praktický, nie ideologický: **kinematiku
-a interpoláciu potrebuješ testovať bez otvárania okna a bez PLC.** To je 90 % logiky,
-ktorá sa dá pokaziť, a zároveň 100 % toho, čo sa dá otestovať v milisekundách.
+The reason for keeping `domain/` strictly dependency-free is practical, not ideological:
+**kinematics and interpolation have to be testable without opening a window and without a
+PLC.** That is 90 % of the logic that can go wrong, and at the same time 100 % of what can
+be tested in milliseconds.
 
-## Kľúčové rozhodnutia
+## Key decisions
 
-### R1 — STEP čítame cez OpenCASCADE (`cadquery-ocp`), nie cez konvertor
+### R1 — STEP is read through OpenCASCADE (`cadquery-ocp`), not through a converter
 
-Panda3D nevie STEP. Alternatívy boli FreeCAD headless (ťažký, GUI závislosti),
-`gmsh` (mieri na FEM meshe, nezachová assembly), `assimp` (STEP nepodporuje).
+Panda3D cannot read STEP. The alternatives were FreeCAD headless (heavy, GUI dependencies),
+`gmsh` (aimed at FEM meshes, does not preserve the assembly) and `assimp` (no STEP support).
 
-Používame **`STEPCAFControlReader` + `XCAFDoc`**, nie `STEPControl_Reader`. Rozdiel je
-podstatný: CAF verzia dá **assembly tree s názvami, transformáciami a farbami**. Bez toho
-nemáš na čo namapovať kĺby a musel by si diely identifikovať ručne podľa geometrie.
+We use **`STEPCAFControlReader` + `XCAFDoc`**, not `STEPControl_Reader`. The difference
+matters: the CAF version yields an **assembly tree with names, transformations and colours**.
+Without it there is nothing to map joints onto and parts would have to be identified by hand
+from their geometry.
 
-### R2 — Tesselácia je offline, výsledok sa cachuje
+### R2 — Tessellation happens offline and the result is cached
 
-Tesselácia assembly s tisíckami dielov trvá desiatky sekúnd až minúty. Cache kľúč je hash
-zo (obsah STEP súboru + parametre tesselácie + `IMPORTER_VERSION`). Cache je v
-`assets/cache/` a je **plne zahoditeľná** — zmazanie znamená len ďalší pomalý štart,
-nikdy nie stratu dát.
+Tessellating an assembly of thousands of parts takes tens of seconds to minutes. The cache
+key is a hash of (STEP file content + tessellation parameters + `IMPORTER_VERSION`). The
+cache lives in `assets/cache/` and is **fully disposable** — deleting it only means one slow
+start, never data loss.
 
-### R2b — Formát geometrie v cache je `.npz`, nie glTF
+### R2b — The cached geometry format is `.npz`, not glTF
 
-`cad/` o Panda3D vedieť nesmie, takže `.bam` do cache zapísať nemôže. Pôvodný zámer bol
-glTF cez `trimesh`, ale to by pridalo dva pohyblivé diely (`trimesh` pri zápise,
-loader plugin `panda3d-gltf` pri čítaní) do cesty, ktorá musí byť spoľahlivá.
+`cad/` must know nothing about Panda3D, so it cannot write `.bam` into the cache. The
+original intention was glTF via `trimesh`, but that would have added two moving parts
+(`trimesh` when writing, the `panda3d-gltf` loader plugin when reading) to a path that has
+to be dependable.
 
-Namiesto toho je formát `.npz`: vrcholy, normály a indexy ako numpy polia. `numpy`
-v projekte už je, `viz/` z toho postaví `Geom` priamo cez `copyDataFrom` (jeden blokový
-kopírovací príkaz namiesto `GeomVertexWriter` po riadkoch), a celý formát sa dá otestovať
-v `tests/unit/` bez OpenCASCADE aj bez Panda3D.
+The format is `.npz` instead: vertices, normals and indices as numpy arrays. `numpy` is in
+the project already, `viz/` builds a `Geom` straight from it through `copyDataFrom` (one
+block copy instead of `GeomVertexWriter` row by row), and the whole format can be tested in
+`tests/unit/` without OpenCASCADE and without Panda3D.
 
-Cena: mesh sa nedá otvoriť v Blenderi. Na prezeranie je tu pôvodný STEP.
+The price: the mesh cannot be opened in Blender. For looking at it, the original STEP is
+there.
 
-**Geometria je kľúčovaná podľa definície dielu**, nie podľa cesty uzla. Ten istý diel
-použitý desaťkrát má v cache jeden súbor a desať uzlov naň ukazuje. Bez toho by zostava
-s tisíckou skrutiek mala v cache tisíc kópií tej istej skrutky.
+**Geometry is keyed by part definition**, not by node path. The same part used ten times has
+one file in the cache and ten nodes pointing at it. Without that, an assembly with a thousand
+screws would have a thousand copies of the same screw in the cache.
 
-### R2c — Kĺb sa pohybuje relatívne k polohe z CAD
+### R2c — A joint moves relative to the placement from CAD
 
-Uzol má dve polohy: tú z CAD assembly a tú, ktorú diktuje kĺb. Skladajú sa —
-CAD určuje, kde diel je v nule, kĺb pridáva pohyb na vrch.
+A node has two placements: the one from the CAD assembly and the one dictated by the joint.
+They compose — CAD decides where the part sits at zero, the joint adds movement on top.
 
-Alternatíva (kĺb polohu prepíše) by znamenala, že diel pri prvej hodnote z PLC skočí
-do počiatku svojho rodiča a definícia stroja by musela v `origin:` duplikovať to,
-čo už je v STEP súbore.
+The alternative (the joint overwrites the placement) would mean the part jumps to its
+parent's origin on the first value from the PLC, and the machine definition would have to
+duplicate in `origin:` what is already in the STEP file.
 
-### R3 — Jednotky: metre a radiány, konverzia na hranici
+### R3 — Units: metres and radians, converted at the boundary
 
-CAD dáva mm, PLC dáva čokoľvek (mm, stupne, inkrementy enkodéra). Ak sa konverzia deje
-na viacerých miestach, skôr či neskôr sa niekde vynásobí dvakrát a diel odletí do vesmíru.
-Preto: každý vstup sa konvertuje **raz**, v `config/loader.py` (`scale`, `offset` v YAML),
-alebo v `cad/` (jednotky STEP). Vnútri systému existuje jedna jednotka.
+CAD gives millimetres, a PLC gives whatever (mm, degrees, encoder increments). If the
+conversion happens in several places, sooner or later something gets multiplied twice and a
+part flies off into space. Hence: every input is converted **once**, in `config/loader.py`
+(`scale`, `offset` in the YAML) or in `cad/` (STEP units). Inside the system there is one
+unit.
 
-### R4 — OPC UA v samostatnom vlákne s vlastným asyncio loopom
+### R4 — OPC UA runs in its own thread with its own asyncio loop
 
-Panda3D task manager podporuje `async def` tasky, ale awaituje **Panda3D futures**,
-nie asyncio. Nedá sa v ňom bežať asyncua klient.
+The Panda3D task manager supports `async def` tasks, but it awaits **Panda3D futures**, not
+asyncio ones. An asyncua client cannot run in it.
 
-Preto: vlákno B beží `asyncio.run()` s asyncua klientom, notifikácie zapisuje do
-`StateStore` pod lockom. Vlákno A (Panda3D) z neho **len číta**. Zdieľame
-`latest value + krátky ring buffer`, nie queue — queue by pri zaostávaní renderu rástla
-a zobrazovali by sa staré dáta.
+Hence: thread B runs `asyncio.run()` with the asyncua client and writes notifications into
+`StateStore` under a lock. Thread A (Panda3D) only **reads** from it. What we share is the
+`latest value + a short ring buffer`, not a queue — a queue would grow whenever rendering
+fell behind and old data would be displayed.
 
-### R5 — Interpolácia je povinná, nie voliteľná
+### R5 — Interpolation is mandatory, not optional
 
-OPC UA subscription reálne doručuje dáta každých 20–100 ms, renderujeme 60 fps.
-Bez interpolácie je pohyb trhaný. `domain/interpolation.py` drží pre každý signál
-krátku históriu `(source_time, value)` a vzorkuje ju v čase `now - render_delay`,
-kde `render_delay` je zámerné malé spozdenie (default 2× publishing interval),
-aby sa interpolovalo medzi dvoma známymi bodmi a nie extrapolovalo.
+An OPC UA subscription realistically delivers data every 20–100 ms; we render at 60 fps.
+Without interpolation the motion is jerky. `domain/interpolation.py` keeps a short history of
+`(source_time, value)` per signal and samples it at `now - render_delay`, where `render_delay`
+is a deliberate small delay (default 2× the publishing interval) so that it interpolates
+between two known points rather than extrapolating.
 
-**Hranica použiteľnosti:** ak PLC os mení polohu rýchlejšie, než ju OPC UA stíha
-publikovať, interpolácia to nezachráni — bude vyhladzovať pohyb, ktorý sa v skutočnosti
-nedeje. Vtedy treba iný transport (viď R6).
+**Limit of usability:** if a PLC axis changes position faster than OPC UA can publish it,
+interpolation will not save you — it will smooth out motion that is not actually happening.
+That is when a different transport is needed (see R6).
 
-### R6 — Zdroj dát je za rozhraním, OPC UA je len prvá implementácia
+### R6 — The data source sits behind an interface; OPC UA is only the first implementation
 
-`io/base.py` definuje `DataSource` (Protocol). Implementácie: `OpcUaSource`,
-`ReplaySource`, `MockSource`. Ak sa ukáže, že OPC UA je pre rýchle osi pomalé,
-pridá sa `AdsSource` (Beckhoff, `pyads`) alebo `S7Source` (`python-snap7`) bez zásahu
-do `viz/` a `domain/`.
+`io/base.py` defines `DataSource` (a Protocol). Implementations: `OpcUaSource`,
+`ReplaySource`, `MockSource`. If OPC UA turns out to be too slow for fast axes, an
+`AdsSource` (Beckhoff, `pyads`) or `S7Source` (`python-snap7`) can be added without touching
+`viz/` or `domain/`.
 
-### R7 — Záznam a replay od začiatku
+### R7 — Recording and replay from the start
 
-`pssim record` uloží dátový tok do JSONL, `pssim replay` ho prehrá cez ten istý
-`DataSource` interface. Bez toho sa nedá vyvíjať bez hardware ani reprodukovať chyby,
-ktoré sa stali raz na stroji u zákazníka.
+`pssim record` writes the data stream into JSONL, `pssim replay` plays it back through the
+same `DataSource` interface. Without it there is no developing without hardware and no
+reproducing a fault that happened once, at a customer's machine.
 
-### R8 — Bez fyziky, kým nebude dôvod
+### R8 — No physics until there is a reason
 
-Dáta z PLC sú kinematika — polohy sú dané, nie vypočítané. Fyzikálny engine by tu
-nič neriešil a priniesol by nedeterminizmus. Ak neskôr treba detekciu kolízií,
-`panda3d.bullet` je súčasťou Panda3D a konvexné obaly sa dajú vytiahnuť z OCC.
+Data from a PLC is kinematics — positions are given, not computed. A physics engine would
+solve nothing here and would introduce non-determinism. If collision detection is needed
+later, `panda3d.bullet` is part of Panda3D and convex hulls can be pulled out of OCC.
 
-### R9 — Shell v PySide6, viewport v Panda3D
+### R9 — Shell in PySide6, viewport in Panda3D
 
-DirectGUI nezvládne stromy, dockovanie a property gridy na úrovni, akú CAD-like nástroj
-potrebuje. Panda3D vie renderovať do rodičovského window handle, takže sa dá vložiť
-do `QWidget`. `viz/` je preto navrhnuté tak, aby fungovalo aj samostatne
-(`pssim run --no-ui`) — na debug a na testy.
+DirectGUI cannot handle trees, docking and property grids at the level a CAD-like tool
+needs. Panda3D can render into a parent window handle, so it can be embedded in a `QWidget`.
+`viz/` is therefore designed to work standalone as well (`pssim run --no-ui`) — for debugging
+and for tests.
 
-Hranicu drží `viz/embed.EmbeddedRenderer`: dovnútra Panda3D, von len čísla
-a `CadAssembly`. `ui/viewport.py` ho iba drží a preposiela mu Qt udalosti,
-takže `ui/` Panda3D vôbec neimportuje.
+The boundary is held by `viz/embed.EmbeddedRenderer`: Panda3D on the inside, only numbers and
+a `CadAssembly` on the outside. `ui/viewport.py` merely holds it and forwards Qt events to
+it, so `ui/` does not import Panda3D at all.
 
-Tri veci, ktoré pri vkladaní prekvapia a stálo to čas ich nájsť:
+Three things that surprise you when embedding, and that cost time to find:
 
-1. **Render loop nepatrí Panda3D.** `base.run()` prevezme riadenie a Qt zamrzne.
-   Tiká `QTimer`, ktorý volá `taskMgr.step()`.
-2. **Veľkosť okna je vo fyzických pixeloch.** Qt počíta v logických; pri 125 %
-   škálovaní Windows je rozdiel 1,25× a prejaví sa ako čierny pás vpravo a dole.
-   Prepočet je v `ui/viewport._device_size()`.
-3. **Myš dostáva Panda3D okno, nie Qt widget.** Ovládanie kamery preto nemôže byť
-   v `mousePressEvent()` — je vo `viz/orbit_control.py` nad udalosťami Panda3D.
+1. **The render loop does not belong to Panda3D.** `base.run()` takes over control and Qt
+   freezes. A `QTimer` ticks and calls `taskMgr.step()`.
+2. **Window size is in physical pixels.** Qt counts in logical ones; at 125 % Windows
+   scaling the difference is 1.25× and shows up as a black band on the right and bottom.
+   The conversion is in `ui/viewport._device_size()`.
+3. **The mouse goes to the Panda3D window, not to the Qt widget.** Camera control therefore
+   cannot live in `mousePressEvent()` — it is in `viz/orbit_control.py`, on top of Panda3D
+   events.
 
-### R9b — Kamera je orbitálna, nie voľná
+### R9b — The camera orbits, it is not free
 
-`viz/orbit.OrbitCamera` drží stav sféricky: bod záujmu, vzdialenosť, azimut,
-elevácia. Alternatíva (voľná kamera s kvaterniónom) sa pri prehliadaní modelu
-chová horšie — stráca „hore" a používateľ sa v nej ľahko stratí.
+`viz/orbit.OrbitCamera` keeps its state spherically: point of interest, distance, azimuth,
+elevation. The alternative (a free camera with a quaternion) behaves worse when inspecting a
+model — it loses "up" and the user easily gets lost in it.
 
-Elevácia je orezaná pred pólmi (`lookAt` tam stráca referenciu a obraz sa preklopí)
-a kamera sa nikdy nenakláňa nabok. Zoom je multiplikatívny, aby krok kolieska
-zodpovedal aktuálnemu priblíženiu.
+Elevation is clamped short of the poles (`lookAt` loses its reference there and the image
+flips) and the camera never rolls sideways. Zoom is multiplicative so that a wheel step
+matches the current zoom level.
 
-Celá matematika je **čistá funkcia** v `viz/orbit.py` bez Panda3D. Dôvod je ten istý
-ako pri `domain/`: „model sa točí divne" je inak chyba, ktorá sa ladí len očami.
-Panda3D časť (`viz/orbit_control.py`) len dodá čísla z myši.
+The whole of the maths is a **pure function** in `viz/orbit.py` with no Panda3D. The reason
+is the same as for `domain/`: "the model spins strangely" is otherwise a bug you can only
+debug by eye. The Panda3D part (`viz/orbit_control.py`) only supplies numbers from the mouse.
 
-Vstavaný trackball sa **nepoužíva** (`base.disableMouse()`) — má neintuitívne
-ovládanie a nedá sa mu povedať, okolo čoho má orbitovať.
+The built-in trackball is **not used** (`base.disableMouse()`) — its controls are
+unintuitive and it cannot be told what to orbit around.
 
-### R9c — Štandardné pohľady majú jediný zdroj pravdy
+### R9c — Standard views have a single source of truth
 
-`viz/orbit.STANDARD_VIEWS` mapuje názov pohľadu na `(azimut, elevácia)`. Všetko
-ostatné sa z toho odvodzuje: `viz/camera.view_direction()` počíta smerový vektor
-pre `pssim screenshot`, `ui/main_window` z toho robí položky menu a `ui/icons`
-kreslí ikony premietnutím osí tou istou kamerou.
+`viz/orbit.STANDARD_VIEWS` maps a view name to `(azimuth, elevation)`. Everything else is
+derived from it: `viz/camera.view_direction()` computes the direction vector for
+`pssim screenshot`, `ui/main_window` turns it into menu entries, and `ui/icons` draws the
+icons by projecting the axes with that same camera.
 
-Predtým existovala definícia „čo je čelný pohľad" na dvoch miestach (uhly pre
-interaktívnu kameru, vektory pre screenshot). Také dvojice sa časom rozídu
-a rozdiel si nikto nevšimne, kým sa nezačne diviť, prečo `--view front`
-v screenshote vyzerá inak než `Ctrl+2` v aplikácii.
+Previously the definition of "what the front view is" existed in two places (angles for the
+interactive camera, vectors for the screenshot). Pairs like that drift apart over time and
+nobody notices the difference until they start wondering why `--view front` in a screenshot
+looks different from `Ctrl+2` in the application.
 
-`top` a `bottom` používajú **orezanú** eleváciu, nie presne `±pi/2`: v póle
-stráca `lookAt` referenciu „hore" a obraz sa preklopí.
+`top` and `bottom` use the **clamped** elevation, not exactly `±pi/2`: at the pole `lookAt`
+loses its "up" reference and the image flips.
 
-### R10 — Umiestnenie modelu je transformácia koreňa, nie zásah do geometrie
+### R10 — Placing a model is a transform of the root, not a change to the geometry
 
-Posun a otočenie modelu (`Model → Placement…`) sa aplikuje na **koreňový
-`NodePath`**, nie na vrcholy v cache. Cache tak zostáva viazaná výhradne na
-obsah STEP súboru a parametre tesselácie — dva rôzne umiestnenia toho istého
-modelu nevyrobia dve kópie geometrie.
+Moving and rotating a model (`Model → Placement…`) is applied to the **root `NodePath`**, not
+to the vertices in the cache. The cache therefore stays tied exclusively to the STEP file
+content and the tessellation parameters — two different placements of the same model do not
+produce two copies of the geometry.
 
-Dôsledky, ktoré z toho plynú a sú zámerné:
+The consequences that follow, and that are deliberate:
 
-- Otočenie je okolo **počiatku modelu**, nie okolo ťažiska. To je to, čo človek
-  čaká, keď zadáva „otoč o 90° okolo Z".
-- Kríž v počiatku sa nehýbe — je referencia, voči ktorej sa model umiestňuje.
-- Umiestnenie prežije načítanie iného súboru; aplikuje sa pred rámovaním kamery,
-  aby kamera mierila tam, kde model naozaj skončí.
+- Rotation is about the **model origin**, not about the centre of mass. That is what someone
+  expects when they type "rotate 90° about Z".
+- The cross at the origin does not move — it is the reference the model is placed against.
+- A placement survives loading another file; it is applied before the camera frames the
+  scene, so the camera aims where the model actually ends up.
 
-**Jednotky sa prevádzajú v `domain/placement.py`, nie v dialógu.** UI je ďalšia
-hranica systému a platí pre ňu to isté, čo pre `config/` a `io/` (viď R3):
-používateľ zadáva mm a stupne, scéna beží v metroch a radiánoch, konverzia sa
-deje raz a má testy. Šesť polí krát dva smery je dosť príležitostí na preklep.
+**Units are converted in `domain/placement.py`, not in the dialog.** The UI is another system
+boundary and the same rule applies to it as to `config/` and `io/` (see R3): the user types
+millimetres and degrees, the scene runs in metres and radians, the conversion happens once
+and has tests. Six fields times two directions is plenty of opportunity for a typo.
 
-### R11 — Preklady cez Qt, zdrojový jazyk angličtina
+### R11 — Translations through Qt, English as the source language
 
-Texty pre používateľa sú v kóde napísané **po anglicky** a obalené v `tr()`.
-Preklady sú `.ts`/`.qm` súbory, mechanizmus je `ui/i18n.py`.
+User-facing text is written **in English** in the code and wrapped in `tr()`. The
+translations are `.ts`/`.qm` files; the mechanism is `ui/i18n.py`.
 
-Prečo Qt a nie vlastný slovník: Qt už rieši fallback na zdrojový text, množné
-čísla, extrakčné nástroje a hlavne **preklad vlastných dialógov Qt** —
-`QFileDialog`, tlačidlá `OK`/`Cancel`. Vlastná implementácia by tie štandardné
-prvky nechala v angličtine a UI by bolo napoly preložené.
+Why Qt rather than a dictionary of our own: Qt already solves fallback to the source text,
+plurals, extraction tooling and — above all — **translation of Qt's own dialogs**:
+`QFileDialog`, the `OK`/`Cancel` buttons. A homegrown implementation would leave those
+standard elements in English and the UI would be half translated.
 
-Z toho plynú dve pravidlá:
+Two rules follow from that:
 
-- **Formátovanie hlášok nepatrí do `domain/`.** Predtým `domain/placement.py`
-  vracalo vetu do stavového riadku; doména však nemá ako vedieť, v akom jazyku
-  appka beží, a nesmie importovať Qt. Presunuté do `ui/labels.py`.
-- **Štandardné tlačidlá Qt sa neprepisujú.** Natvrdo nastavený text by pri
-  prepnutí jazyka zostal v angličtine, kým zvyšok dialógu by sa preložil.
+- **Formatting messages does not belong in `domain/`.** Previously `domain/placement.py`
+  returned a sentence for the status bar; the domain has no way of knowing what language the
+  application runs in, and must not import Qt. Moved to `ui/labels.py`.
+- **Qt's standard buttons are not overwritten.** Hardcoded text would stay in English when
+  the language is switched, while the rest of the dialog would be translated.
 
-Logy sa **neprekladajú** — sú pre vývojára, nie pre používateľa.
+Logs are **not translated** — they are for the developer, not the user.
 
-### R12 — Viac modelov: stav je v registri, nie v scéne ani vo widgete
+### R12 — Multiple models: the state lives in a registry, not in the scene or in the widget
 
-Modely drží `ui/model_registry.ModelRegistry` — čistá, netestovateľne nudná
-kolekcia bez Qt a bez Panda3D. `ui/model_tree` ju **vykresľuje**,
-`viz/embed.EmbeddedRenderer` ju **kreslí**, ale ani jeden ju nevlastní.
+The models are held by `ui/model_registry.ModelRegistry` — a pure, boringly untestable
+collection with no Qt and no Panda3D. `ui/model_tree` **renders** it,
+`viz/embed.EmbeddedRenderer` **draws** it, but neither of them owns it.
 
-Prečo nie stav v tree widgete (kam by ho väčšina uložila): zaujímavá logika sú
-unikátne názvy pri opakovanom otvorení toho istého súboru a to, čo sa stane
-s výberom po zmazaní modelu. Oboje sa dá pokaziť a oboje sa v registri dá
-otestovať bez okna.
+Why not keep the state in the tree widget, where most people would put it: the interesting
+logic is unique names when the same file is opened repeatedly, and what happens to the
+selection after a model is deleted. Both can be got wrong and both can be tested in the
+registry without a window.
 
-Kľúčovanie je podľa **generovaného `model_id`**, nie podľa cesty k súboru:
-ten istý súbor sa smie otvoriť viackrát. Zobrazovaný názov je len na pozeranie
-a môže sa opakovať, takže sa ním nikdy nič nekľúčuje.
+Keying is by **generated `model_id`**, not by file path: the same file may be opened several
+times. The displayed name is only for looking at and may repeat, so nothing is ever keyed by
+it.
 
-Z toho plynie jedno pravidlo, ktoré sa dá ľahko porušiť: **výber musí byť
-synchronizovaný v oba smery.** Klik v tree ide do registra, ale výber sa mení
-aj z kódu (susedný model po zmazaní), a vtedy sa musí premietnuť späť do tree —
-inak zostane zvýraznený riadok, s ktorým aplikácia už nepracuje. Chytilo to až
-reálne spustenie, unit testy nie.
+One rule follows that is easy to break: **the selection must be synchronised both ways.**
+A click in the tree goes into the registry, but the selection also changes from code (the
+neighbouring model after a deletion), and then it has to be reflected back into the tree —
+otherwise a highlighted row stays behind that the application no longer works with. Only a
+real run caught this; the unit tests did not.
 
-Zvýraznenie v scéne je **drôtený rám**, nie zmena farby: modely majú vlastné
-farby zo STEP súboru, takže tónovanie by na niektorých nebolo vidieť a na iných
-by klamalo.
+Highlighting in the scene is a **wireframe box**, not a colour change: models have their own
+colours from the STEP file, so tinting would be invisible on some and misleading on others.
 
-### R13 — Projekt je JSON v mm a stupňoch, modely sa načítavajú po jednom
+### R13 — A project is JSON in mm and degrees, and models load one at a time
 
 The project file (`*.pssim`) records what the scene consists of: the models, their
 placements, which one is selected, and where the camera is. It does **not** contain
-geometry — a project is a list of references, so the same STEP file behind ten
-projects is still one file and one cache entry.
+geometry — a project is a list of references, so the same STEP file behind ten projects is
+still one file and one cache entry.
 
 Three decisions inside that are worth the words:
 
 **JSON, not YAML.** The file is written by the application, never by hand, so YAML's
-flexibility buys nothing and costs a diff: two saves of the same scene must differ
-only where the scene differs. `config/schema.py` keeps YAML because machine
-definitions *are* written by hand; this one is not.
+flexibility buys nothing and costs a diff: two saves of the same scene must differ only where
+the scene differs. `config/schema.py` keeps YAML because machine definitions *are* written by
+hand; this one is not.
 
-**Millimetres and degrees, including the camera.** The same boundary rule as R3, and
-the file is the boundary. The numbers in the file are the numbers the user typed into
-the Placement dialog, which means a project can be read and checked without
-converting anything mentally. Conversion happens once, in `config/project.py` and
-`ui/project_controller.py`, and has tests in both directions.
+**Millimetres and degrees, including the camera.** The same boundary rule as R3, and the file
+is the boundary. The numbers in the file are the numbers the user typed into the Placement
+dialog, which means a project can be read and checked without converting anything mentally.
+Conversion happens once, in `config/project.py` and `ui/project_controller.py`, and has tests
+in both directions.
 
-**Model paths are relative only when the model lives inside the project's folder.**
-Then the project and its `models/` subfolder move or get shared as a unit. A model
-kept anywhere else is stored absolute: it does not travel with the project, and a
-chain of `..` segments back out to it breaks the moment the project file alone is
-moved — where an absolute path still opens.
+**Model paths are relative only when the model lives inside the project's folder.** Then the
+project and its `models/` subfolder move or get shared as a unit. A model kept anywhere else
+is stored absolute: it does not travel with the project, and a chain of `..` segments back out
+to it breaks the moment the project file alone is moved — where an absolute path still opens.
 
-Not stored: the camera's zoom limits (they follow from the size of the scene, and the
-scene is whatever was just loaded), window geometry, and the cache directory.
+Not stored: the camera's zoom limits (they follow from the size of the scene, and the scene is
+whatever was just loaded), window geometry, and the cache directory.
 
-`selected` names the model, it does not identify it. Model ids are generated per
-session (R12) and would mean nothing after a reload; the name is what the user sees
-in the tree, so it is what survives.
+`selected` names the model, it does not identify it. Model ids are generated per session (R12)
+and would mean nothing after a reload; the name is what the user sees in the tree, so it is
+what survives.
 
-Loading is a **queue, not a loop**: `ui/project_controller.ProjectLoader` starts one
-import, waits for `on_import_finished`, then starts the next. The importer writes
-into a shared cache, so two at once would race. Missing files are collected by
-`plan_load` and reported **once** — a project referencing five moved files must not
-mean five modal dialogs — and everything still on disk loads anyway. Selection and
-camera are applied at the end, once every model is in.
+Loading is a **queue, not a loop**: `ui/project_controller.ProjectLoader` starts one import,
+waits for `on_import_finished`, then starts the next. The importer writes into a shared cache,
+so two at once would race. Missing files are collected by `plan_load` and reported **once** —
+a project referencing five moved files must not mean five modal dialogs — and everything still
+on disk loads anyway. Selection and camera are applied at the end, once every model is in.
 
-Format version is refused **forward, not backward**: a file written by a newer build
-is an error rather than something half-read, because silently ignoring a section the
-user configured is worse than saying no.
+Format version is refused **forward, not backward**: a file written by a newer build is an
+error rather than something half-read, because silently ignoring a section the user configured
+is worse than saying no.
 
-## Výkon
+## Performance
 
-Assembly zo STEP-u má typicky stovky až tisíce dielov, čo je pri naivnom prístupe
-neúnosný počet draw callov. Preto pri stavbe scény:
+A STEP assembly typically has hundreds to thousands of parts, which is an unaffordable number
+of draw calls if approached naively. So when building the scene:
 
-- diely, ktoré **nie sú** kĺbom ani potomkom kĺbu → `flattenStrong()` do jedného Geomu
-- opakované diely (skrutky, valčeky dopravníka) → `instanceTo()`
-- vzdialené celky → `LODNode`
-- pohyblivé diely zostávajú samostatné `NodePath` — tie flattenovať nemožno
+- parts that are **neither** a joint nor a descendant of one → `flattenStrong()` into a single Geom
+- repeated parts (screws, conveyor rollers) → `instanceTo()`
+- distant groups → `LODNode`
+- moving parts stay separate `NodePath`s — those cannot be flattened
 
-Rozdelenie na statické a pohyblivé robí `viz/scene_builder.py` podľa definície kĺbov.
+`viz/scene_builder.py` does the split into static and moving according to the joint definitions.
 
-## Čo zámerne nie je vyriešené
+## What is deliberately unsolved
 
-| Vec | Stav |
+| Thing | State |
 |---|---|
-| Zápis do PLC | mimo rozsah, len čítanie |
-| IK / plánovanie trajektórií | mimo rozsah, PLC dáva hotové polohy |
-| Kolízie | odložené, viď R8 |
-| Iné CAD formáty než STEP | STEP je minimum; IGES/JT/glTF sa dajú pridať v `cad/` |
-| Viac strojov v jednej scéne | dátový model to dovoľuje, scene builder zatiaľ nie |
-| Bezpečnosť OPC UA (certifikáty) | rozhranie pripravené, konfigurácia neimplementovaná |
+| Writing to the PLC | out of scope, reading only |
+| IK / trajectory planning | out of scope, the PLC supplies finished positions |
+| Collisions | deferred, see R8 |
+| CAD formats other than STEP | STEP is the minimum; IGES/JT/glTF can be added in `cad/` |
+| Several machines in one scene | the data model allows it, the scene builder does not yet |
+| OPC UA security (certificates) | the interface is ready, the configuration is not implemented |

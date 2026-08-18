@@ -1,46 +1,43 @@
----
-description: Ako pracujeme s gitom (platí vždy)
----
-
 # Git workflow
 
 ## Branch
 
-- Nikdy nepracuj priamo na `main`. Ak si na nej, najprv vytvor branch.
-- Názov: `typ/kratky-popis`, napr. `feat/opcua-subscription`, `fix/mm-na-metre-dvojity-prevod`.
-  Typy: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
+- Never work directly on `main`. If you are on it, create a branch first.
+- Naming: `type/short-description`, e.g. `feat/opcua-subscription`, `fix/mm-to-m-double-conversion`.
+  Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
 
-## Commity
+## Commits
 
-- **Malé a atomické.** Jedna logická zmena = jeden commit. Refaktor a nová funkcia sú dva commity.
-- Formát správy: Conventional Commits. Scope je názov vrstvy (`domain`, `io`, `cad`, `viz`, `config`, `ui`).
+- **Small and atomic.** One logical change = one commit. A refactor and a new feature are two commits.
+- Message format: Conventional Commits. The scope is the layer name (`domain`, `io`, `cad`, `viz`,
+  `config`, `ui`).
   ```
-  feat(io): pridaj OPC UA subscription so source timestampmi
+  feat(io): add OPC UA subscription with source timestamps
 
-  Prečo: polling v render loope spôsoboval prepady fps pri >20 signáloch.
-  Viď docs/architecture.md R4.
+  Why: polling in the render loop caused fps drops with more than 20 signals.
+  See docs/architecture.md R4.
   ```
-- Prvý riadok max 72 znakov, v rozkazovacom spôsobe, bez tečky na konci.
-- Telo commitu vysvetľuje **prečo**, nie čo — diff už hovorí čo.
-- Commituj **po každom prejdenom kroku**, nie raz na konci veľkej zmeny.
-  Dáva mi to body, kam sa dá vrátiť.
-- Ak si písal kód proti API knižnice, ktoré si musel overiť (`asyncua`, `OCP`),
-  napíš do tela commitu **ako si ho overil**. Ušetrí to ďalšiemu človeku hodinu.
+- First line at most 72 characters, imperative mood, no full stop at the end.
+- The body explains **why**, not what — the diff already says what.
+- Commit **after every step that passes**, not once at the end of a large change.
+  It gives me points to go back to.
+- If you wrote code against a library API you had to verify (`asyncua`, `OCP`),
+  write **how you verified it** into the commit body. It saves the next person an hour.
 
-## Čo nikdy
+## Never
 
-- `git push --force` na zdieľaný branch.
-- `git commit --amend` na už pushnutý commit.
-- Commit s neprejdeným `ruff check` alebo `pytest tests/unit`.
-- Commit obsahujúci `.env`, certifikáty, adresy PLC zákazníka alebo tokeny.
-- Commit **CAD súborov** (`models/**`), **tesselovaných meshov** (`assets/cache/**`)
-  alebo **záznamov** (`recordings/**`). Sú veľké a generované alebo dôverné.
-  Záznamy z reálneho stroja môžu obsahovať údaje zákazníka.
-- `git add .` bez toho, aby si sa najprv pozrel na `git status`.
+- `git push --force` to a shared branch.
+- `git commit --amend` on a commit that has been pushed.
+- A commit with failing `ruff check` or `pytest tests/unit`.
+- A commit containing `.env`, certificates, a customer's PLC addresses or tokens.
+- Committing **CAD files** (`models/**`), **tessellated meshes** (`assets/cache/**`)
+  or **recordings** (`recordings/**`). They are large and either generated or confidential.
+  Recordings from a real machine may contain customer data.
+- `git add .` without looking at `git status` first.
 
-## PR
+## Pull requests
 
-- Popis PR: čo, prečo, ako to otestovať. Odkaz na ticket.
-- Ak sa zmena týka správania voči PLC, uveď, **proti čomu si to overil**
-  (mock server / záznam / reálny stroj a aký).
-- Ak PR presiahne ~400 riadkov diffu, navrhni rozdelenie skôr, než ho otvoríš.
+- PR description: what, why, how to test it. Link the ticket.
+- If the change affects behaviour towards a PLC, state **what you verified it against**
+  (mock server / recording / a real machine, and which one).
+- If the PR exceeds about 400 lines of diff, propose splitting it before opening it.

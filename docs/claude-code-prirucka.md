@@ -1,136 +1,139 @@
-# Claude Code pre code-driven AI development
+# Claude Code for code-driven AI development
 
-Príručka k tomu, ako nastaviť repozitár tak, aby v ňom agent pracoval predvídateľne —
-a aby sa to isté nastavenie automaticky prenieslo na celý tím.
-
----
-
-## Časť 1 — Základná myšlienka
-
-**Kontext je kód.** Všetko, čo agent potrebuje vedieť o projekte, žije v repozitári,
-prechádza code review a má git históriu. Nie v hlave seniora, nie v Notione,
-nie v chate, ktorý sa zavretím okna stratí.
-
-Z toho vyplývajú tri praktické dôsledky:
-
-1. **Konfigurácia agenta je verzovaná.** Keď niekto zistí, že model opakovane robí tú istú
-   chybu, oprava nie je „napíš mu to do promptu" — je to commit do `.claude/rules/`.
-   Oprava platí odteraz pre všetkých.
-
-2. **Overenie je automatizované, nie posudzované.** Agent musí mať príkaz, ktorý mu povie
-   *áno/nie*: testy, linter, typová kontrola, build. Bez toho pracuje naslepo a ty s ním.
-   Toto je jediná najdôležitejšia vec z celej príručky.
-
-3. **Deterministické veci riešia hooky, nie instrukcie.** „Vždy naformátuj kód" v `CLAUDE.md`
-   je rada, ktorú model občas vynechá. Hook sa spustí vždy.
-
-Rozdiel medzi tímom, ktorému Claude Code šetrí čas, a tímom, ktorý ho preň opravuje,
-je takmer vždy v tomto: má repozitár zabudované overovanie, alebo nie.
+A guide to setting up a repository so that an agent works predictably in it — and so that
+the same setup carries over to the whole team automatically.
 
 ---
 
-## Časť 2 — Prehľad súborov
+## Part 1 — The basic idea
+
+**Context is code.** Everything the agent needs to know about the project lives in the
+repository, goes through code review and has a git history. Not in a senior developer's head,
+not in Notion, not in a chat that disappears when the window closes.
+
+Three practical consequences follow:
+
+1. **The agent's configuration is versioned.** When someone notices the model repeatedly
+   making the same mistake, the fix is not "write it into the prompt" — it is a commit into
+   `.claude/rules/`. From then on the fix applies to everyone.
+
+2. **Verification is automated, not judged.** The agent must have a command that tells it
+   *yes/no*: tests, linter, type check, build. Without one it works blind, and so do you.
+   This is the single most important thing in the whole guide.
+
+3. **Deterministic things are handled by hooks, not by instructions.** "Always format the
+   code" in `CLAUDE.md` is advice the model will occasionally skip. A hook always runs.
+
+The difference between a team that Claude Code saves time for and a team that spends time
+correcting it is almost always this: does the repository have verification built in, or not?
+
+---
+
+## Part 2 — Overview of the files
 
 ```
-projekt/
-├── CLAUDE.md                       ← vždy v kontexte. Krátky. Príkazy + hranice.
-├── .mcp.json                       ← externé nástroje (GitHub, DB, browser)
-├── .worktreeinclude                ← čo skopírovať do nového worktree
-├── .gitignore                      ← pridaj .claude/settings.local.json
+project/
+├── CLAUDE.md                       ← always in context. Short. Commands + boundaries.
+├── .mcp.json                       ← external tools (GitHub, DB, browser)
+├── .worktreeinclude                ← what to copy into a new worktree
+├── .gitignore                      ← add .claude/settings.local.json
 └── .claude/
-    ├── settings.json               ← oprávnenia + hooky (verzované, tímové)
-    ├── settings.local.json         ← osobné (NEverzované)
-    ├── rules/                      ← modulárne pravidlá, načítané podľa cesty
+    ├── settings.json               ← permissions + hooks (versioned, team-wide)
+    ├── settings.local.json         ← personal (NOT versioned)
+    ├── rules/                      ← modular rules, loaded by path
     │   ├── code-style.md
     │   ├── testing.md
     │   └── git-workflow.md
-    ├── agents/                     ← subagenti s vlastným kontextom
+    ├── agents/                     ← subagents with their own context
     │   ├── code-reviewer.md
     │   ├── explorer.md
     │   └── test-writer.md
-    ├── skills/                     ← workflow postupy + dlhé referencie
+    ├── skills/                     ← workflow procedures + long references
     │   └── nova-funkcia/SKILL.md
-    └── hooks/                      ← skripty, ktoré bežia vždy
+    └── hooks/                      ← scripts that always run
         ├── format-and-lint.sh
         └── block-dangerous-bash.sh
 ```
 
-### Kľúčová tabuľka: čo patrí kam
+### The key table: what belongs where
 
-Toto je najčastejšia chyba pri nastavovaní — všetko sa nasype do `CLAUDE.md`,
-ten narastie na 600 riadkov a model ho prestane rešpektovať.
+This is the most common mistake when setting things up — everything gets poured into
+`CLAUDE.md`, it grows to 600 lines and the model stops respecting it.
 
-| Typ informácie | Kam | Kedy sa načíta | Cena za kontext |
+| Type of information | Where | When it loads | Context cost |
 |---|---|---|---|
-| Build/test príkazy, hranice architektúry, čo needitovať | `CLAUDE.md` | vždy, pri štarte | **vysoká** — každá session |
-| Štýl kódu pre jazyk, pravidlá pre testy | `.claude/rules/*.md` s `paths:` | až keď sa dotkne matchujúceho súboru | nízka |
-| Opakovaný postup (implementuj funkciu, oprav bug, release) | `.claude/skills/*/SKILL.md` | popis vždy, telo pri vyvolaní | veľmi nízka |
-| Dlhá referencia (doména, protokol, legacy systém) | skill + podadresár `referencie/` | až na požiadanie | takmer nulová |
-| Špecializovaná rola s vlastným kontextom | `.claude/agents/*.md` | pri delegovaní | izolované okno |
-| Nemenná záruba (formátovanie, blokovanie príkazov) | hook v `settings.json` | pri udalosti | **nulová** |
-| Oprávnenia, čo smie bez opýtania | `.claude/settings.json` | vždy | nulová |
+| Build/test commands, architectural boundaries, what not to edit | `CLAUDE.md` | always, at startup | **high** — every session |
+| Code style for a language, rules for tests | `.claude/rules/*.md` with `paths:` | only when a matching file is touched | low |
+| A repeated procedure (implement a feature, fix a bug, release) | `.claude/skills/*/SKILL.md` | the description always, the body on invocation | very low |
+| A long reference (domain, protocol, legacy system) | a skill + a `referencie/` subdirectory | only on request | almost none |
+| A specialised role with its own context | `.claude/agents/*.md` | when delegating | an isolated window |
+| An unbreakable guarantee (formatting, blocking commands) | a hook in `settings.json` | on an event | **none** |
+| Permissions, what may run without asking | `.claude/settings.json` | always | none |
 
-**Pravidlo:** ak sa informácia použije v menej ako polovici sessions, nepatrí do `CLAUDE.md`.
+**Rule of thumb:** if a piece of information is used in fewer than half of your sessions, it
+does not belong in `CLAUDE.md`.
 
 ---
 
-## Časť 3 — `CLAUDE.md` v detaile
+## Part 3 — `CLAUDE.md` in detail
 
-Načíta sa pri každom štarte. Preto: **cieľ pod 150 riadkov**, nikdy nad 200.
-Nad tou hranicou model prestáva pravidlá dodržiavať — nie preto, že by ich „nevidel",
-ale preto, že v mori 400 riadkov sa dôležité stráca medzi nedôležitým.
+It loads at every start. Hence: **aim for under 150 lines**, never above 200. Above that
+threshold the model stops following the rules — not because it cannot "see" them, but
+because in a sea of 400 lines the important gets lost among the unimportant.
 
-### Hierarchia (načítava sa všetko, od najvšeobecnejšieho)
+### Hierarchy (everything loads, from the most general down)
 
-| Umiestnenie | Účel | Verzovať |
+| Location | Purpose | Version it |
 |---|---|---|
-| `/etc/claude-code/CLAUDE.md` (Linux) | firemné pravidlá, spravuje IT | — |
-| `~/.claude/CLAUDE.md` | tvoje osobné preferencie, všetky projekty | ne |
-| `./CLAUDE.md` alebo `./.claude/CLAUDE.md` | pravidlá projektu | **áno** |
-| `./CLAUDE.local.md` | tvoje poznámky k tomuto projektu | ne (gitignore) |
-| `./podadresar/CLAUDE.md` | pravidlá pre monorepo balíček | **áno** |
+| `/etc/claude-code/CLAUDE.md` (Linux) | company rules, managed by IT | — |
+| `~/.claude/CLAUDE.md` | your personal preferences, all projects | no |
+| `./CLAUDE.md` or `./.claude/CLAUDE.md` | project rules | **yes** |
+| `./CLAUDE.local.md` | your notes on this project | no (gitignore) |
+| `./subdirectory/CLAUDE.md` | rules for a monorepo package | **yes** |
 
-V monorepe funguje vnorenie: `packages/api/CLAUDE.md` sa načíta až keď Claude siahne
-na súbor v `packages/api/`. Toto je správny spôsob, ako riešiť monorepo — nie jeden
-gigantický súbor na roote.
+Nesting works in a monorepo: `packages/api/CLAUDE.md` loads only when Claude touches a file
+in `packages/api/`. This is the right way to handle a monorepo — not one gigantic file at
+the root.
 
-### Čo do neho písať
+### What to write in it
 
-Test užitočnosti riadku: **„zistil by to Claude z kódu za 5 sekúnd?"** Ak áno, vymaž ho.
+The test for whether a line earns its place: **"would Claude work this out from the code in
+5 seconds?"** If yes, delete it.
 
-Patrí sem:
+It belongs here:
 
-- **Príkazy.** Ako sa spustí build, testy (rýchle vs. všetky), lint, typecheck.
-  Toto je najcennejší obsah celého súboru.
-- **Explicitná veta o overení.** Napr.: *„Po každej zmene spusti `make lint && make test-unit`.
-  Ak neprejde, oprav to pred tým, než ohlásiš hotovo."*
-- **Hranice architektúry**, ktoré z kódu nie sú zjavné („doména neimportuje framework").
-- **Čo sa needituje.** Generovaný kód, lock files, prod infra.
-- **Referenčný vzor.** „Modul `src/domain/orders/` je náš etalón — napodobňuj ho."
-- **Čo robiť pri nejasnosti.** Spýtať sa? Zvoliť si a poznamenať? Toto naozaj funguje.
+- **Commands.** How to run the build, the tests (fast vs. all), the linter, the type check.
+  This is the most valuable content in the whole file.
+- **An explicit sentence about verification.** For example: *"After every change run
+  `make lint && make test-unit`. If it does not pass, fix it before reporting back."*
+- **Architectural boundaries** that are not obvious from the code ("the domain does not
+  import the framework").
+- **What must not be edited.** Generated code, lock files, production infrastructure.
+- **A reference pattern.** "The module `src/domain/orders/` is our benchmark — imitate it."
+- **What to do when something is unclear.** Ask? Choose and note it down? This genuinely works.
 
-Nepatrí sem:
+It does not belong here:
 
-- Výpis štruktúry adresárov generovaný `tree` (Claude si ju prečíta sám).
-- Zjavnosti typu „projekt používa TypeScript".
-- Dokumentácia knižníc — odkáž na URL alebo daj do skillu.
-- Vecí, čo sa menia každý týždeň (aktuálny sprint, kto na čom robí).
-- Dlhé eseje o filozofii kódu. Píš pravidlá, nie manifest.
+- A directory listing generated by `tree` (Claude will read it itself).
+- Statements of the obvious such as "the project uses TypeScript".
+- Library documentation — link to a URL or put it in a skill.
+- Things that change every week (the current sprint, who is working on what).
+- Long essays about code philosophy. Write rules, not a manifesto.
 
-### Praktický tip
+### A practical tip
 
-`/init` vygeneruje prvú verziu automaticky. Ber ju ako **koncept, nie výsledok** —
-zvyčajne je príliš dlhá a príliš popisná. Preškrtaj ju na polovicu.
+`/init` generates a first version automatically. Treat it as a **draft, not a result** —
+it is usually too long and too descriptive. Cut it in half.
 
-Potom to udržuj živé: kedykoľvek agent urobí chybu, ktorú by pravidlo zachytilo,
-pridaj ten jeden riadok. Po mesiaci máš súbor, ktorý zachytáva skutočné bolestivé
-miesta projektu, nie tie, ktoré si na začiatku tipoval.
+Then keep it alive: whenever the agent makes a mistake that a rule would have caught, add
+that one line. After a month you have a file that captures the project's real sore points,
+not the ones you guessed at the beginning.
 
 ---
 
-## Časť 4 — `.claude/rules/` — modulárne pravidlá
+## Part 4 — `.claude/rules/` — modular rules
 
-Rozdiel proti `CLAUDE.md` je jeden a je dôležitý:
+The difference from `CLAUDE.md` is a single one, and it matters:
 
 ```yaml
 ---
@@ -140,107 +143,110 @@ paths:
 ---
 ```
 
-Pravidlo s `paths:` sa načíta **až keď** Claude čítá alebo edituje matchujúci súbor.
-Pravidlá pre DB migrácie ťa teda nestoja nič, kým nerobíš migrácie.
-Bez `paths:` sa načíta vždy — má rovnakú prioritu ako `CLAUDE.md`, len je to tematicky rozdelené.
+A rule with `paths:` loads **only when** Claude reads or edits a matching file. Rules for DB
+migrations therefore cost you nothing until you are doing migrations. Without `paths:` it
+always loads — the same priority as `CLAUDE.md`, just split up by topic.
 
-Praktické rozdelenie, ktoré sa osvedčuje:
+A split that works well in practice:
 
-| Súbor | `paths:` | Obsah |
+| File | `paths:` | Content |
 |---|---|---|
-| `code-style.md` | `src/**` | pomenovanie, veľkosť funkcií, chyby, komentáre |
-| `testing.md` | `tests/**` | štruktúra testov, čo mockovať, čo je zakázané |
-| `git-workflow.md` | *(žiadne)* | branch, commity, PR — platí vždy |
-| `migrations.md` | `migrations/**` | nikdy needituj zmergovanú migráciu, ... |
-| `api-contract.md` | `src/api/**` | verziovanie, breaking changes, chybové kódy |
+| `code-style.md` | `src/**` | naming, function size, errors, comments |
+| `testing.md` | `tests/**` | test structure, what to mock, what is forbidden |
+| `git-workflow.md` | *(none)* | branches, commits, PRs — always applies |
+| `migrations.md` | `migrations/**` | never edit a merged migration, ... |
+| `api-contract.md` | `src/api/**` | versioning, breaking changes, error codes |
 
-To isté funguje v `~/.claude/rules/` pre pravidlá platné vo všetkých tvojich projektoch.
+The same works in `~/.claude/rules/` for rules that apply across all your projects.
 
 ---
 
-## Časť 5 — Skills: postupy a dlhé referencie
+## Part 5 — Skills: procedures and long references
 
-Skill má dve úplne odlišné použitia a obe sú užitočné.
+A skill has two completely different uses and both are useful.
 
-### A) Workflow skill — zakódovaný postup
+### A) A workflow skill — a procedure encoded once
 
-Namiesto toho, aby si pri každej funkcii písal ten istý dlhý prompt, napíšeš ho raz.
-Potom stačí `/nova-funkcia pridaj storno objednávky`.
+Instead of writing the same long prompt for every feature, you write it once. After that
+`/nova-funkcia add order cancellation` is enough.
 
-Dobrý workflow skill má **fázy a stop-body**:
+A good workflow skill has **phases and stop points**:
 
 ```
-Fáza 1  Pochopenie — nič needituj, nájdi analogický modul, prečítaj ho
-Fáza 2  Plán — napíš plán v danom formáte  →  STOP, čakaj na schválenie
-Fáza 3  Testy najprv — ukáž, že padajú a PREČO padajú
-Fáza 4  Implementácia — najmenšia zmena, ktorá testy rozsvieti
-Fáza 5  Uzavretie — celá sada, review, commit, zhrnutie čo nie je pokryté
+Phase 1  Understand — edit nothing, find an analogous module, read it
+Phase 2  Plan — write the plan in the given format  →  STOP, wait for approval
+Phase 3  Tests first — show that they fail and WHY they fail
+Phase 4  Implementation — the smallest change that turns the tests green
+Phase 5  Closing — the whole suite, review, commit, a summary of what is not covered
 ```
 
-Ten stop-bod po fáze 2 je najcennejší riadok. Schváliť plán trvá 30 sekúnd;
-zahodiť 200 riadkov nesprávneho kódu trvá hodinu a stojí náladu.
+That stop point after phase 2 is the most valuable line. Approving a plan takes 30 seconds;
+throwing away 200 lines of wrong code takes an hour and costs you your mood.
 
-### B) Reference skill — dlhý materiál, ktorý sa načíta až keď treba
+### B) A reference skill — long material that loads only when needed
 
-Toto je odpoveď na otázku *„kam dám 800 riadkov popisu našej domény?"*.
+This is the answer to *"where do I put 800 lines describing our domain?"*.
 
 ```
 .claude/skills/domenovy-kontext/
-├── SKILL.md              ← slovník, invarianty, stavové prechody (~100 riadkov)
+├── SKILL.md              ← glossary, invariants, state transitions (~100 lines)
 └── referencie/
-    ├── api-protokol.md   ← 500 riadkov, načíta sa až keď treba
-    └── legacy.md         ← 900 riadkov, načíta sa až keď treba
+    ├── api-protokol.md   ← 500 lines, loads only when needed
+    └── legacy.md         ← 900 lines, loads only when needed
 ```
 
-Trojúrovňové odhaľovanie:
+Three-level disclosure:
 
-1. **Popis skillu** (jeden riadok frontmatteru) — v kontexte vždy. Podľa neho sa Claude
-   rozhodne, či skill vôbec otvoriť. Preto ho napíš ako *kedy toto použiť*, nie *čo to je*.
-2. **Telo `SKILL.md`** — načíta sa pri vyvolaní.
-3. **Súbory v podadresároch** — až keď si ich Claude vyžiada podľa instrukcií v tele.
+1. **The skill description** (one line of frontmatter) — always in context. Claude decides
+   from it whether to open the skill at all. So write it as *when to use this*, not *what it
+   is*.
+2. **The body of `SKILL.md`** — loads on invocation.
+3. **Files in subdirectories** — only when Claude asks for them, following the instructions
+   in the body.
 
-Takto môžeš mať v repozitári 3000 riadkov doménových znalostí, ktoré ťa v bežnej
-session nestoja nič.
+This way you can have 3000 lines of domain knowledge in the repository that cost you nothing
+in an ordinary session.
 
-> Poznámka: `.claude/commands/*.md` a `.claude/skills/*/SKILL.md` robia dnes to isté —
-> oboje vytvorí `/nazov`. Pre nové veci používaj `skills/`, lebo znesie podadresáre a referencie.
+> Note: `.claude/commands/*.md` and `.claude/skills/*/SKILL.md` do the same thing today —
+> both create a `/name`. For new things use `skills/`, because it tolerates subdirectories
+> and references.
 
 ---
 
-## Časť 6 — Subagenti: izolácia kontextu
+## Part 6 — Subagents: isolating context
 
-Subagent dostane **vlastné kontextové okno** a späť vráti len zhrnutie.
-Presne to je jeho hodnota, nie „paralelizmus".
+A subagent gets **its own context window** and returns only a summary. That is precisely its
+value, not "parallelism".
 
-Použi ho vtedy, keď platí: *veľa čítania → málo výstupu*.
+Use one when this holds: *a lot of reading → little output*.
 
-| Agent | Načo | Čo mu zakázať |
+| Agent | What for | What to forbid it |
 |---|---|---|
-| `explorer` | prehľadať 40 súborov a odpovedať na otázku | editáciu (`tools: Read, Grep, Glob`) |
-| `code-reviewer` | nezávislá revízia diffu | editáciu — má reportovať, nie opravovať |
-| `test-writer` | doplniť testy | zmenu produkčného kódu |
+| `explorer` | search 40 files and answer a question | editing (`tools: Read, Grep, Glob`) |
+| `code-reviewer` | an independent review of a diff | editing — it should report, not fix |
+| `test-writer` | fill in missing tests | changing production code |
 
-Dve veci, ktoré rozhodujú o tom, či agent bude užitočný:
+Two things decide whether an agent will be useful:
 
-**1. `description` určuje, kedy ho Claude použije.** Píš ho ako spúšťač, nie ako titul.
-Nie *„agent na revíziu kódu"*, ale *„Použi po dopísaní funkcionality, keď treba nezávislý
-pohľad na správnosť a bezpečnosť. Nič needituje."*
+**1. The `description` decides when Claude uses it.** Write it as a trigger, not as a title.
+Not *"an agent for code review"* but *"Use after finishing a feature, when an independent
+look at correctness and security is needed. It edits nothing."*
 
-**2. Presne definovaný formát výstupu.** Agent bez predpísaného výstupu vráti tri odstavce
-vaty. Predpíš mu šablónu — a povedz mu, čo má robiť, keď nič nenájde
-(*„napíš to priamo a uveď, čo si skontroloval; nevymýšľaj nálezy"*).
+**2. A precisely defined output format.** An agent with no prescribed output returns three
+paragraphs of padding. Give it a template — and tell it what to do when it finds nothing
+(*"say so directly and state what you checked; do not invent findings"*).
 
-Užitočná kombinácia pre reviewera: `model: opus` na kritické hodnotenie
-a zákaz editačných nástrojov, aby nemal možnosť „popri tom" niečo prepísať.
+A useful combination for a reviewer: `model: opus` for critical judgement, and no editing
+tools, so it has no opportunity to rewrite something "while it is there".
 
 ---
 
-## Časť 7 — Oprávnenia a hooky: záruby, nie rady
+## Part 7 — Permissions and hooks: guarantees, not advice
 
-### Oprávnenia (`.claude/settings.json`)
+### Permissions (`.claude/settings.json`)
 
-Cieľ nie je maximálna bezpečnosť — je to **odstránenie klikania na potvrdzovanie**
-pri veciach, ktoré sú zjavne bezpečné, aby ti zostala pozornosť na tie, čo bezpečné nie sú.
+The goal is not maximum security — it is **removing the clicking through confirmations** for
+things that are obviously safe, so your attention is left for the things that are not.
 
 ```json
 "permissions": {
@@ -250,213 +256,217 @@ pri veciach, ktoré sú zjavne bezpečné, aby ti zostala pozornosť na tie, čo
 }
 ```
 
-Čo treba vedieť o syntaxi:
+What you need to know about the syntax:
 
-- `Bash(make *)` — prefixový match; mezera pred `*` znamená hranicu slova.
-- `Read(**/.env)` — gitignore-štýl glob; `**` prechádza adresáre.
-- `Read(~/.ssh/**)` — `~/` je domovský adresár, `//cesta` je absolútna cesta od roota.
-- `WebFetch(domain:*.internal.firma.sk)` — obmedzenie na domény.
-- `mcp__github__*` — všetky nástroje z MCP servera.
-- Zložené príkazy (`a && b`) sa vyhodnocujú **po častiach** — každá musí prejsť samostatne.
+- `Bash(make *)` — a prefix match; the space before `*` means a word boundary.
+- `Read(**/.env)` — gitignore-style glob; `**` crosses directories.
+- `Read(~/.ssh/**)` — `~/` is the home directory, `//path` is an absolute path from the root.
+- `WebFetch(domain:*.internal.company.com)` — restriction to domains.
+- `mcp__github__*` — all tools from an MCP server.
+- Compound commands (`a && b`) are evaluated **part by part** — each must pass on its own.
 
-Poradie a zlučovanie: pravidlá sa **zlučujú** cez všetky úrovne (firemné → projekt → lokálne),
-ale `deny` má vždy prednosť. Čo je zakázané v projektových settings, nikto si lokálne nepovolí.
+Order and merging: rules **merge** across all levels (company → project → local), but `deny`
+always wins. What is forbidden in the project settings cannot be re-enabled locally.
 
-**Nepoužívaj `--dangerously-skip-permissions` na svojom stroji.** Má miesto v CI
-alebo v kontejneri, kde ti ani úplne odviazaný agent nemá čo pokaziť.
-Na lokále to znamená, že sa zbavíš presne tej kontroly, ktorá ťa má chrániť.
-Namiesto toho investuj 20 minút do dobrého `allow` zoznamu — dosiahneš 90 % pohodlia
-bez toho rizika.
+**Do not use `--dangerously-skip-permissions` on your own machine.** It has its place in CI
+or in a container, where even a completely unleashed agent has nothing to break. Locally it
+means giving up exactly the control that is there to protect you. Invest 20 minutes into a
+good `allow` list instead — you get 90 % of the convenience without the risk.
 
-### Hooky
+### Hooks
 
-Hook je shell skript, ktorý sa spustí pri udalosti. Rozdiel proti instrukcii v `CLAUDE.md`:
-**hook sa vykoná vždy**, model ho nemôže vynechať ani „zabudnúť".
+A hook is a shell script that runs on an event. The difference from an instruction in
+`CLAUDE.md`: **a hook always executes**, the model cannot skip it or "forget".
 
-Užitočné udalosti:
+Useful events:
 
-| Udalosť | Kedy | Typické použitie |
+| Event | When | Typical use |
 |---|---|---|
-| `PreToolUse` | pred volaním nástroja | zablokovať nebezpečný príkaz (exit 2) |
-| `PostToolUse` | po volaní nástroja | naformátovať a nalintovať zmenený súbor |
-| `UserPromptSubmit` | pri odoslaní promptu | pridať kontext (aktuálny branch, ticket) |
-| `Stop` | keď chce Claude skončiť | vynútiť spustenie testov pred ukončením |
-| `SessionStart` | na začiatku session | vypísať stav gitu, pripomenúť pravidlá |
+| `PreToolUse` | before a tool call | block a dangerous command (exit 2) |
+| `PostToolUse` | after a tool call | format and lint the changed file |
+| `UserPromptSubmit` | when a prompt is sent | add context (current branch, ticket) |
+| `Stop` | when Claude wants to finish | force the tests to run before finishing |
+| `SessionStart` | at the start of a session | print the git state, restate the rules |
 
-Kontrakt: JSON na stdin, `exit 0` = pokračuj, `exit 2` = **zablokuj** (text na stderr
-sa vráti Claudovi ako dôvod), iné nenulové = varovanie bez blokovania.
+The contract: JSON on stdin, `exit 0` = carry on, `exit 2` = **block** (the text on stderr
+goes back to Claude as the reason), any other non-zero = a warning without blocking.
 
-Dva hooky, ktoré sa vyplatia takmer v každom projekte:
+Two hooks that pay off in almost every project:
 
-1. **Formátovanie po každej editácii.** Diff prestane obsahovať šum a prestaneš
-   opakovať „naformátuj to".
-2. **Blokovanie deštruktívnych príkazov** na základe stavu, ktorý sa vzorom vyjadruje
-   ťažko — napr. „push je zakázaný, ak je aktuálny branch `main`".
+1. **Formatting after every edit.** The diff stops containing noise and you stop repeating
+   "format it".
+2. **Blocking destructive commands** based on state that is hard to express as a pattern —
+   for example "pushing is forbidden if the current branch is `main`".
 
-Nechápaj hooky ako bezpečnostnú hranicu proti zlomyseľnému aktérovi. Sú to poistky
-proti nešťastnej náhode. Skutočnú ochranu rieš oprávneniami a prostredím.
+Do not think of hooks as a security boundary against a malicious actor. They are safeguards
+against an unfortunate accident. Real protection comes from permissions and the environment.
 
 ---
 
-## Časť 8 — Práca so session: čo naozaj mení výsledok
+## Part 8 — Working with a session: what actually changes the outcome
 
-### Plánuj skôr, než sa začne písať
+### Plan before anything gets written
 
-`Shift+Tab` prepína režimy oprávnení; **plan mode** je najužitočnejší. Claude v ňom
-len čítá a navrhne plán. Schváliš, alebo ho pošleš späť.
+`Shift+Tab` switches permission modes; **plan mode** is the most useful one. In it Claude
+only reads and proposes a plan. You approve it, or send it back.
 
-Pri čomkoľvek, čo sa dotkne viac ako dvoch-troch súborov, sa to vypláca vždy.
-Model, ktorý začne písať skôr než pochopí zadanie, netvorí kód — tvorí ti prácu.
+For anything touching more than two or three files it always pays off. A model that starts
+writing before it understands the task is not producing code — it is producing work for you.
 
-### Kontext je vyčerpateľný zdroj
+### Context is an exhaustible resource
 
-- `/clear` **medzi nesúvisiacimi úlohami.** Dokončil si funkciu a ideš na iný bug?
-  `/clear`. Zvyšky predchádzajúcej úlohy kvalitu len zhoršujú.
-- `/compact` keď je konverzácia dlhá, ale téma pokračuje. Môžeš dať instrukciu,
-  čo si má ponechať: `/compact ponechaj rozhodnutia o návrhu a zoznam zmenených súborov`.
-- `/context` ukáže, čím je kontext zaplnený. Keď ti to príde príliš, pozri sa sem —
-  často je vinník práve prerastený `CLAUDE.md`.
-- **Prieskum deleguj na subagenta.** „Kde sa spracúvajú webhooky?" nech prehľadá
-  `explorer` a vráti tri riadky — nie tvoja hlavná session, ktorá si tým naplní pol okna.
+- `/clear` **between unrelated tasks.** Finished a feature and moving to a different bug?
+  `/clear`. Leftovers from the previous task only make the quality worse.
+- `/compact` when the conversation is long but the topic continues. You can instruct it what
+  to keep: `/compact keep the design decisions and the list of changed files`.
+- `/context` shows what the context is filled with. When it feels like too much, look here —
+  the culprit is often an overgrown `CLAUDE.md`.
+- **Delegate exploration to a subagent.** "Where are webhooks handled?" — let `explorer`
+  search and return three lines, rather than your main session filling half its window with it.
 
-### Overenie namiesto opisu
+### Verification instead of description
 
-Toto je rozdiel medzi promptom, ktorý funguje, a promptom, ktorý nefunguje:
+This is the difference between a prompt that works and one that does not:
 
-> ❌ „pridaj validáciu hesla"
+> ❌ "add password validation"
 
-> ✅ „Do `src/auth/validate.py` pridaj `validate_password`. Musí odmietnuť: prázdne,
-> kratšie ako 12 znakov, bez čísla, zo zoznamu najčastejších hesiel. Prijať: čokoľvek ostatné.
-> Testy do `tests/unit/auth/test_validate.py`, vzor si vezmi z `test_validate_email.py`.
-> Spusti `make test-unit` a ukáž výstup."
+> ✅ "Add `validate_password` to `src/auth/validate.py`. It must reject: empty, shorter than
+> 12 characters, without a digit, from the list of most common passwords. Accept: anything
+> else. Tests into `tests/unit/auth/test_validate.py`, take the pattern from
+> `test_validate_email.py`. Run `make test-unit` and show the output."
 
-Rozdiel nie je v dĺžke. Je v tom, že druhý prompt obsahuje **kritérium úspechu,
-ktoré si vie agent sám skontrolovať**. Pri prvom sa dozvieš, či to funguje, až ty sám.
+The difference is not the length. It is that the second prompt contains **a success criterion
+the agent can check itself**. With the first one, you are the one who finds out whether it
+works.
 
-### Keď to ide zle
+### When it is going badly
 
-- `Esc` — zastav ho hneď, ako vidíš, že ide nesprávnym smerom. Nečakaj na dokončenie.
-- `Esc Esc` alebo `/rewind` — vráť kód aj konverzáciu na predchádzajúci bod.
-  Pozor: **zmeny vykonané cez bash sa nesledujú** (`rm`, `mv`), tie rewind nevráti. Commituj často.
-- **Po druhej neúspešnej korekcii `/clear` a preformuluj zadanie.** Tretie „nie, myslel som..."
-  v tej istej konverzácii takmer nikdy nepomôže — kontext je už zamorený nesprávnymi pokusmi.
-  Napíš zadanie znova, obohatené o to, čo si sa medzitým dozvedel.
+- `Esc` — stop it the moment you see it going the wrong way. Do not wait for it to finish.
+- `Esc Esc` or `/rewind` — take the code and the conversation back to an earlier point.
+  Careful: **changes made through bash are not tracked** (`rm`, `mv`); rewind will not undo
+  those. Commit often.
+- **After the second failed correction, `/clear` and rephrase the task.** A third "no, I
+  meant…" in the same conversation almost never helps — the context is already polluted by
+  the wrong attempts. Write the task again, enriched with what you have learned in the
+  meantime.
 
-### Paralelná práca
+### Working in parallel
 
-`claude --worktree feat-storno` vytvorí izolovaný git worktree. Dve session na dvoch
-funkciách si navzájom nešliapu po súboroch. `.worktreeinclude` zabezpečí,
-že sa do nového worktree skopíruje `.env` a podobné negitované súbory.
+`claude --worktree feat-storno` creates an isolated git worktree. Two sessions on two
+features do not tread on each other's files. `.worktreeinclude` makes sure `.env` and similar
+non-committed files get copied into the new worktree.
 
-### Užitočné príkazy
+### Useful commands
 
-| Príkaz | Načo |
+| Command | What for |
 |---|---|
-| `/init` | vygeneruj prvú verziu `CLAUDE.md` |
-| `/context` | čím je zaplnený kontext |
-| `/clear`, `/compact` | reset / kompresia konverzácie |
-| `/rewind` | vráť kód alebo konverzáciu späť |
-| `/code-review` | revízia diffu vo vlastnom kontexte |
-| `/security-review` | kontrola bezpečnostných problémov |
-| `/permissions` | prehľad a úprava oprávnení |
-| `/agents`, `/skills` | čo je k dispozícii |
-| `/mcp` | stav MCP serverov |
-| `/model`, `/effort` | model a úroveň uvažovania |
-| `/usage`, `/cost` | spotreba |
+| `/init` | generate a first version of `CLAUDE.md` |
+| `/context` | what the context is filled with |
+| `/clear`, `/compact` | reset / compress the conversation |
+| `/rewind` | take the code or the conversation back |
+| `/code-review` | review a diff in its own context |
+| `/security-review` | check for security problems |
+| `/permissions` | review and edit permissions |
+| `/agents`, `/skills` | what is available |
+| `/mcp` | the state of the MCP servers |
+| `/model`, `/effort` | model and reasoning level |
+| `/usage`, `/cost` | consumption |
 
 ---
 
-## Časť 9 — Zavedenie v tíme
+## Part 9 — Rolling it out in a team
 
-Nerob to naraz. Postupnosť, ktorá funguje:
+Do not do it all at once. A sequence that works:
 
-**Týždeň 1 — základ.** `/init`, preškrtaj výsledok na polovicu, doplň sekciu s príkazmi
-a explicitnú vetu o overení. Commituj. Toto samo o sebe dá 70 % efektu.
+**Week 1 — the basics.** `/init`, cut the result in half, add the commands section and the
+explicit sentence about verification. Commit. That alone gives 70 % of the effect.
 
-**Týždeň 2 — oprávnenia.** Pozri sa, čo najčastejšie potvrdzuješ, a dopĺň to do `allow`.
-Zároveň napíš `deny` na to, čo sa nikdy nemá stať. Commituj.
+**Week 2 — permissions.** Look at what you confirm most often and add it to `allow`. At the
+same time write a `deny` for what must never happen. Commit.
 
-**Týždeň 3 — prvý hook.** Formátovanie po editácii. Diffy sa vyčistia.
+**Week 3 — the first hook.** Formatting after an edit. The diffs get clean.
 
-**Týždeň 4 — reviewer a prvý skill.** Agent `code-reviewer` a workflow skill pre postup,
-ktorý v tíme robíte najčastejšie.
+**Week 4 — a reviewer and the first skill.** A `code-reviewer` agent and a workflow skill for
+the procedure your team performs most often.
 
-**Priebežne.** Zaveď zvyk: keď agent zopakuje tú istú chybu druhýkrát, nie je to jeho chyba,
-ale chýbajúci riadok v `rules/`. Kto na to príde, ten to commitne.
+**Continuously.** Establish the habit: when the agent repeats the same mistake a second time,
+it is not its mistake but a missing line in `rules/`. Whoever notices, commits it.
 
-### Čo verzovať
+### What to version
 
-| Verzuj | Negitni |
+| Version it | Do not commit |
 |---|---|
 | `CLAUDE.md` | `.claude/settings.local.json` |
 | `.claude/settings.json` | `CLAUDE.local.md` |
 | `.claude/rules/`, `agents/`, `skills/`, `hooks/` | `.claude/worktrees/` |
 | `.mcp.json`, `.worktreeinclude` | `.claude/agent-memory-local/` |
 
-Keď kolega naklonuje repozitár, jeho agent sa chová rovnako ako tvoj. To je celý zmysel.
+When a colleague clones the repository, their agent behaves the same as yours. That is the
+whole point.
 
 ---
 
-## Časť 10 — Anti-patterny
+## Part 10 — Anti-patterns
 
-| Anti-pattern | Prečo je to problém | Namiesto toho |
+| Anti-pattern | Why it is a problem | Instead |
 |---|---|---|
-| `CLAUDE.md` na 500 riadkov | model prestane pravidlá dodržiavať | rozdeľ do `rules/` s `paths:` |
-| Žiadny testovací príkaz | agent nemá ako zistiť, či to funguje | aspoň jeden rýchly `make test-unit` |
-| `--dangerously-skip-permissions` na lokále | zbavíš sa presne tej kontroly, čo ťa chráni | dobrý `allow` zoznam |
-| Jedna session na celý deň | kontext sa zamorí, kvalita klesá | `/clear` medzi úlohami |
-| „Rob to správne" ako pravidlo | nevykonateľné, model si to vysvetlí ako chce | konkrétne pravidlá + linter |
-| Rovnaký dlhý prompt písaný stále odznova | plytvanie a nekonzistentnosť | workflow skill |
-| Prieskum v hlavnej konverzácii | 40 prečítaných súborov v kontexte | subagent, vráti zhrnutie |
-| Commit až na konci veľkej zmeny | nie je kam sa vrátiť | commit po každom prejdenom kroku |
-| Instrukcia „vždy naformátuj" | model to niekedy vynechá | hook |
-| Pravidlá len v hlave seniora | nefunguje pre nikoho iného | commit do `rules/` |
-| Doména celá v `CLAUDE.md` | 800 riadkov v každej session | reference skill |
+| A 500-line `CLAUDE.md` | the model stops following the rules | split into `rules/` with `paths:` |
+| No test command | the agent has no way to tell whether it works | at least one fast `make test-unit` |
+| `--dangerously-skip-permissions` locally | you give up exactly the control protecting you | a good `allow` list |
+| One session for the whole day | the context gets polluted, quality drops | `/clear` between tasks |
+| "Do it properly" as a rule | unenforceable, the model interprets it as it likes | concrete rules + a linter |
+| The same long prompt written again and again | waste and inconsistency | a workflow skill |
+| Exploration in the main conversation | 40 files read into the context | a subagent that returns a summary |
+| Committing only at the end of a large change | there is nowhere to go back to | commit after every step that passes |
+| The instruction "always format" | the model sometimes skips it | a hook |
+| Rules only in a senior developer's head | works for nobody else | a commit into `rules/` |
+| The whole domain in `CLAUDE.md` | 800 lines in every session | a reference skill |
 
 ---
 
-## Časť 11 — Kontrolný zoznam
+## Part 11 — Checklist
 
-Základ:
+The basics:
 
-- [ ] `CLAUDE.md` existuje, má pod 200 riadkov, obsahuje príkazy na build/test/lint
-- [ ] Je v ňom explicitná veta *„po zmene spusti X; ak neprejde, oprav to"*
-- [ ] Je v ňom, čo sa **needituje** (generovaný kód, lock files, prod infra)
-- [ ] Existuje rýchly testovací príkaz, ktorý beží do niekoľkých sekúnd
-- [ ] `.claude/settings.json` má `allow` na časté bezpečné príkazy
-- [ ] `.claude/settings.json` má `deny` na tajomstvá a deštruktívne operácie
-- [ ] `.claude/settings.local.json` je v `.gitignore`
+- [ ] `CLAUDE.md` exists, is under 200 lines, and contains the build/test/lint commands
+- [ ] It has the explicit sentence *"after a change run X; if it does not pass, fix it"*
+- [ ] It says what **must not be edited** (generated code, lock files, production infra)
+- [ ] A fast test command exists that runs in a few seconds
+- [ ] `.claude/settings.json` has `allow` for frequent safe commands
+- [ ] `.claude/settings.json` has `deny` for secrets and destructive operations
+- [ ] `.claude/settings.local.json` is in `.gitignore`
 
-Ďalšia úroveň:
+The next level:
 
-- [ ] Pravidlá rozdelené do `.claude/rules/` s `paths:`
-- [ ] Hook na formátovanie po editácii
-- [ ] Agent `code-reviewer` bez editačných práv
-- [ ] Workflow skill pre najčastejší postup v tíme
-- [ ] Doménová referencia ako skill, nie v `CLAUDE.md`
-- [ ] `.mcp.json` bez natvrdo zapísaných tokenov (len `$PREMENNÁ`)
-- [ ] `.worktreeinclude` pre paralelnú prácu
+- [ ] Rules split into `.claude/rules/` with `paths:`
+- [ ] A hook for formatting after an edit
+- [ ] A `code-reviewer` agent with no editing rights
+- [ ] A workflow skill for the team's most frequent procedure
+- [ ] Domain reference as a skill, not in `CLAUDE.md`
+- [ ] `.mcp.json` with no hardcoded tokens (only `$VARIABLE`)
+- [ ] `.worktreeinclude` for working in parallel
 
-Prevádzka:
+Operations:
 
-- [ ] Tím vie, že opravou opakovanej chyby je commit do `rules/`, nie lepší prompt
-- [ ] Pri väčších zmenách sa používa plan mode
-- [ ] `/clear` medzi nesúvisiacimi úlohami je zvyk
+- [ ] The team knows that the fix for a repeated mistake is a commit into `rules/`, not a
+      better prompt
+- [ ] Plan mode is used for larger changes
+- [ ] `/clear` between unrelated tasks is a habit
 
 ---
 
-## Zdroje
+## Sources
 
-Aktuálna dokumentácia — schémy a kľúče sa vyvíjajú, pri detailoch si over stav:
+Current documentation — schemas and keys evolve, so check the state of the details:
 
-- [Prehľad](https://code.claude.com/docs/en/overview) ·
+- [Overview](https://code.claude.com/docs/en/overview) ·
   [Quickstart](https://code.claude.com/docs/en/quickstart) ·
   [Best practices](https://code.claude.com/docs/en/best-practices)
 - [Memory / CLAUDE.md](https://code.claude.com/docs/en/memory) ·
   [Settings](https://code.claude.com/docs/en/settings) ·
   [Permissions](https://code.claude.com/docs/en/permissions)
 - [Skills](https://code.claude.com/docs/en/skills) ·
-  [Subagenti](https://code.claude.com/docs/en/sub-agents) ·
+  [Subagents](https://code.claude.com/docs/en/sub-agents) ·
   [Hooks](https://code.claude.com/docs/en/hooks)
 - [MCP](https://code.claude.com/docs/en/mcp) ·
   [Worktrees](https://code.claude.com/docs/en/worktrees) ·

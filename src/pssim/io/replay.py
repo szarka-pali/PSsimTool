@@ -1,8 +1,8 @@
-"""Prehranie zaznamenaného dátového toku.
+"""Replaying a recorded data stream.
 
-Implementuje ten istý `DataSource` kontrakt ako `OpcUaSource`, takže scéna
-nevie rozdiel. Toto je hlavný nástroj na reprodukciu chýb z prevádzky
-a na vývoj bez PLC. Viď docs/architecture.md R7.
+Implements the same `DataSource` contract as `OpcUaSource`, so the scene cannot tell
+the difference. This is the main tool for reproducing faults from the field and for
+developing without a PLC. See docs/architecture.md R7.
 """
 
 from __future__ import annotations
@@ -24,17 +24,18 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class RecordedSample:
-    """Jeden riadok zo záznamu."""
+    """One line from a recording."""
 
     signal: str
     sample: Sample
 
 
 def read_recording(path: str | Path) -> tuple[RecordedSample, ...]:
-    """Načíta JSONL záznam. Čistá funkcia — testuje sa bez vlákien.
+    """Read a JSONL recording. A pure function — tested without threads.
 
-    Poškodené riadky sa preskočia s varovaním. Prerušený zápis (napr. pád procesu)
-    zanechá posledný riadok nekompletný a to nesmie znehodnotiť celý záznam.
+    Damaged lines are skipped with a warning. An interrupted write (a process dying,
+    for instance) leaves the last line incomplete, and that must not invalidate the
+    whole recording.
     """
     file_path = Path(path)
     try:
@@ -57,20 +58,22 @@ def read_recording(path: str | Path) -> tuple[RecordedSample, ...]:
             )
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             skipped += 1
-            logger.debug("preskakujem poškodený riadok", file=str(file_path), line=line_number)
+            logger.debug("skipping a damaged line", file=str(file_path), line=line_number)
 
     if not samples:
         raise DataSourceError(f"záznam {file_path} neobsahuje ani jednu použiteľnú vzorku")
     if skipped:
-        logger.warning("záznam obsahoval poškodené riadky", file=str(file_path), skipped=skipped)
+        logger.warning(
+            "the recording contained damaged lines", file=str(file_path), skipped=skipped
+        )
 
     return tuple(sorted(samples, key=lambda item: item.sample.source_time_s))
 
 
 class ReplaySource:
-    """Prehrá záznam do `StateStore` v pôvodnom časovaní.
+    """Replay a recording into a `StateStore` with its original timing.
 
-    Implementuje `pssim.io.base.DataSource`.
+    Implements `pssim.io.base.DataSource`.
     """
 
     def __init__(
@@ -82,7 +85,7 @@ class ReplaySource:
         loop: bool = False,
     ) -> None:
         if speed <= 0.0:
-            raise DataSourceError("speed musí byť > 0")
+            raise DataSourceError("speed must be > 0")
         self._samples = read_recording(path)
         self._store = store if store is not None else StateStore()
         self._speed = speed
@@ -130,10 +133,10 @@ class ReplaySource:
             self._status = SourceStatus.DISCONNECTED
 
     def _play_once(self) -> None:
-        """Prehrá záznam raz.
+        """Replay the recording once.
 
-        Časovanie: `sleep()` je tu výnimka z pravidla „žiadny sleep v produkčnom
-        kóde" — replay má zámerne reprodukovať pôvodné časovanie.
+        Timing: `sleep()` here is the exception to the rule "no sleep in production
+        code" — replay is deliberately meant to reproduce the original timing.
         """
         first_recorded = self._samples[0].sample.source_time_s
         wall_start = time.monotonic()
@@ -147,8 +150,8 @@ class ReplaySource:
             if wait > 0 and self._stop_event.wait(timeout=wait):
                 return
 
-            # Čas prepočítavame na aktuálnu monotónnu škálu, aby interpolácia
-            # a stale detekcia fungovali rovnako ako pri live spojení.
+            # Times are recomputed onto the current monotonic scale, so that
+            # interpolation and stale detection behave as they do on a live connection.
             self._store.put(
                 signal=item.signal,
                 value=item.sample.value,

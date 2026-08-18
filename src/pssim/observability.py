@@ -1,7 +1,7 @@
-"""Logovanie. Jediný povolený spôsob výpisu v aplikácii — `print()` je zakázaný.
+"""Logging. The only permitted way of producing output in the application — `print()` is forbidden.
 
-`io/` loguje z iného vlákna než `viz/`, preto je konfigurácia štruktúrovaná
-a obsahuje názov vlákna. Bez toho sa vláknové chyby nedajú čítať.
+`io/` logs from a different thread than `viz/`, which is why the configuration is
+structured and carries the thread name. Without it, threading bugs are unreadable.
 """
 
 from __future__ import annotations
@@ -17,9 +17,10 @@ _is_configured = False
 
 
 def configure(level: str | None = None, *, json_output: bool = False) -> None:
-    """Nastaví logovanie. Volaj raz, na začiatku v `cli.py`.
+    """Set up logging. Call it once, at the start, in `cli.py`.
 
-    Úroveň sa berie z argumentu, inak z `PSSIM_LOG_LEVEL`, inak `info`.
+    The level comes from the argument, otherwise from `PSSIM_LOG_LEVEL`, otherwise
+    `info`.
     """
     global _is_configured
 
@@ -37,8 +38,8 @@ def configure(level: str | None = None, *, json_output: bool = False) -> None:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="%H:%M:%S.%f", utc=False),
-            # Názov vlákna je tu zámerne: io/ loguje z iného vlákna než viz/
-            # a bez tohto sa vláknové chyby nedajú čítať.
+            # The thread name is here deliberately: io/ logs from a different
+            # thread than viz/, and without it threading bugs are unreadable.
             structlog.processors.CallsiteParameterAdder(
                 [structlog.processors.CallsiteParameter.THREAD_NAME]
             ),
@@ -54,7 +55,7 @@ def configure(level: str | None = None, *, json_output: bool = False) -> None:
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
-    """Vráti logger pre modul. Použi `get_logger(__name__)`."""
+    """Return the logger for a module. Use `get_logger(__name__)`."""
     if not _is_configured:
         configure()
     return structlog.get_logger(name)

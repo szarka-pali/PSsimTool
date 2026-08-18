@@ -1,10 +1,10 @@
-"""Hranica k vonkajšiemu svetu.
+"""The boundary to the outside world.
 
-Referenčný modul projektu pre definíciu hraníc: `Protocol`, nie abstraktná trieda.
-Konzument (`viz/`) nemusí importovať žiadnu konkrétnu implementáciu.
+The project's reference module for defining boundaries: a `Protocol`, not an abstract
+base class. The consumer (`viz/`) does not have to import any concrete implementation.
 
-Každý zdroj dát — OPC UA, replay, mock — implementuje `DataSource` a nič viac.
-Nový transport (ADS, S7) sa pridá bez zásahu do `viz/` a `domain/`. Viď R6.
+Every data source — OPC UA, replay, mock — implements `DataSource` and nothing more.
+A new transport (ADS, S7) can be added without touching `viz/` or `domain/`. See R6.
 """
 
 from __future__ import annotations
@@ -16,38 +16,38 @@ from pssim.io.store import StateStore
 
 
 class SourceStatus(StrEnum):
-    """Stav zdroja dát.
+    """The state of a data source.
 
-    Prechody sú popísané v `.claude/skills/domenovy-kontext/SKILL.md`. Každý nový
-    stav pridaj **aj tam**, inak sa HUD a DEGRADED logika obídu.
+    The transitions are described in `.claude/skills/domenovy-kontext/SKILL.md`. Add
+    every new state **there too**, or the HUD and the DEGRADED logic get bypassed.
     """
 
     DISCONNECTED = "disconnected"
-    """Bez spojenia. Dáta v StateStore zostávajú — scéna stojí na poslednom stave."""
+    """No connection. The data in StateStore stays — the scene holds the last state."""
 
     CONNECTING = "connecting"
     """Prebieha pokus o spojenie alebo reconnect."""
 
     CONNECTED = "connected"
-    """Spojenie žije a všetky signály sú svieže."""
+    """The connection is alive and every signal is fresh."""
 
     DEGRADED = "degraded"
-    """Spojenie žije, ale aspoň jeden signál je zastaraný. Renderuje sa ďalej."""
+    """The connection is alive but at least one signal is stale. Rendering continues."""
 
 
 @runtime_checkable
 class DataSource(Protocol):
-    """Zdroj hodnôt signálov.
+    """A source of signal values.
 
-    Kontrakt:
+    The contract:
 
-    - `start()` je neblokujúce. Ak zdroj potrebuje vlákno alebo asyncio loop,
-      vytvorí si ho sám a `start()` sa vráti okamžite.
-    - Zdroj zapisuje **výhradne** do `StateStore`, ktorý dostal v konštruktore.
-      Nikdy sa nedotkne Panda3D ani scény.
-    - `stop()` je idempotentné a musí sa vrátiť do niekoľkých sekúnd.
-    - Odpadnutie spojenia **nie je výnimka** — zdroj prejde do `CONNECTING`
-      a skúša znovu. Výnimku vyhoď len z `start()`, keď sa nedá ani začať.
+    - `start()` is non-blocking. If the source needs a thread or an asyncio loop, it
+      creates one itself and `start()` returns immediately.
+    - The source writes **exclusively** into the `StateStore` it was given in the
+      constructor. It never touches Panda3D or the scene.
+    - `stop()` is idempotent and must return within a few seconds.
+    - Losing the connection **is not an exception** — the source goes to `CONNECTING`
+      and tries again. Raise an exception only from `start()`, when it cannot even begin.
     """
 
     @property
@@ -57,13 +57,13 @@ class DataSource(Protocol):
     def store(self) -> StateStore: ...
 
     def start(self) -> None:
-        """Spustí prívod dát. Neblokuje.
+        """Start the flow of data. Does not block.
 
-        Vyhadzuje `DataSourceError`, ak je konfigurácia neplatná alebo sa zdroj
-        nedá otvoriť vôbec.
+        Raises `DataSourceError` if the configuration is invalid or the source cannot
+        be opened at all.
         """
         ...
 
     def stop(self) -> None:
-        """Zastaví prívod dát. Idempotentné."""
+        """Stop the flow of data. Idempotent."""
         ...

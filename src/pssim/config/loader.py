@@ -1,7 +1,7 @@
-"""Načítanie `machines/*.yaml` a preklad do doménového modelu.
+"""Loading `machines/*.yaml` and translating it into the domain model.
 
-Hranica systému. Za týmto modulom sú dáta platné, v metroch a radiánoch,
-a osi sú normalizované.
+A system boundary. Past this module the data is valid, in metres and radians, and
+the axes are normalised.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ from pssim.domain.units import length_scale_to_m
 
 @dataclass(frozen=True, slots=True)
 class LoadedMachine:
-    """Všetko, čo vzniklo z jedného `machines/*.yaml`.
+    """Everything that came out of one `machines/*.yaml`.
 
-    `machine` je doménový model (nevie o PLC). `bindings` je mapovanie na OPC UA.
-    `step_file` a `tessellation_*` idú do `cad/`.
+    `machine` is the domain model (it knows nothing about the PLC). `bindings` is
+    the mapping onto OPC UA. `step_file` and `tessellation_*` go into `cad/`.
     """
 
     machine: Machine
@@ -48,11 +48,11 @@ class LoadedMachine:
 
 
 def load_machine(path: str | Path, *, project_root: Path | None = None) -> LoadedMachine:
-    """Načíta a zvaliduje definíciu stroja.
+    """Load and validate a machine definition.
 
-    `project_root` slúži na rozlíšenie relatívnych ciest v `step_file`; ak nie je
-    zadaný, berie sa adresár nadradený adresáru YAML súboru (teda koreň repozitára
-    pri štandardnom `machines/x.yaml`).
+    `project_root` is what relative paths in `step_file` are resolved against; if
+    it is not given, the parent of the YAML file's directory is used (that is, the
+    repository root for the standard `machines/x.yaml`).
     """
     yaml_path = Path(path)
     raw = _read_yaml(yaml_path)
@@ -111,10 +111,10 @@ def _validate(raw: dict[str, Any], yaml_path: Path) -> MachineSpec:
 
 
 def _format_errors(exc: ValidationError) -> str:
-    """Pydantic chyby na tvar, ktorý sa dá čítať bez znalosti pydanticu."""
+    """Pydantic errors in a form readable without knowing pydantic."""
     lines: list[str] = []
     for error in exc.errors():
-        location = ".".join(str(part) for part in error["loc"]) or "(koreň)"
+        location = ".".join(str(part) for part in error["loc"]) or "(root)"
         lines.append(f"  {location}: {error['msg']}")
     return "\n".join(lines)
 
@@ -142,14 +142,15 @@ def _to_joint(spec: JointSpec, yaml_path: Path) -> Joint:
 
 
 def _normalize(axis: Vec3) -> Vec3:
-    """Normalizuje os na jednotkovú dĺžku.
+    """Normalise an axis to unit length.
 
-    Doména neznormalizovanú os odmieta (dĺžka by ticho škálovala pohyb), ale
-    v YAML je `[0, 0, 1]` aj `[0, 0, 2]` rovnaký zámer. Normalizujeme tu, na hranici.
+    The domain rejects an unnormalised axis (its length would silently scale the
+    movement), but in YAML `[0, 0, 1]` and `[0, 0, 2]` mean the same intent. We
+    normalise here, at the boundary.
     """
     length = sum(component * component for component in axis) ** 0.5
     if length == 0.0:
-        raise ConfigError("axis nesmie byť nulový vektor")
+        raise ConfigError("axis must not be a zero vector")
     return (axis[0] / length, axis[1] / length, axis[2] / length)
 
 
@@ -158,7 +159,7 @@ def _build_machine(name: str, joints: tuple[Joint, ...]) -> Machine:
         return Machine(name=name, joints=joints)
     except ConfigError:
         raise
-    except Exception as exc:  # pragma: no cover — obrana proti neočakávanému
+    except Exception as exc:  # pragma: no cover - defence against the unexpected
         raise ConfigError(f"stroj {name!r} sa nedá poskladať: {exc}") from exc
 
 
@@ -180,7 +181,7 @@ def _check_moving_joints_have_signals(
     bindings: tuple[JointBinding, ...],
     yaml_path: Path,
 ) -> None:
-    """Pohyblivý kĺb bez signálu je vždy nedopatrenie — nikdy by sa nepohol."""
+    """A moving joint without a signal is always an oversight — it would never move."""
     bound = {binding.joint_name for binding in bindings}
     missing = [joint.name for joint in machine.moving_joints if joint.name not in bound]
     if missing:

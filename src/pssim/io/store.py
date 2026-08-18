@@ -1,15 +1,15 @@
-"""Thread-safe držiteľ posledných vzoriek všetkých signálov.
+"""The thread-safe holder of the latest samples of all signals.
 
-Toto je **jediné** miesto, kde sa zdieľa stav medzi vláknami. Nepridávaj druhé —
-ak treba zdieľať niečo ďalšie, rozšír store. Viď docs/architecture.md R4.
+This is the **only** place where state is shared between threads. Do not add a second
+one — if something else needs sharing, extend the store. See docs/architecture.md R4.
 
-Vláknový model:
+The threading model:
 
-    vlákno B (asyncio, io/)  →  put()
-    vlákno A (Panda3D, viz/) →  sample_all() / status_of()
+    thread B (asyncio, io/)  →  put()
+    thread A (Panda3D, viz/) →  sample_all() / status_of()
 
-Zdieľame *latest value + krátky ring buffer*, nie queue: queue by pri zaostávaní
-renderu rástla a zobrazovali by sa staré dáta.
+What we share is the *latest value + a short ring buffer*, not a queue: a queue would
+grow whenever rendering fell behind and old data would be displayed.
 """
 
 from __future__ import annotations
@@ -20,10 +20,10 @@ from pssim.domain.interpolation import DEFAULT_CAPACITY, Sample, SignalBuffer
 
 
 class StateStore:
-    """Vzorky signálov, bezpečne zdieľané medzi vláknami.
+    """Signal samples, safely shared between threads.
 
-    Lock sa drží čo najkratšie: pod lockom sa kopírujú dáta, nepočíta sa.
-    Interpolácia beží mimo lock, nad kópiou.
+    The lock is held as briefly as possible: data is copied under the lock, nothing is
+    computed under it. Interpolation runs outside the lock, over a copy.
     """
 
     __slots__ = ("_buffers", "_lock", "_capacity")
@@ -33,13 +33,13 @@ class StateStore:
         self._lock = threading.Lock()
         self._buffers: dict[str, SignalBuffer] = {}
 
-    # -- zápis (vlákno zdroja dát) -----------------------------------------
+    # -- writing (the data source's thread) ---------------------------------
 
     def put(self, signal: str, value: float, source_time_s: float) -> None:
-        """Zapíše vzorku. Volá sa z vlákna zdroja dát.
+        """Store a sample. Called from the data source's thread.
 
-        `source_time_s` musí byť už prevedený na internú monotónnu škálu —
-        prevod z `SourceTimestamp` robí zdroj, nie store.
+        `source_time_s` must already be converted onto the internal monotonic scale —
+        the conversion from `SourceTimestamp` is done by the source, not by the store.
         """
         sample = Sample(source_time_s=source_time_s, value=value)
         with self._lock:
@@ -50,21 +50,22 @@ class StateStore:
             buffer.put(sample)
 
     def clear(self) -> None:
-        """Zmaže všetky vzorky.
+        """Delete every sample.
 
-        **Nepoužívaj pri odpadnutí spojenia** — scéna má zostať stáť na poslednom
-        známom stave. Slúži na prepnutie na iný stroj alebo iný záznam.
+        **Do not use this when the connection drops** — the scene should stay on the
+        last known state. This is for switching to a different machine or a different
+        recording.
         """
         with self._lock:
             self._buffers.clear()
 
-    # -- čítanie (render vlákno) -------------------------------------------
+    # -- reading (the render thread) ----------------------------------------
 
     def sample_all(self, at_time_s: float) -> dict[str, float]:
-        """Interpolované hodnoty všetkých známych signálov v čase `at_time_s`.
+        """The interpolated values of all known signals at `at_time_s`.
 
-        Signály bez jedinej vzorky vo výsledku nie sú — volajúci má použiť
-        `rest_pose()` pre kĺby, ktoré tu chýbajú.
+        Signals without a single sample are not in the result — the caller should use
+        `rest_pose()` for the joints missing here.
         """
         with self._lock:
             snapshot = list(self._buffers.items())
@@ -77,13 +78,13 @@ class StateStore:
         return result
 
     def sample(self, signal: str, at_time_s: float) -> float | None:
-        """Interpolovaná hodnota jedného signálu, alebo `None` ak nemá vzorky."""
+        """The interpolated value of one signal, or `None` when it has no samples."""
         with self._lock:
             buffer = self._buffers.get(signal)
         return buffer.sample_at(at_time_s) if buffer is not None else None
 
     def stale_signals(self, at_time_s: float, stale_after_s: float) -> frozenset[str]:
-        """Signály, ktoré nedostali novú vzorku dlhšie ako `stale_after_s`."""
+        """The signals that have gone longer than `stale_after_s` without a new sample."""
         with self._lock:
             snapshot = list(self._buffers.items())
         return frozenset(
@@ -91,10 +92,11 @@ class StateStore:
         )
 
     def latest_time(self) -> float | None:
-        """Čas najnovšej vzorky spomedzi všetkých signálov.
+        """The time of the newest sample across all signals.
 
-        Slúži ako referenčný čas pre `sample_all()`: renderovať treba voči času
-        dát, nie voči lokálnym hodinám. Vracia `None`, kým nič neprišlo.
+        Serves as the reference time for `sample_all()`: rendering has to be done
+        against the time of the data, not against the local clock. Returns `None`
+        until something has arrived.
         """
         with self._lock:
             times = [

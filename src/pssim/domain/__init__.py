@@ -1,6 +1,6 @@
-"""Doménová vrstva — čistá logika bez externých závislostí.
+"""The domain layer — pure logic with no external dependencies.
 
-Tento balík importuje **výhradne stdlib**. Žiadny numpy, pydantic, panda3d,
-asyncua ani OCP. Dôvod je praktický: kinematiku a interpoláciu treba testovať
-bez otvárania okna a bez PLC. Viď CLAUDE.md a docs/architecture.md.
+This package imports **stdlib only**. No numpy, pydantic, panda3d, asyncua or OCP.
+The reason is practical: kinematics and interpolation have to be testable without
+opening a window and without a PLC. See CLAUDE.md and docs/architecture.md.
 """

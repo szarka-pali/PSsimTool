@@ -25,7 +25,7 @@ class TestDegenerovaneVstupy:
         assert signal.sample_at(1.0) == pytest.approx(10.0)
 
     def test_capacity_pod_dvoma_je_chyba(self) -> None:
-        with pytest.raises(ValueError, match="aspoň 2"):
+        with pytest.raises(ValueError, match="at least 2"):
             SignalBuffer(capacity=1)
 
 

@@ -25,7 +25,7 @@ class TestJoint:
             prismatic_joint(limits=(2.0, 1.0))
 
     def test_prazdny_nazov_je_chyba(self) -> None:
-        with pytest.raises(ConfigError, match="neprázdny názov"):
+        with pytest.raises(ConfigError, match="non-empty name"):
             prismatic_joint(name="")
 
 
@@ -49,7 +49,7 @@ class TestMachine:
             )
 
     def test_prazdny_nazov_stroja_je_chyba(self) -> None:
-        with pytest.raises(ConfigError, match="neprázdny názov"):
+        with pytest.raises(ConfigError, match="non-empty name"):
             Machine(name="", joints=(prismatic_joint(),))
 
 

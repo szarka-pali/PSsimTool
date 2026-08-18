@@ -1,11 +1,13 @@
-"""Kinematika: hodnota signálu → poloha kĺbu.
+"""Kinematics: a signal value → the pose of a joint.
 
-Referenčný modul projektu. Čistá funkcia, žiadny stav, žiadna pamäť predchádzajúceho
-snímku, žiadna závislosť mimo stdlib. Ak píšeš novú doménovú logiku, napodobni toto.
+The project's reference module. A pure function: no state, no memory of the previous
+frame, no dependency outside the stdlib. If you are writing new domain logic,
+imitate this.
 
-Vedome sa tu **nepočítajú matice**. Výsledkom je `JointPose` (posun + os a uhol),
-ktorý si `viz/` preloží na `NodePath.setPos()` / `setQuat()`. Vďaka tomu doména
-nepotrebuje ani numpy, ani lineárnu algebru, a testuje sa porovnaním čísel.
+Matrices are deliberately **not** computed here. The result is a `JointPose`
+(translation + axis and angle), which `viz/` translates into `NodePath.setPos()` /
+`setQuat()`. That way the domain needs neither numpy nor linear algebra, and is
+tested by comparing numbers.
 """
 
 from __future__ import annotations
@@ -19,11 +21,11 @@ _ZERO: Vec3 = (0.0, 0.0, 0.0)
 
 @dataclass(frozen=True, slots=True)
 class JointPose:
-    """Poloha kĺbu voči jeho rodičovi, vrátane pevného offsetu `joint.origin`.
+    """The pose of a joint relative to its parent, including the fixed `joint.origin` offset.
 
-    `rotation_angle_rad` je 0 pre translačné kĺby; `translation` je nulový vektor
-    pre rotačné. `is_clamped` hovorí, že vstupná hodnota bola mimo limitov —
-    scéna to má zobraziť, nie ignorovať.
+    `rotation_angle_rad` is 0 for translational joints; `translation` is the zero
+    vector for rotational ones. `is_clamped` says the input value was outside the
+    limits — the scene should show that, not ignore it.
     """
 
     translation: Vec3
@@ -33,10 +35,11 @@ class JointPose:
 
 
 def clamp_to_limits(joint: Joint, value: float) -> tuple[float, bool]:
-    """Obmedzí hodnotu na limity kĺbu. Vracia `(hodnota, bola_obmedzená)`.
+    """Clamp a value to the joint's limits. Returns `(value, was_clamped)`.
 
-    Hodnota mimo limitov nie je chyba — PLC môže poslať čokoľvek a scéna nesmie
-    kvôli tomu spadnúť. Ale je to informácia, ktorú chce používateľ vidieť.
+    A value outside the limits is not an error — the PLC may send anything and the
+    scene must not fall over because of it. But it is information the user wants to
+    see.
     """
     if joint.limits is None:
         return value, False
@@ -50,10 +53,10 @@ def clamp_to_limits(joint: Joint, value: float) -> tuple[float, bool]:
 
 
 def joint_pose(joint: Joint, value: float) -> JointPose:
-    """Preloží hodnotu signálu na polohu kĺbu voči rodičovi.
+    """Translate a signal value into the pose of a joint relative to its parent.
 
-    `value` je už v interných jednotkách (metre / radiány) — prevod zo jednotiek
-    PLC sa deje v `config.binding`, nie tu.
+    `value` is already in internal units (metres / radians) — the conversion from
+    PLC units happens in `config.binding`, not here.
     """
     if joint.type is JointType.FIXED:
         return JointPose(
@@ -87,10 +90,11 @@ def joint_pose(joint: Joint, value: float) -> JointPose:
 
 
 def rest_pose(joint: Joint) -> JointPose:
-    """Poloha kĺbu, keď preň ešte neprišla žiadna hodnota.
+    """The pose of a joint when no value has arrived for it yet.
 
-    Nie je to nula: ak má kĺb limity, ktoré nulu neobsahujú, nula by diel
-    umiestnila mimo fyzicky možný rozsah. Použije sa najbližšia hodnota v limitoch.
+    Not zero: if the joint has limits that do not contain zero, zero would place the
+    part outside the physically possible range. The nearest value within the limits
+    is used.
     """
     if joint.type is JointType.FIXED or joint.limits is None:
         return joint_pose(joint, 0.0)
@@ -101,5 +105,5 @@ def rest_pose(joint: Joint) -> JointPose:
 
 
 def identity_pose() -> JointPose:
-    """Neutrálna poloha — použiteľná ako fallback, keď kĺb nie je známy."""
+    """The neutral pose — usable as a fallback when the joint is not known."""
     return JointPose(translation=_ZERO, rotation_axis=(0.0, 0.0, 1.0), rotation_angle_rad=0.0)

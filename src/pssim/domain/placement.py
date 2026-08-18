@@ -1,14 +1,15 @@
-"""Umiestnenie modelu v scéne — posun a natočenie voči počiatku.
+"""Placing a model in the scene — translation and rotation relative to the origin.
 
-Slúži na to, aby sa dal model „posadiť" tam, kam patrí: CAD súbor má počiatok
-tam, kde ho konštruktér nechal, a to nemusí byť bod, voči ktorému chceš merať.
+Its purpose is to let a model be "seated" where it belongs: a CAD file has its origin
+wherever the designer left it, and that need not be the point you want to measure
+against.
 
-**Prevod jednotiek je tu, nie v UI.** Používateľ zadáva milimetre a stupne
-(tak, ako je zvyknutý z CAD), scéna beží v metroch a radiánoch. Konverzia sa
-deje raz, na jednom mieste, a má testy — šesť polí krát dva smery je dosť
-príležitostí na preklep.
+**The unit conversion is here, not in the UI.** The user enters millimetres and
+degrees (as they are used to from CAD), the scene runs in metres and radians. The
+conversion happens once, in one place, and has tests — six fields times two
+directions is plenty of opportunity for a typo.
 
-Modul je čistý (len stdlib), takže sa dá otestovať bez Qt aj bez Panda3D.
+The module is pure (stdlib only), so it can be tested without Qt and without Panda3D.
 """
 
 from __future__ import annotations
@@ -20,21 +21,21 @@ from typing import Final
 from pssim.domain.machine import Transform
 from pssim.domain.units import DEG_TO_RAD, MM_TO_M
 
-#: Model bez posunu a bez natočenia — teda tak, ako prišiel z CAD.
+#: A model with no translation and no rotation — that is, as it came from CAD.
 IDENTITY_PLACEMENT: Final = Transform()
 
-#: Pod touto hodnotou považujeme umiestnenie za nulové. Zodpovedá jednej
-#: tisícine milimetra a tisícine stupňa — jemnejšie ako čokoľvek, čo má
-#: pri stavaní stroja zmysel zadávať.
+#: Below this value we consider a placement to be zero. It corresponds to a
+#: thousandth of a millimetre and a thousandth of a degree — finer than anything
+#: worth entering when setting up a machine.
 EPSILON: Final = 1e-9
 
 
 @dataclass(frozen=True, slots=True)
 class PlacementDisplay:
-    """Umiestnenie v jednotkách, ktoré vidí používateľ: **milimetre a stupne**.
+    """A placement in the units the user sees: **millimetres and degrees**.
 
-    Zámerne oddelené od `Transform` (metre, radiány), aby sa nedali zameniť.
-    Typová kontrola tak zachytí, keby niekto poslal mm tam, kde patria metre.
+    Deliberately separate from `Transform` (metres, radians) so the two cannot be
+    confused. The type checker then catches anyone passing mm where metres belong.
     """
 
     x_mm: float = 0.0
@@ -57,7 +58,7 @@ class PlacementDisplay:
 
 
 def to_transform(display: PlacementDisplay) -> Transform:
-    """Prevedie zadané hodnoty na internú transformáciu (metre, radiány)."""
+    """Convert the entered values into an internal transformation (metres, radians)."""
     return Transform(
         xyz=(
             display.x_mm * MM_TO_M,
@@ -73,7 +74,7 @@ def to_transform(display: PlacementDisplay) -> Transform:
 
 
 def from_transform(transform: Transform) -> PlacementDisplay:
-    """Prevedie internú transformáciu späť na to, čo sa ukáže v dialógu."""
+    """Convert an internal transformation back into what the dialog shows."""
     return PlacementDisplay(
         x_mm=transform.xyz[0] / MM_TO_M,
         y_mm=transform.xyz[1] / MM_TO_M,
@@ -85,15 +86,15 @@ def from_transform(transform: Transform) -> PlacementDisplay:
 
 
 def is_identity(transform: Transform) -> bool:
-    """Či umiestnenie nič nerobí. Používa sa na to, čo hlásiť používateľovi."""
+    """Whether the placement does nothing. Used to decide what to report to the user."""
     return all(abs(value) < EPSILON for value in (*transform.xyz, *transform.rpy))
 
 
 def normalize_degrees(angle_deg: float) -> float:
-    """Zloží uhol do rozsahu (-180, 180].
+    """Fold an angle into the range (-180, 180].
 
-    Bez toho by sa po opakovanom otáčaní v dialógu hromadili čísla ako 720°,
-    ktoré síce fungujú, ale nikto z nich nevyčíta, ako je model natočený.
+    Without it, repeated rotating in the dialog would accumulate numbers like 720°,
+    which work but tell nobody how the model is actually oriented.
     """
     wrapped = math.fmod(angle_deg + 180.0, 360.0)
     if wrapped <= 0.0:

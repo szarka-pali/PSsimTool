@@ -1,3 +1,3 @@
-"""PSsimTool — 3D simulácia strojov riadená live dátami z PLC."""
+"""PSsimTool — 3D machine simulation driven by live data from a PLC."""
 
 __version__ = "0.1.0"

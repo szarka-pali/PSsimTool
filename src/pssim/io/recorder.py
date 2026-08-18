@@ -1,16 +1,17 @@
-"""Záznam dátového toku do JSONL.
+"""Recording the data stream into JSONL.
 
-Bez záznamu a replay sa nedá vyvíjať bez hardware ani reprodukovať chybu, ktorá
-sa stala raz na stroji u zákazníka. Viď docs/architecture.md R7.
+Without recording and replay there is no developing without hardware and no
+reproducing a fault that happened once, at a customer's machine. See
+docs/architecture.md R7.
 
-Formát je jeden JSON objekt na riadok, aby sa dal záznam čítať aj `head`om
-a aby prerušený zápis nezničil celý súbor:
+The format is one JSON object per line, so a recording can be read with `head` and so
+that an interrupted write does not destroy the whole file:
 
     {"t": 12.345, "signal": "os_x", "value": 1.2345}
 
-`t` je interná monotónna škála v sekundách. Záznam je preto **relatívny** —
-nedá sa z neho zistiť, kedy presne bežal. To je zámer: záznamy z reálnych strojov
-môžu obsahovať údaje zákazníka a čím menej metadát, tým lepšie.
+`t` is the internal monotonic scale in seconds. A recording is therefore **relative** —
+there is no way to tell from it when exactly it ran. That is deliberate: recordings from
+real machines may contain customer data, and the fewer metadata the better.
 """
 
 from __future__ import annotations
@@ -25,12 +26,13 @@ from pssim.io.store import StateStore
 
 
 class RecordingStore(StateStore):
-    """`StateStore`, ktorý každý zápis zároveň zapíše do JSONL súboru.
+    """A `StateStore` that also writes every put into a JSONL file.
 
-    Použije sa namiesto obyčajného store — zdroj dát o zázname nevie a nemusí.
+    Used instead of the plain store — the data source knows nothing about the
+    recording and does not need to.
 
-    Nie je to `DataSource`; je to store. Vďaka tomu funguje záznam s ľubovoľným
-    zdrojom vrátane budúceho ADS alebo S7.
+    It is not a `DataSource`; it is a store. That is what makes recording work with any
+    source, including a future ADS or S7.
     """
 
     def __init__(self, path: str | Path, capacity: int = 32) -> None:
@@ -65,8 +67,9 @@ class RecordingStore(StateStore):
         super().put(signal, value, source_time_s)
         if self._file is None:
             return
-        # Zapisujeme priamo, bez bufferu naviac: buffering=1 (line buffered) stačí
-        # a pri páde procesu zostane záznam použiteľný po posledný celý riadok.
+        # We write straight through, with no extra buffer: buffering=1 (line buffered)
+        # is enough, and if the process dies the recording stays usable up to the last
+        # complete line.
         line = json.dumps(
             {"t": round(source_time_s, 6), "signal": signal, "value": value},
             ensure_ascii=False,

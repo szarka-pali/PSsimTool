@@ -1,38 +1,39 @@
-"""Typované doménové chyby.
+"""Typed domain errors.
 
-Každá chyba, ktorú aplikácia vyhodí zámerne, dedí z `PSsimError`. Vďaka tomu sa
-dá na hranici (CLI, render loop) rozlíšiť „očakávaná chyba s použiteľnou správou"
-od „bug, ktorý treba nahlásiť".
+Every error the application raises deliberately inherits from `PSsimError`. That
+makes it possible at the boundary (CLI, render loop) to tell "an expected error
+with a usable message" from "a bug that should be reported".
 """
 
 
 class PSsimError(Exception):
-    """Základ pre všetky zámerné chyby aplikácie."""
+    """The base for every deliberate error of the application."""
 
 
 class ConfigError(PSsimError):
-    """Neplatná definícia stroja alebo konfigurácia.
+    """An invalid machine definition or configuration.
 
-    Vyhadzuje sa pri načítaní, nikdy nie za behu. Správa musí povedať,
-    ktorý súbor a ktoré pole je zlé.
+    Raised at load time, never at run time. The message must say which file and
+    which field is wrong.
     """
 
 
 class KinematicsError(PSsimError):
-    """Neplatná kinematická operácia alebo neplatný kinematický reťazec."""
+    """An invalid kinematic operation or an invalid kinematic chain."""
 
 
 class CadImportError(PSsimError):
-    """Import CAD súboru zlyhal alebo je súbor nepoužiteľný."""
+    """Importing a CAD file failed, or the file is unusable."""
 
 
 class CacheError(PSsimError):
-    """Cache je poškodená, nekompletná alebo z nekompatibilnej verzie importéra."""
+    """The cache is damaged, incomplete, or from an incompatible importer version."""
 
 
 class DataSourceError(PSsimError):
-    """Zdroj dát sa nedá otvoriť alebo je jeho konfigurácia neplatná.
+    """The data source cannot be opened, or its configuration is invalid.
 
-    Pozor: **odpadnutie spojenia počas behu nie je chyba** — je to normálny stav,
-    ktorý zdroj rieši reconnectom. Táto chyba je pre prípady, keď sa nedá ani začať.
+    Note: **losing the connection at run time is not an error** — it is a normal
+    state the source handles by reconnecting. This error is for the cases where it
+    cannot even start.
     """

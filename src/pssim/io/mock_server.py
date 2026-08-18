@@ -1,13 +1,13 @@
-"""Simulovaný OPC UA server — vývoj a testy bez PLC.
+"""A simulated OPC UA server — development and tests without a PLC.
 
-Bez tohto sa nedá vyvinúť nič, kým nie je hardware na stole, a integračné testy
-by nemali proti čomu bežať. Zápis do OPC UA sa testuje **výhradne** proti tomuto
-serveru, nikdy proti reálnemu stroju.
+Without it nothing can be developed until the hardware is on the desk, and the
+integration tests would have nothing to run against. Writing to OPC UA is tested
+**exclusively** against this server, never against a real machine.
 
-Server generuje hodnoty **v jednotkách PLC** (mm, stupne), nie v interných —
-inak by sa neotestoval prevod v `JointBinding`.
+The server generates values **in PLC units** (mm, degrees), not in internal ones —
+otherwise the conversion in `JointBinding` would go untested.
 
-Spustenie: ``uv run pssim mock-server``
+Run it with: ``uv run pssim mock-server``
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ DEFAULT_NAMESPACE: Final = "http://pssim.local/mock"
 
 @dataclass(frozen=True, slots=True)
 class MockAxis:
-    """Simulovaná os. `amplitude` a `center` sú v jednotkách PLC, nie v metroch."""
+    """A simulated axis. `amplitude` and `center` are in PLC units, not in metres."""
 
     name: str
     amplitude: float
@@ -36,13 +36,13 @@ class MockAxis:
     phase_rad: float = 0.0
 
     def value_at(self, t_s: float) -> float:
-        """Sínusový pohyb. Čistá funkcia — testuje sa bez servera."""
+        """Sinusoidal motion. A pure function — tested without the server."""
         angle = 2.0 * math.pi * t_s / self.period_s + self.phase_rad
         return self.center + self.amplitude * math.sin(angle)
 
 
-#: Osi, ktoré odpovedajú `machines/priklad.yaml`. Hodnoty v mm a v tisícinách stupňa,
-#: teda presne tak, ako ich typicky posiela servo.
+#: Axes matching `machines/priklad.yaml`. Values in mm and in thousandths of a degree,
+#: that is, exactly as a servo typically sends them.
 DEFAULT_AXES: Final = (
     MockAxis(name="Axes.X.ActPos", amplitude=1200.0, center=1250.0, period_s=8.0),
     MockAxis(name="Axes.Z.ActPos", amplitude=350.0, center=400.0, period_s=5.0, phase_rad=1.2),
@@ -57,17 +57,17 @@ async def run_mock_server(
     update_interval_s: float = 0.05,
     duration_s: float | None = None,
 ) -> None:
-    """Spustí mock server. `duration_s=None` znamená bežať do prerušenia.
+    """Run the mock server. `duration_s=None` means run until interrupted.
 
-    `duration_s` používajú integračné testy, aby sa server sám ukončil.
+    `duration_s` is used by the integration tests so the server stops itself.
     """
-    from asyncua import Server, ua  # ťažký import — až keď je naozaj potrebný
+    from asyncua import Server, ua  # a heavy import - only when actually needed
 
     server = Server()
     await server.init()
     server.set_endpoint(endpoint)
     server.set_server_name("PSsimTool Mock PLC")
-    # Bez zabezpečenia: je to lokálny vývojový nástroj. Reálny server takto nikdy.
+    # No security: this is a local development tool. Never do this on a real server.
     server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
 
     namespace_index = await server.register_namespace(DEFAULT_NAMESPACE)
@@ -85,7 +85,7 @@ async def run_mock_server(
         await variable.set_writable(False)
         variables[axis] = variable
 
-    logger.info("mock server beží", endpoint=endpoint, nodes=node_ids)
+    logger.info("mock server running", endpoint=endpoint, nodes=node_ids)
 
     async with server:
         elapsed = 0.0
@@ -97,8 +97,8 @@ async def run_mock_server(
 
 
 def main(endpoint: str = DEFAULT_ENDPOINT) -> None:
-    """Vstupný bod pre `pssim mock-server`."""
+    """The entry point for `pssim mock-server`."""
     try:
         asyncio.run(run_mock_server(endpoint))
     except KeyboardInterrupt:
-        logger.info("mock server ukončený")
+        logger.info("mock server stopped")

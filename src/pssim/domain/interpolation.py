@@ -1,10 +1,10 @@
-"""Interpolácia vzoriek signálu.
+"""Interpolation of signal samples.
 
-OPC UA doručuje dáta každých 20–100 ms, renderujeme 60 fps. Bez interpolácie je
-pohyb trhaný. Viď docs/architecture.md R5.
+OPC UA delivers data every 20–100 ms and we render at 60 fps. Without interpolation
+the motion is jerky. See docs/architecture.md R5.
 
-Kľúčové rozhodnutie: **čas je vždy argument**, nikdy sa nečíta z hodín. Vďaka tomu
-sa celá interpolácia testuje deterministicky.
+The key decision: **time is always an argument**, never read from a clock. That is
+what makes the whole of the interpolation deterministically testable.
 """
 
 from __future__ import annotations
@@ -13,17 +13,18 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Final
 
-#: Koľko vzoriek na signál držíme. Pri 100 ms intervale to je ~3 s histórie —
-#: dosť na interpoláciu aj na krátky graf v HUD, málo na to, aby to zaberalo pamäť.
+#: How many samples per signal we keep. At a 100 ms interval that is ~3 s of history —
+#: enough for interpolation and for a short graph in the HUD, little enough not to
+#: take up memory.
 DEFAULT_CAPACITY: Final = 32
 
 
 @dataclass(frozen=True, slots=True)
 class Sample:
-    """Jedna hodnota signálu s časom, kedy vznikla v PLC.
+    """One signal value with the time it came into being in the PLC.
 
-    `source_time_s` je v internej monotónnej škále v sekundách — prevod
-    z `SourceTimestamp` sa deje v `io/`, nie tu.
+    `source_time_s` is on the internal monotonic scale in seconds — the conversion
+    from `SourceTimestamp` happens in `io/`, not here.
     """
 
     source_time_s: float
@@ -31,16 +32,19 @@ class Sample:
 
 
 class SignalBuffer:
-    """Ring buffer vzoriek jedného signálu s lineárnou interpoláciou.
+    """A ring buffer of one signal's samples, with linear interpolation.
 
-    Nie je thread-safe. Súbežný prístup rieši `io.store.StateStore` lockom.
+    Not thread-safe. Concurrent access is handled by `io.store.StateStore` with a
+    lock.
     """
 
     __slots__ = ("_samples", "_capacity")
 
     def __init__(self, capacity: int = DEFAULT_CAPACITY) -> None:
         if capacity < 2:
-            raise ValueError("capacity musí byť aspoň 2, inak sa nedá interpolovať")
+            raise ValueError(
+                "capacity must be at least 2, otherwise there is nothing to interpolate between"
+            )
         self._capacity = capacity
         self._samples: deque[Sample] = deque(maxlen=capacity)
 
@@ -56,11 +60,11 @@ class SignalBuffer:
         return self._samples[-1] if self._samples else None
 
     def put(self, sample: Sample) -> None:
-        """Pridá vzorku.
+        """Add a sample.
 
-        Vzorky sa očakávajú v rastúcom čase. Vzorku so **starším** časom, než má
-        posledná, zahodíme — servery pri reconnecte občas pošlú starú hodnotu
-        a tá by inak spôsobila skok dozadu.
+        Samples are expected in increasing time order. A sample with a time
+        **older** than the last one is dropped — on a reconnect, servers sometimes
+        send an old value, which would otherwise cause a jump backwards.
         """
         latest = self.latest
         if latest is not None and sample.source_time_s < latest.source_time_s:
@@ -71,11 +75,11 @@ class SignalBuffer:
         self._samples.clear()
 
     def sample_at(self, at_time_s: float) -> float | None:
-        """Hodnota signálu v čase `at_time_s`, lineárne interpolovaná.
+        """The value of the signal at `at_time_s`, linearly interpolated.
 
-        Vracia `None`, ak buffer je prázdny. Mimo rozsahu vzoriek **neextrapoluje** —
-        vráti krajnú hodnotu. Extrapolácia by pri zaseknutom signáli poslala diel
-        do nekonečna.
+        Returns `None` when the buffer is empty. Outside the range of the samples
+        it **does not extrapolate** — it returns the boundary value. Extrapolation
+        would send a part off to infinity whenever a signal got stuck.
         """
         if not self._samples:
             return None
@@ -94,30 +98,30 @@ class SignalBuffer:
         older, newer = self._bracket(at_time_s)
         span = newer.source_time_s - older.source_time_s
         if span <= 0.0:
-            # Rovnaké časové známky sú bežné napr. pri S7-1500, kde má
-            # SourceTimestamp rozlíšenie cyklu OB. Vezmi novšiu hodnotu.
+            # Identical timestamps are common on the S7-1500, for instance, where
+            # SourceTimestamp has the resolution of the OB cycle. Take the newer value.
             return newer.value
 
         ratio = (at_time_s - older.source_time_s) / span
         return older.value + (newer.value - older.value) * ratio
 
     def _bracket(self, at_time_s: float) -> tuple[Sample, Sample]:
-        """Dve vzorky, medzi ktorými `at_time_s` leží.
+        """The two samples `at_time_s` lies between.
 
-        Volá sa len keď je `at_time_s` preukázateľne vnútri rozsahu, preto tu
-        nie je fallback — ak by sa vrátil, bola by to skrytá chyba.
+        Only called when `at_time_s` is demonstrably inside the range, which is why
+        there is no fallback here — if one ever returned, it would be a hidden bug.
         """
         previous = self._samples[0]
         for current in self._samples:
             if current.source_time_s >= at_time_s:
                 return previous, current
             previous = current
-        raise AssertionError("sample_at už overil, že at_time_s je vnútri rozsahu")
+        raise AssertionError("sample_at has already verified that at_time_s is inside the range")
 
     def is_stale(self, at_time_s: float, stale_after_s: float) -> bool:
-        """Či signál nedostal novú vzorku dlhšie ako `stale_after_s`.
+        """Whether the signal has gone longer than `stale_after_s` without a new sample.
 
-        Prázdny buffer je zastaraný — ešte nikdy nič neprišlo.
+        An empty buffer is stale — nothing has ever arrived.
         """
         latest = self.latest
         if latest is None:

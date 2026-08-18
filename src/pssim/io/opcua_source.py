@@ -1,13 +1,13 @@
-"""OPC UA klient ako `DataSource`.
+"""The OPC UA client as a `DataSource`.
 
-Beží vo **vlastnom vlákne s vlastným asyncio loopom**. Panda3D task manager
-podporuje `async def` tasky, ale awaituje Panda3D futures, nie asyncio —
-asyncua v ňom bežať nemôže. Viď docs/architecture.md R4.
+Runs in **its own thread with its own asyncio loop**. The Panda3D task manager
+supports `async def` tasks, but it awaits Panda3D futures, not asyncio ones — asyncua
+cannot run in it. See docs/architecture.md R4.
 
-Pravidlá pre túto vrstvu sú v `.claude/rules/io-opcua.md`.
+The rules for this layer are in `.claude/rules/io-opcua.md`.
 
-**Stav: napísané, neoverené proti reálnemu PLC.** Overené je len to, čo pokrývajú
-testy v `tests/integration/` proti `mock_server.py`.
+**Status: written, not verified against a real PLC.** What is verified is only what the
+tests in `tests/integration/` cover against `mock_server.py`.
 """
 
 from __future__ import annotations
@@ -31,16 +31,18 @@ logger = get_logger(__name__)
 _RECONNECT_INITIAL_S: Final = 0.5
 _RECONNECT_MAX_S: Final = 30.0
 _QUEUE_SIZE: Final = 4
-"""queuesize > 1: pri zaostávaní dostaneme aj medziľahlé vzorky. S queuesize=1 by
-sa pri rýchlom pohybe zachovali len koncové body a interpolácia by skratkovala."""
+"""queuesize > 1: when falling behind we still get the intermediate samples. With
+queuesize=1, fast movement would keep only the end points and the interpolation would
+cut corners."""
 
 
 @dataclass(frozen=True, slots=True)
 class OpcUaConfig:
-    """Konfigurácia pripojenia.
+    """The connection configuration.
 
-    `endpoint` sa berie z prostredia alebo z CLI, nie z `machines/*.yaml` —
-    ten je verzovaný a adresy PLC zákazníka do repozitára nepatria.
+    `endpoint` comes from the environment or from the CLI, not from `machines/*.yaml` —
+    that file is versioned and a customer's PLC addresses do not belong in the
+    repository.
     """
 
     endpoint: str
@@ -50,16 +52,16 @@ class OpcUaConfig:
 
 
 class OpcUaSource:
-    """Prívod dát z OPC UA servera cez subscription.
+    """A flow of data from an OPC UA server through a subscription.
 
-    Implementuje `pssim.io.base.DataSource`.
+    Implements `pssim.io.base.DataSource`.
     """
 
     def __init__(self, config: OpcUaConfig, store: StateStore | None = None) -> None:
         if not config.endpoint:
-            raise DataSourceError("endpoint nesmie byť prázdny")
+            raise DataSourceError("endpoint must not be empty")
         if not config.bindings:
-            raise DataSourceError("žiadne väzby na signály — nie je čo odoberať")
+            raise DataSourceError("no signal bindings - there is nothing to subscribe to")
 
         self._config = config
         self._store = store if store is not None else StateStore()
@@ -68,8 +70,8 @@ class OpcUaSource:
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event = threading.Event()
-        # Vlákno A signalizuje cez threading.Event, vlákno B čaká na asyncio.Event.
-        # Most medzi nimi je `call_soon_threadsafe` v `stop()`.
+        # Thread A signals through a threading.Event, thread B waits on an
+        # asyncio.Event. The bridge between them is `call_soon_threadsafe` in `stop()`.
         self._async_stop: asyncio.Event | None = None
         self._node_to_joint = {b.node_id: b for b in config.bindings}
         self._revised_interval_ms: int | None = None
@@ -86,9 +88,9 @@ class OpcUaSource:
 
     @property
     def revised_interval_ms(self) -> int | None:
-        """Interval, ktorý server naozaj priznal. `None`, kým nie je subscription.
+        """The interval the server actually granted. `None` until there is a subscription.
 
-        Použi ho na výpočet `render_delay` — nie ten, o ktorý sme žiadali.
+        Use this to compute `render_delay` — not the one we asked for.
         """
         return self._revised_interval_ms
 
@@ -113,24 +115,24 @@ class OpcUaSource:
         if thread is not None:
             thread.join(timeout=5.0)
             if thread.is_alive():
-                logger.warning("opcua vlákno sa nezastavilo do 5 s, pokračujem")
+                logger.warning("opcua thread did not stop within 5 s, carrying on")
         self._thread = None
         self._status = SourceStatus.DISCONNECTED
 
-    # -- vlákno B -----------------------------------------------------------
+    # -- thread B -----------------------------------------------------------
 
     def _run_thread(self) -> None:
         try:
             asyncio.run(self._connect_forever())
         except Exception:
-            logger.exception("opcua vlákno spadlo")
+            logger.exception("opcua thread died")
             self._status = SourceStatus.DISCONNECTED
 
     async def _connect_forever(self) -> None:
-        """Reconnect s exponenciálnym backoffom.
+        """Reconnect with exponential backoff.
 
-        Odpadnutie spojenia je normálny stav, nie výnimka. Logujeme prvý pokus
-        a potom každý desiaty — inak log zaplní jedna nedostupná PLC.
+        Losing the connection is a normal state, not an exception. We log the first
+        attempt and then every tenth — otherwise one unreachable PLC fills the log.
         """
         self._loop = asyncio.get_running_loop()
         self._async_stop = asyncio.Event()
@@ -140,12 +142,12 @@ class OpcUaSource:
         while not self._stop_event.is_set():
             attempt += 1
             if attempt == 1 or attempt % 10 == 0:
-                logger.info("pripájam sa", endpoint=self._config.endpoint, attempt=attempt)
+                logger.info("connecting", endpoint=self._config.endpoint, attempt=attempt)
 
             self._status = SourceStatus.CONNECTING
             try:
                 await self._session()
-                delay = _RECONNECT_INITIAL_S  # úspešné spojenie resetuje backoff
+                delay = _RECONNECT_INITIAL_S  # a successful connection resets the backoff
                 attempt = 0
             except asyncio.CancelledError:
                 raise
@@ -159,7 +161,7 @@ class OpcUaSource:
             delay = min(delay * 2.0, _RECONNECT_MAX_S)
 
     async def _wait_for_stop(self, timeout_s: float | None = None) -> bool:
-        """Čaká na signál zastavenia. Vracia `True`, ak prišiel, `False` pri timeoute."""
+        """Wait for the stop signal. Returns `True` if it came, `False` on timeout."""
         assert self._async_stop is not None
         if timeout_s is None:
             await self._async_stop.wait()
@@ -171,8 +173,8 @@ class OpcUaSource:
         return True
 
     async def _session(self) -> None:
-        """Jedna session: pripoj, odober, drž kým nespadne alebo nepríde stop."""
-        from asyncua import Client  # ťažký import — až keď je naozaj potrebný
+        """One session: connect, subscribe, hold until it drops or a stop arrives."""
+        from asyncua import Client  # a heavy import - only when actually needed
 
         client = Client(url=self._config.endpoint)
         client.session_timeout = self._config.session_timeout_ms
@@ -185,13 +187,14 @@ class OpcUaSource:
             nodes = [client.get_node(node_id) for node_id in self._node_to_joint]
             await subscription.subscribe_data_change(nodes, queuesize=_QUEUE_SIZE)
 
-            # Server smie revidovať interval — napr. TwinCAT ho zviaže s task cycle.
+            # The server may revise the interval - TwinCAT, for instance, ties it
+            # to the task cycle.
             revised = getattr(subscription.parameters, "RequestedPublishingInterval", None)
             self._revised_interval_ms = int(revised) if revised else None
 
             self._status = SourceStatus.CONNECTED
             logger.info(
-                "subscription aktívna",
+                "subscription active",
                 signals=len(nodes),
                 revised_interval_ms=self._revised_interval_ms,
             )
@@ -204,9 +207,10 @@ class OpcUaSource:
     # -- callback zo subscription ------------------------------------------
 
     def handle_data_change(self, node_id: str, value: Any, source_time: datetime | None) -> None:
-        """Spracuje jednu notifikáciu. **Nikdy nevyhadzuje** — výnimka tu zabije loop.
+        """Handle one notification. **Never raises** — an exception here kills the loop.
 
-        Verejné zámerne: je to kontrakt medzi zdrojom a jeho subscription handlerom.
+        Public deliberately: it is the contract between the source and its
+        subscription handler.
         """
         binding = self._node_to_joint.get(node_id)
         if binding is None:
@@ -214,14 +218,14 @@ class OpcUaSource:
 
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             logger.warning(
-                "signál nie je numerický, ignorujem",
+                "signal is not numeric, ignoring",
                 node=node_id,
                 type=type(value).__name__,
             )
             return
 
         if source_time is None:
-            # Codesys niektorých verzií SourceTimestamp neposiela vôbec.
+            # Some versions of Codesys do not send SourceTimestamp at all.
             internal_time = time.monotonic()
         else:
             internal_time = self._timebase.to_internal(source_time, time.monotonic())
@@ -234,7 +238,7 @@ class OpcUaSource:
 
 
 class _SubscriptionHandler:
-    """Handler pre asyncua. Metóda `datachange_notification` je asyncua kontrakt."""
+    """The handler for asyncua. The `datachange_notification` method is an asyncua contract."""
 
     __slots__ = ("_source",)
 
@@ -242,7 +246,7 @@ class _SubscriptionHandler:
         self._source = source
 
     def datachange_notification(self, node: Any, val: Any, data: Any) -> None:
-        """Volá asyncua z vlákna B. Výnimka odtiaľto by zabila celý loop."""
+        """Called by asyncua from thread B. An exception from here would kill the whole loop."""
         try:
             source_time = getattr(
                 getattr(getattr(data, "monitored_item", None), "Value", None),
@@ -251,7 +255,7 @@ class _SubscriptionHandler:
             )
             self._source.handle_data_change(str(node.nodeid.to_string()), val, source_time)
         except Exception:
-            logger.exception("chyba v datachange handleri, pokračujem")
+            logger.exception("error in the datachange handler, carrying on")
 
 
 def build_source(
@@ -261,10 +265,10 @@ def build_source(
     endpoint_override: str | None = None,
     store: StateStore | None = None,
 ) -> OpcUaSource:
-    """Postaví zdroj z konfigurácie stroja.
+    """Build a source from a machine configuration.
 
-    `endpoint_override` má prednosť pred `machines/*.yaml` — reálne endpointy
-    sa zadávajú na CLI alebo prostredím, nie vo verzovanom súbore.
+    `endpoint_override` takes precedence over `machines/*.yaml` — real endpoints are
+    given on the CLI or through the environment, not in a versioned file.
     """
     return OpcUaSource(
         OpcUaConfig(

@@ -1,13 +1,14 @@
-"""Prevod časových známok z PLC na internú monotónnu škálu.
+"""Converting PLC timestamps onto the internal monotonic scale.
 
-Hodinky PLC nie sú synchronizované s lokálnymi a môžu skákať (NTP, ručné
-nastavenie, prechod na letný čas). Interne preto používame **monotónnu** škálu
-v sekundách a offset medzi ňou a časom PLC určíme **raz**, pri prvej vzorke.
+The PLC clock is not synchronised with the local one and may jump (NTP, a manual
+setting, the change to summer time). Internally we therefore use a **monotonic** scale
+in seconds and determine the offset between it and PLC time **once**, on the first
+sample.
 
-Keby sa offset prepočítaval priebežne, každý skok hodín PLC by sa premietol
-do interpolácie a diely by v scéne poskakovali.
+If the offset were recomputed continuously, every jump of the PLC clock would feed
+through into the interpolation and parts would hop about in the scene.
 
-Modul je čistý (čas prichádza ako argument), takže sa testuje deterministicky.
+The module is pure (time arrives as an argument), so it is tested deterministically.
 """
 
 from __future__ import annotations
@@ -16,9 +17,9 @@ from datetime import UTC, datetime
 
 
 class Timebase:
-    """Prevádza čas PLC na internú monotónnu škálu s pevným offsetom.
+    """Converts PLC time onto the internal monotonic scale with a fixed offset.
 
-    Použitie::
+    Usage::
 
         timebase = Timebase()
         internal = timebase.to_internal(source_timestamp, now_monotonic_s)
@@ -37,27 +38,27 @@ class Timebase:
 
     @property
     def offset_s(self) -> float | None:
-        """Offset `internal = plc_epoch + offset`. `None` kým neprišla prvá vzorka."""
+        """The offset `internal = plc_epoch + offset`. `None` until the first sample."""
         return self._offset_s
 
     @property
     def drift_exceeded(self) -> bool:
-        """Či sa čas PLC odchýlil od očakávania viac ako `max_drift_s`.
+        """Whether PLC time has drifted from expectation by more than `max_drift_s`.
 
-        Zdroj to má **zalogovať raz** a pokračovať — nie resetovať offset.
-        Typicky to znamená, že sa PLC preNTPovalo alebo že hodinky idú inak.
+        The source should **log this once** and carry on — not reset the offset.
+        Typically it means the PLC was re-NTP'd or that its clock runs differently.
         """
         return self._drift_exceeded
 
     def to_internal(self, plc_time: datetime, now_monotonic_s: float) -> float:
-        """Prevedie časovú známku z PLC na internú škálu v sekundách.
+        """Convert a timestamp from the PLC onto the internal scale in seconds.
 
-        `plc_time` musí byť tz-aware. Naivný `datetime` je chyba — v OPC UA je
-        `SourceTimestamp` vždy UTC a naivná hodnota znamená, že sa niekde stratila
-        informácia o zóne.
+        `plc_time` must be tz-aware. A naive `datetime` is a bug — in OPC UA the
+        `SourceTimestamp` is always UTC, and a naive value means the zone information
+        was lost somewhere.
         """
         if plc_time.tzinfo is None:
-            raise ValueError("plc_time musí byť tz-aware; naivný datetime znamená stratenú zónu")
+            raise ValueError("plc_time must be tz-aware; a naive datetime means the zone was lost")
 
         plc_epoch = plc_time.astimezone(UTC).timestamp()
 

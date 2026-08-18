@@ -1,10 +1,11 @@
-"""Pydantic schéma `machines/*.yaml`.
+"""The pydantic schema of `machines/*.yaml`.
 
-Toto je **wire format** — to, čo píše človek. Runtime model je `domain.machine.Machine`;
-preklad medzi nimi robí `loader.py`. Oddelenie je zámerné: schéma sa môže vyvíjať
-(nové polia, defaulty, aliasy) bez toho, aby sa menila doména.
+This is the **wire format** — what a human writes. The runtime model is
+`domain.machine.Machine`; `loader.py` translates between them. The separation is
+deliberate: the schema may evolve (new fields, defaults, aliases) without the
+domain changing.
 
-Pri nekompatibilnej zmene schémy musí zostať cesta, ako načítať staré súbory.
+An incompatible schema change must leave a way to load the old files.
 """
 
 from __future__ import annotations
@@ -18,27 +19,28 @@ Vec3Spec = Annotated[tuple[float, float, float], Field(description="trojica (x, 
 
 
 class StrictModel(BaseModel):
-    """Základ pre všetky schémy: neznáme polia sú chyba, nie ticho ignorované.
+    """The base for every schema: unknown fields are an error, not silently ignored.
 
-    Preklep v `machines/*.yaml` sa inak prejaví ako „nefunguje to a neviem prečo".
+    A typo in `machines/*.yaml` would otherwise show up as "it does not work and I
+    do not know why".
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class TessellationSpec(StrictModel):
-    """Parametre tesselácie. Vstupujú do cache kľúča."""
+    """Tessellation parameters. They go into the cache key."""
 
     linear_deflection_mm: float = Field(default=0.5, gt=0.0)
     angular_deflection_rad: float = Field(default=0.35, gt=0.0, le=math.pi)
 
 
 class SourceSpec(StrictModel):
-    """Pripojenie k zdroju dát a časovanie."""
+    """Connection to the data source, and timing."""
 
     endpoint: str = Field(
         default="opc.tcp://localhost:4840/pssim/",
-        description="Len pre lokálny mock. Reálny endpoint patrí do PSSIM_OPCUA_ENDPOINT.",
+        description="For a local mock only. A real endpoint belongs in PSSIM_OPCUA_ENDPOINT.",
     )
     publishing_interval_ms: int = Field(default=50, ge=1, le=10_000)
     stale_after_s: float = Field(default=1.0, gt=0.0)
@@ -46,33 +48,33 @@ class SourceSpec(StrictModel):
 
 
 class SignalSpec(StrictModel):
-    """Väzba kĺbu na OPC UA node vrátane prevodu jednotiek."""
+    """Binding a joint to an OPC UA node, including the unit conversion."""
 
     node: str = Field(min_length=1, description='NodeId, napr. "ns=2;s=Axes.X.ActPos"')
-    scale: float = Field(default=1.0, description="raw * scale + offset → metre/radiány")
+    scale: float = Field(default=1.0, description="raw * scale + offset → metres/radians")
     offset: float = 0.0
 
     @field_validator("scale")
     @classmethod
     def _scale_must_not_be_zero(cls, value: float) -> float:
-        # Nulový scale znamená, že kĺb sa nikdy nepohne. Vždy je to preklep.
+        # A zero scale means the joint would never move. It is always a typo.
         if value == 0.0:
-            raise ValueError("scale nesmie byť 0 — kĺb by sa nikdy nepohol")
+            raise ValueError("scale must not be 0 — the joint would never move")
         return value
 
 
 class OriginSpec(StrictModel):
-    """Pevný offset kĺbu voči rodičovi. `xyz` v metroch, `rpy` v radiánoch."""
+    """A fixed offset of the joint from its parent. `xyz` in metres, `rpy` in radians."""
 
     xyz: Vec3Spec = (0.0, 0.0, 0.0)
     rpy: Vec3Spec = (0.0, 0.0, 0.0)
 
 
 class JointSpec(StrictModel):
-    """Jeden stupeň voľnosti."""
+    """One degree of freedom."""
 
     name: str = Field(min_length=1)
-    parent: str = Field(min_length=1, description="stabilná cesta uzla assembly")
+    parent: str = Field(min_length=1, description="a stable assembly node path")
     child: str = Field(min_length=1)
     type: Literal["prismatic", "revolute", "fixed"]
     axis: Vec3Spec = (0.0, 0.0, 1.0)
@@ -84,12 +86,12 @@ class JointSpec(StrictModel):
     @classmethod
     def _axis_must_be_nonzero(cls, value: tuple[float, float, float]) -> tuple[float, float, float]:
         if all(component == 0.0 for component in value):
-            raise ValueError("axis nesmie byť nulový vektor")
+            raise ValueError("axis must not be a zero vector")
         return value
 
 
 class MachineSpec(StrictModel):
-    """Koreň `machines/*.yaml`."""
+    """The root of `machines/*.yaml`."""
 
     machine: str = Field(min_length=1)
     description: str = ""

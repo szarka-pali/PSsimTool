@@ -1,7 +1,8 @@
-"""Väzba medzi kĺbom a OPC UA nodom.
+"""The binding between a joint and an OPC UA node.
 
-Zámerne oddelené od `domain.machine.Joint`: doména o PLC nevie. Toto je jediné
-miesto, kde sa raw hodnota z PLC prevádza na interné jednotky.
+Deliberately separate from `domain.machine.Joint`: the domain knows nothing about
+the PLC. This is the only place where a raw value from the PLC is converted into
+internal units.
 """
 
 from __future__ import annotations
@@ -11,11 +12,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class JointBinding:
-    """Mapovanie `joint ↔ OPC UA node` vrátane prevodu jednotiek.
+    """The `joint ↔ OPC UA node` mapping, including the unit conversion.
 
-    `node_id` je OPC UA NodeId v textovom tvare (`"ns=2;s=Axes.X.ActPos"`).
-    Prevod je vždy `raw * scale + offset` — toto poradie je zafixované,
-    zmena by ticho rozbila existujúce `machines/*.yaml`.
+    `node_id` is an OPC UA NodeId in text form (`"ns=2;s=Axes.X.ActPos"`).
+    The conversion is always `raw * scale + offset` — this order is fixed, and
+    changing it would silently break existing `machines/*.yaml`.
     """
 
     joint_name: str
@@ -24,30 +25,30 @@ class JointBinding:
     offset: float = 0.0
 
     def to_internal(self, raw_value: float) -> float:
-        """Prevedie hodnotu z jednotiek PLC na metre / radiány."""
+        """Convert a value from PLC units into metres / radians."""
         return raw_value * self.scale + self.offset
 
 
 @dataclass(frozen=True, slots=True)
 class SourceSettings:
-    """Nastavenia pripojenia a časovania zdroja dát.
+    """Connection and timing settings of a data source.
 
-    `endpoint` je tu prítomný len pre lokálny mock. Reálne endpointy patria
-    do prostredia (`PSSIM_OPCUA_ENDPOINT`) — `machines/*.yaml` je verzovaný.
+    `endpoint` is present here only for a local mock. Real endpoints belong in
+    the environment (`PSSIM_OPCUA_ENDPOINT`) — `machines/*.yaml` is versioned.
     """
 
     endpoint: str
     publishing_interval_ms: int = 50
     stale_after_s: float = 1.0
     render_delay_ms: int | None = None
-    """Ak `None`, počíta sa ako 2× revidovaný publishing interval. Viď R5."""
+    """If `None`, computed as 2× the revised publishing interval. See R5."""
 
     def effective_render_delay_s(self, revised_interval_ms: int | None = None) -> float:
-        """Spozdenie vzorkovania v sekundách.
+        """The sampling delay in seconds.
 
-        Ak nie je zadané explicitne, použije sa 2× interval, ktorý server naozaj
-        priznal (nie ten, o ktorý sme žiadali). Dvojnásobok preto, aby sa
-        interpolovalo medzi dvoma známymi bodmi, nie extrapolovalo.
+        When not given explicitly, 2× the interval the server actually granted is
+        used (not the one we asked for). Twice, so that it interpolates between
+        two known points rather than extrapolating.
         """
         if self.render_delay_ms is not None:
             return self.render_delay_ms / 1000.0

@@ -1,8 +1,8 @@
-"""Konfiguračná vrstva — YAML schéma definície stroja a jej preklad do doménového modelu.
+"""The configuration layer — the YAML machine definition schema and its translation into the domain model.
 
-Toto je hranica systému: tu sa validuje vstup a tu (a len tu) sa prevádzajú jednotky
-z PLC a CAD na interné metre a radiány. Doména za touto hranicou predpokladá,
-že dáta sú platné.
+This is a system boundary: input is validated here, and here (and only here) units
+from the PLC and from CAD are converted into internal metres and radians. Beyond
+this boundary the domain assumes the data is valid.
 """
 
 from pssim.config.binding import JointBinding, SourceSettings

@@ -1,9 +1,10 @@
-"""Stavba scény z definície stroja a naimportovanej geometrie.
+"""Building the scene from a machine definition and the imported geometry.
 
-Kľúčové rozhodnutie tejto vrstvy: rozdelenie geometrie na **statickú** a **pohyblivú**.
-Statickú možno spojiť (`flattenStrong`) do jedného Geomu, pohyblivá musí zostať
-v samostatných `NodePath`. Assembly z praxe má stovky až tisíce dielov a bez tohto
-rozdelenia je počet draw callov neúnosný. Viď docs/architecture.md, sekcia Výkon.
+The key decision of this layer: splitting the geometry into **static** and **moving**. The
+static part can be merged (`flattenStrong`) into a single Geom; the moving part has to stay
+in separate `NodePath`s. A real-world assembly has hundreds to thousands of parts and
+without this split the number of draw calls is unaffordable. See docs/architecture.md, the
+Performance section.
 """
 
 from __future__ import annotations
@@ -17,20 +18,20 @@ from pssim.domain.machine import Machine
 
 @dataclass(frozen=True, slots=True)
 class ScenePlan:
-    """Plán scény: ktoré uzly sú pohyblivé a ktoré sa dajú spojiť.
+    """The scene plan: which nodes are moving and which can be merged.
 
-    Čistá dátová štruktúra bez Panda3D — preto sa dá celý plán otestovať
-    v `tests/unit/` bez otvorenia okna.
+    A pure data structure with no Panda3D — which is why the whole plan can be tested in
+    `tests/unit/` without opening a window.
     """
 
     moving_nodes: tuple[str, ...]
-    """Uzly riadené kĺbom. Každý dostane vlastný NodePath."""
+    """Nodes driven by a joint. Each gets its own NodePath."""
 
     static_nodes: tuple[str, ...]
-    """Uzly bez pohybu a bez pohyblivého predka. Dajú sa flattenovať."""
+    """Nodes with no movement and no moving ancestor. These can be flattened."""
 
     joint_to_node: dict[str, str]
-    """Mapovanie názov kĺbu → cesta uzla, ktorý sa má hýbať (`joint.child`)."""
+    """The mapping from a joint name to the path of the node that should move (`joint.child`)."""
 
     @property
     def flattenable_count(self) -> int:
@@ -38,15 +39,15 @@ class ScenePlan:
 
 
 def plan_scene(machine: Machine, assembly: CadAssembly) -> ScenePlan:
-    """Rozhodne, ktoré uzly sú pohyblivé.
+    """Decide which nodes are moving.
 
-    Pohyblivý je uzol, ktorý je `child` niektorého nefixovaného kĺbu, **a všetci
-    jeho potomkovia** — tí sa hýbu spolu s ním, takže sa nesmú flattenovať
-    do statickej geometrie.
+    A node is moving when it is the `child` of some non-fixed joint, **and so are all its
+    descendants** — they move together with it, so they must not be flattened into the
+    static geometry.
 
-    Vyhadzuje `ConfigError`, ak uzol z `machines/*.yaml` v assembly neexistuje.
-    Chybová správa obsahuje podobné dostupné cesty — bez toho je nepoužiteľná,
-    lebo assembly má tisíc uzlov.
+    Raises `ConfigError` if a node from `machines/*.yaml` does not exist in the assembly.
+    The error message contains the similar available paths — without them it is useless,
+    because an assembly has a thousand nodes.
     """
     known = assembly.by_path
     joint_to_node: dict[str, str] = {}

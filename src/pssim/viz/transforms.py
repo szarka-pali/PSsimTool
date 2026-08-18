@@ -1,12 +1,12 @@
-"""Prevod doménových transformácií na to, čo chce Panda3D.
+"""Converting domain transformations into what Panda3D wants.
 
-Modul je zámerne **čistý** (numpy, žiadny Panda3D), aby sa konvencia otočení
-dala overiť proti rotačnej matici v `tests/unit/`. Konvencie sú tá časť 3D kódu,
-kde sa chyba prejaví ako „diel je otočený nejako divne" a ladí sa najhoršie.
+The module is deliberately **pure** (numpy, no Panda3D), so the rotation convention can be
+checked against a rotation matrix in `tests/unit/`. Conventions are the part of 3D code
+where a mistake shows up as "the part is turned somehow oddly" and is the worst to debug.
 
-Konvencia `domain.machine.Transform.rpy`: **intrinsic XYZ** — najprv otočenie
-okolo X, potom okolo nového Y, nakoniec okolo nového Z. To je to, čo dáva
-`gp_Trsf.GetRotation().GetEulerAngles(gp_Intrinsic_XYZ)` pri importe STEP.
+The convention of `domain.machine.Transform.rpy`: **intrinsic XYZ** — first a rotation
+about X, then about the new Y, finally about the new Z. That is what
+`gp_Trsf.GetRotation().GetEulerAngles(gp_Intrinsic_XYZ)` gives when importing STEP.
 """
 
 from __future__ import annotations
@@ -15,17 +15,17 @@ import numpy as np
 
 from pssim.domain.machine import Vec3
 
-#: Kvaternión ako (w, x, y, z) — rovnaké poradie ako konštruktor `LQuaternion`.
+#: A quaternion as (w, x, y, z) — the same order as the `LQuaternion` constructor.
 Quaternion = tuple[float, float, float, float]
 
 IDENTITY_QUAT: Quaternion = (1.0, 0.0, 0.0, 0.0)
 
 
 def axis_angle_to_quat(axis: Vec3, angle_rad: float) -> Quaternion:
-    """Kvaternión otočenia okolo osi. Os sa normalizuje.
+    """The quaternion of a rotation about an axis. The axis is normalised.
 
-    Nulová os dá identitu — kĺb s nulovou osou je síce `ConfigError` pri načítaní,
-    ale scéna nesmie spadnúť ani keď sa sem taká hodnota nejako dostane.
+    A zero axis gives the identity — a joint with a zero axis is a `ConfigError` at load
+    time, but the scene must not fall over even if such a value somehow gets here.
     """
     vector = np.asarray(axis, dtype=np.float64)
     length = float(np.linalg.norm(vector))
@@ -44,7 +44,7 @@ def axis_angle_to_quat(axis: Vec3, angle_rad: float) -> Quaternion:
 
 
 def multiply_quat(first: Quaternion, second: Quaternion) -> Quaternion:
-    """Hamiltonov súčin. Výsledok zodpovedá matici `R(first) @ R(second)`."""
+    """The Hamilton product. The result matches the matrix `R(first) @ R(second)`."""
     w1, x1, y1, z1 = first
     w2, x2, y2, z2 = second
     return (
@@ -56,9 +56,9 @@ def multiply_quat(first: Quaternion, second: Quaternion) -> Quaternion:
 
 
 def rpy_to_quat(rpy: Vec3) -> Quaternion:
-    """Prevedie intrinsic XYZ uhly na kvaternión.
+    """Convert intrinsic XYZ angles into a quaternion.
 
-    Zodpovedá matici ``Rx(roll) @ Ry(pitch) @ Rz(yaw)``.
+    Matches the matrix ``Rx(roll) @ Ry(pitch) @ Rz(yaw)``.
     """
     roll, pitch, yaw = rpy
     return multiply_quat(
@@ -71,9 +71,9 @@ def rpy_to_quat(rpy: Vec3) -> Quaternion:
 
 
 def quat_to_matrix(quat: Quaternion) -> np.ndarray:
-    """Rotačná matica `3x3` pre konvenciu stĺpcových vektorov (`v' = R @ v`).
+    """The `3x3` rotation matrix for the column-vector convention (`v' = R @ v`).
 
-    Slúži na overenie konvencií v testoch a na diagnostiku.
+    Used for checking the conventions in tests and for diagnosis.
     """
     w, x, y, z = quat
     return np.array(
@@ -87,6 +87,6 @@ def quat_to_matrix(quat: Quaternion) -> np.ndarray:
 
 
 def rotate_point(quat: Quaternion, point: Vec3) -> Vec3:
-    """Otočí bod kvaterniónom. Referenčná implementácia pre testy."""
+    """Rotate a point by a quaternion. The reference implementation for tests."""
     rotated = quat_to_matrix(quat) @ np.asarray(point, dtype=np.float64)
     return (float(rotated[0]), float(rotated[1]), float(rotated[2]))

@@ -1,13 +1,13 @@
-"""Kartézsky kríž v počiatku súradníc.
+"""The cartesian cross at the origin of the coordinate system.
 
-Ukazuje, kde je nula modelu a ako je scéna natočená — to isté, čo robí zobrazenie
-počiatku v SolidWorks. Bez neho sa pri otáčaní ľahko stratí prehľad, ktorý smer
-je ktorý, hlavne pri symetrických dieloch.
+It shows where the model's zero is and how the scene is oriented — the same thing the
+origin display does in SolidWorks. Without it, it is easy to lose track of which
+direction is which while rotating, especially with symmetrical parts.
 
-Farby sú konvencia, ktorú používa väčšina CAD nástrojov:
-**X červená, Y zelená, Z modrá.**
+The colours are the convention most CAD tools use:
+**X red, Y green, Z blue.**
 
-Rozloženie segmentov je čistá funkcia — dá sa otestovať bez Panda3D.
+The layout of the segments is a pure function — it can be tested without Panda3D.
 """
 
 from __future__ import annotations
@@ -31,14 +31,14 @@ AXIS_DIRECTIONS: Final[dict[str, Vec3]] = {
     "Z": (0.0, 0.0, 1.0),
 }
 
-#: Kríž má byť čitateľný, ale nesmie prekričať model. Štvrtina jeho polomeru
-#: je kompromis, ktorý funguje od jedného dielu po celú linku.
+#: The cross should be legible without shouting over the model. A quarter of its radius
+#: is a compromise that works from a single part up to a whole production line.
 DEFAULT_SCALE: Final = 0.25
 
-#: Aj pri prázdnej scéne musí byť kríž niečo vidieť.
+#: Even in an empty scene the cross has to be visible.
 MIN_LENGTH_M: Final = 0.01
 
-#: Ako ďaleko za koncom osi sedí popisok, ako podiel dĺžky osi.
+#: How far past the end of an axis its label sits, as a fraction of the axis length.
 LABEL_OFFSET: Final = 1.12
 
 LINE_THICKNESS_PX: Final = 2.0
@@ -46,7 +46,7 @@ LINE_THICKNESS_PX: Final = 2.0
 
 @dataclass(frozen=True, slots=True)
 class AxisSegment:
-    """Jedna os kríža: úsečka z počiatku a popisok na jej konci."""
+    """One axis of the cross: a line from the origin and a label at its end."""
 
     name: str
     start: Vec3
@@ -56,19 +56,20 @@ class AxisSegment:
 
 
 def axis_length_for(scene_radius_m: float, scale: float = DEFAULT_SCALE) -> float:
-    """Dĺžka ramena kríža pre scénu daného polomeru.
+    """The arm length of the cross for a scene of the given radius.
 
-    Kríž sa škáluje s modelom, nie je fixný: na 0,2 m dieli by meter dlhá os
-    zaplnila obraz, na 20 m linke by centimetrová nebola vidieť.
+    The cross scales with the model rather than being fixed: on a 0.2 m part a
+    metre-long axis would fill the view, and on a 20 m line a centimetre-long one would
+    be invisible.
     """
     return max(scene_radius_m * scale, MIN_LENGTH_M)
 
 
 def axis_segments(length_m: float) -> tuple[AxisSegment, ...]:
-    """Tri kladné polosi z počiatku. Čistá funkcia.
+    """The three positive half-axes from the origin. A pure function.
 
-    Záporné polosi sa nekreslia — SolidWorks ich tiež nekreslí a kríž by inak
-    v hustej zostave pôsobil ako šesť náhodných čiar.
+    The negative half-axes are not drawn — SolidWorks does not draw them either, and the
+    cross would otherwise look like six random lines in a dense assembly.
     """
     safe_length = max(length_m, MIN_LENGTH_M)
     segments: list[AxisSegment] = []
@@ -168,7 +169,7 @@ def make_highlight_box(node_path: Any) -> Any | None:
 
 
 def make_axes_node(length_m: float, with_labels: bool = True) -> Any:
-    """Postaví `NodePath` s krížom. Volajúci si ho pripojí, kam potrebuje."""
+    """Build a `NodePath` with the cross. The caller attaches it wherever it is needed."""
     from panda3d.core import LineSegs, NodePath, TextNode
 
     segments = axis_segments(length_m)
@@ -182,8 +183,8 @@ def make_axes_node(length_m: float, with_labels: bool = True) -> Any:
 
     root = NodePath(lines.create())
     root.setName("origin-axes")
-    # Kríž je orientačná pomôcka, nie geometria — osvetlenie by mu menilo farbu
-    # podľa natočenia a červená os by raz bola červená a inokedy hnedá.
+    # The cross is an orientation aid, not geometry — lighting would change its colour
+    # with the viewing angle and the red axis would be red one moment and brown the next.
     root.setLightOff()
 
     if not with_labels:
@@ -197,7 +198,8 @@ def make_axes_node(length_m: float, with_labels: bool = True) -> Any:
         label = root.attachNewNode(text)
         label.setPos(*segment.label_position)
         label.setScale(max(length_m, MIN_LENGTH_M) * 0.25)
-        # Popisok sa vždy otáča k pozorovateľovi, inak by bol z boku nečitateľný.
+        # The label always turns to face the viewer, otherwise it would be illegible
+        # from the side.
         label.setBillboardPointEye()
         label.setLightOff()
 

@@ -1,10 +1,11 @@
-"""Napojenie orbitálnej kamery na myš v Panda3D.
+"""Connecting the orbit camera to the mouse in Panda3D.
 
-Tenká vrstva: číta tlačidlá a pohyb myši, prepočet nechá na čistých funkciách
-z `viz/orbit.py`. Vďaka tomu je tu len to, čo sa bez okna otestovať nedá.
+A thin layer: it reads the buttons and the mouse movement and leaves the computation to
+the pure functions in `viz/orbit.py`. That way this file holds only what cannot be tested
+without a window.
 
-Nahrádza vstavaný trackball (`base.disableMouse()`), ktorý má neintuitívne
-ovládanie a nedá sa mu povedať, okolo čoho má orbitovať.
+It replaces the built-in trackball (`base.disableMouse()`), whose controls are unintuitive
+and which cannot be told what to orbit around.
 """
 
 from __future__ import annotations
@@ -25,14 +26,14 @@ logger = get_logger(__name__)
 
 _TASK_NAME: Final = "pssim-orbit"
 
-#: Panda3D názvy tlačidiel myši → číslo, ktoré chápe `orbit.drag_action`.
+#: Panda3D mouse button names → the number `orbit.drag_action` understands.
 _BUTTONS: Final[dict[str, int]] = {"mouse1": 1, "mouse2": 2, "mouse3": 3}
 
 
 class OrbitController:
-    """Ovláda kameru myšou: otáčanie, posun, priblíženie.
+    """Controls the camera with the mouse: orbit, pan, zoom.
 
-    Väzby tlačidiel sú v `viz.orbit.drag_action` — tam sa aj menia.
+    The button bindings are in `viz.orbit.drag_action` — that is where they get changed.
     """
 
     def __init__(
@@ -48,21 +49,21 @@ class OrbitController:
         self._last_pixel: tuple[float, float] | None = None
         self._enabled = False
 
-    # -- životný cyklus -----------------------------------------------------
+    # -- lifecycle ----------------------------------------------------------
 
     def enable(self) -> None:
-        """Prevezme kameru od vstavaného trackballu a začne počúvať myš."""
+        """Take the camera over from the built-in trackball and start listening to the mouse."""
         if self._enabled:
             return
 
-        # Bez tohto by trackball prepisoval polohu kamery v každom snímku
-        # a naše nastavenie by sa neprejavilo.
+        # Without this the trackball would overwrite the camera position on every frame
+        # and our setting would have no effect.
         self._base.disableMouse()
 
         for name, number in _BUTTONS.items():
             self._base.accept(name, self._on_press, [number])
             self._base.accept(f"{name}-up", self._on_release)
-            # Shift sa v Panda3D hlási ako samostatná udalosť, nie ako príznak.
+            # Panda3D reports Shift as a separate event, not as a flag.
             self._base.accept(f"shift-{name}", self._on_press, [number, True])
 
         self._base.accept("wheel_up", self._on_wheel, [1])
@@ -92,7 +93,7 @@ class OrbitController:
 
     @property
     def action(self) -> DragAction:
-        """Čo sa práve deje s myšou. Užitočné pre HUD a pre testy."""
+        """What the mouse is doing right now. Useful for the HUD and for tests."""
         return self._action
 
     def set_camera(self, camera: OrbitCamera) -> None:
@@ -100,14 +101,14 @@ class OrbitController:
         self.apply()
 
     def frame(self, node_path: Any, margin: float = 1.3) -> None:
-        """Vycentruje kameru na daný podstrom scény.
+        """Centre the camera on the given subtree of the scene.
 
-        Toto je „zobraz mi celý model" po načítaní súboru. Prázdny podstrom
-        (chýbajúca geometria) dostane náhradný polomer, aby scéna nezmizla.
+        This is "show me the whole model" after loading a file. An empty subtree (missing
+        geometry) gets the fallback radius, so the scene does not disappear.
         """
         bounds = node_path.getBounds()
         if bounds.isEmpty() or bounds.getRadius() <= 0.0:
-            logger.warning("scéna nemá rozmery — chýba geometria?")
+            logger.warning("the scene has no dimensions - is the geometry missing?")
             self.set_camera(OrbitCamera.framing((0.0, 0.0, 0.0), 1.0, self._fov_deg, margin))
             return
 
@@ -116,7 +117,7 @@ class OrbitController:
         self.set_camera(
             OrbitCamera.framing((center[0], center[1], center[2]), radius, self._fov_deg, margin)
         )
-        logger.info("kamera vycentrovaná", radius_m=round(radius, 4))
+        logger.info("camera centred", radius_m=round(radius, 4))
 
     def apply(self) -> None:
         """Prenesie stav kamery do Panda3D."""
@@ -131,7 +132,7 @@ class OrbitController:
         self._base.camera.setPos(LPoint3(*self._camera.eye))
         self._base.camera.lookAt(LPoint3(*self._camera.target))
 
-    # -- udalosti myši ------------------------------------------------------
+    # -- mouse events -------------------------------------------------------
 
     def _on_press(self, button: int, shift: bool = False) -> None:
         self._action = drag_action(button, shift=shift)
@@ -146,13 +147,13 @@ class OrbitController:
         self.apply()
 
     def _update(self, _task: Any) -> Any:
-        """Jeden snímok ťahania. Nikdy nesmie vyhodiť — zabilo by to render loop."""
+        """One frame of dragging. Must never raise — that would kill the render loop."""
         from direct.task import Task
 
         try:
             self._drag_step()
         except Exception:
-            logger.exception("chyba v ovládaní kamery, pokračujem")
+            logger.exception("error in the camera control, carrying on")
         return Task.cont
 
     def _drag_step(self) -> None:
@@ -161,8 +162,8 @@ class OrbitController:
 
         current = self._mouse_pixel()
         if current is None:
-            # Kurzor opustil okno — ťahanie sa preruší, aby model neuskočil,
-            # keď sa myš vráti inde.
+            # The cursor left the window — the drag is broken off, so the model does not
+            # jump when the mouse comes back somewhere else.
             self._last_pixel = None
             return
 
@@ -186,13 +187,13 @@ class OrbitController:
         )
         self.apply()
 
-    # -- pomocné ------------------------------------------------------------
+    # -- helpers ------------------------------------------------------------
 
     def _mouse_pixel(self) -> tuple[float, float] | None:
-        """Poloha kurzora v pixeloch, alebo `None` ak je mimo okna.
+        """The cursor position in pixels, or `None` when it is outside the window.
 
-        Panda3D dáva normalizované súradnice `-1..1`; prepočet na pixely
-        potrebujeme preto, aby tempo otáčania nezáviselo od veľkosti okna.
+        Panda3D gives normalised coordinates `-1..1`; we need the conversion to pixels so
+        that the pace of orbiting does not depend on the size of the window.
         """
         watcher = self._base.mouseWatcherNode
         if watcher is None or not watcher.hasMouse():

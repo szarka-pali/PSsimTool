@@ -1,9 +1,9 @@
-"""Panda3D aplikácia — render loop a mapovanie kĺbov na scénu.
+"""The Panda3D application — the render loop and the mapping of joints onto the scene.
 
-Toto je vlákno A. Číta zo `StateStore`, ktorý plní vlákno B (`io/`). Nikdy tu
-nevolaj nič blokujúce ani nič z asyncua.
+This is thread A. It reads from the `StateStore` that thread B (`io/`) fills. Never call
+anything blocking, or anything from asyncua, here.
 
-`viz/` musí fungovať aj bez `ui/` (`pssim run --no-ui`) — na debug a na testy.
+`viz/` must work without `ui/` as well (`pssim run --no-ui`) — for debugging and for tests.
 """
 
 from __future__ import annotations
@@ -42,16 +42,16 @@ def compute_poses(
     values: dict[str, float],
     stale: frozenset[str],
 ) -> dict[str, JointPose]:
-    """Prepočíta polohy všetkých kĺbov zo snapshotu hodnôt.
+    """Recompute the poses of all joints from a snapshot of values.
 
-    Čistá funkcia bez Panda3D — preto sa dá otestovať v `tests/unit/`.
+    A pure function with no Panda3D — which is why it can be tested in `tests/unit/`.
 
-    Kĺb bez hodnoty dostane `rest_pose()`, nie nulu: ak má limity, ktoré nulu
-    neobsahujú, nula by diel umiestnila mimo fyzicky možný rozsah.
-    Zastaraný signál sa **použije** (posledná známa hodnota) — `stale` slúži
-    len na vizuálne označenie, nie na zahodenie dát.
+    A joint with no value gets `rest_pose()`, not zero: if it has limits that do not
+    contain zero, zero would place the part outside the physically possible range.
+    A stale signal **is used** (the last known value) — `stale` serves only to mark it
+    visually, not to discard the data.
     """
-    del stale  # zatiaľ len informatívne, spracuje HUD
+    del stale  # informational for now, the HUD will handle it
     poses: dict[str, JointPose] = {}
     for joint in loaded.machine.joints:
         value = values.get(joint.name)
@@ -60,10 +60,10 @@ def compute_poses(
 
 
 class MachineViewer:
-    """Panda3D `ShowBase` obalený tak, aby sa dal spustiť aj vložiť do Qt.
+    """A Panda3D `ShowBase` wrapped so it can be run standalone or embedded in Qt.
 
-    Trieda je zámerne tenká: všetka logika, ktorá sa dá otestovať bez okna,
-    je mimo nej (`compute_poses`, `plan_scene`).
+    The class is deliberately thin: all the logic that can be tested without a window is
+    outside it (`compute_poses`, `plan_scene`).
     """
 
     def __init__(
@@ -83,7 +83,7 @@ class MachineViewer:
         self._base: Any = None
         self._node_paths: dict[str, Any] = {}
         self._base_transforms: dict[str, tuple[Vec3, Quaternion]] = {}
-        """Poloha uzla podľa CAD assembly. Pohyb kĺbu sa k nej pripočítava."""
+        """The node's placement from the CAD assembly. Joint movement is added on top of it."""
         self._stale_signals: frozenset[str] = frozenset()
         self._scene_root: Any = None
         self._render_delay_s = loaded.source.effective_render_delay_s(
@@ -91,14 +91,14 @@ class MachineViewer:
         )
 
         logger.info(
-            "plán scény",
+            "scene plan",
             moving=len(self._plan.moving_nodes),
             static=len(self._plan.static_nodes),
             render_delay_s=round(self._render_delay_s, 3),
         )
 
     def run(self) -> None:
-        """Otvorí okno a spustí render loop. Blokuje do zatvorenia okna."""
+        """Open the window and run the render loop. Blocks until the window is closed."""
         from direct.showbase.ShowBase import ShowBase
         from panda3d.core import WindowProperties
 
@@ -110,7 +110,7 @@ class MachineViewer:
 
         root = self.build_scene()
         root.reparentTo(self._base.render)
-        # Kamera a svetlá až PO pripojení scény — rámovanie potrebuje jej rozmery.
+        # Camera and lights only AFTER the scene is attached — framing needs its dimensions.
         setup_lights(root)
         setup_camera(self._base, root)
 
@@ -129,48 +129,48 @@ class MachineViewer:
         view: str = DEFAULT_VIEW,
         values: dict[str, float] | None = None,
     ) -> Path:
-        """Vyrenderuje scénu do PNG bez otvorenia okna.
+        """Render the scene into a PNG without opening a window.
 
-        Slúži na overenie, že je stroj naozaj **vidieť** — polohy uzlov sa dajú
-        otestovať headless, ale „prázdne okno" nie. Viď `pssim screenshot`.
+        Serves to verify that the machine can actually **be seen** — node positions can
+        be tested headless, but "an empty window" cannot. See `pssim screenshot`.
         """
         from panda3d.core import Filename
 
         self._base = offscreen_showbase(size)
-        # Alfa musí byť 1.0: bez nej má pozadie alfa 0 a v PNG vyjde priehľadné,
-        # čo väčšina prehliadačov zobrazí ako bielu plochu.
+        # The alpha has to be 1.0: without it the background has alpha 0 and comes out
+        # transparent in the PNG, which most viewers show as a white area.
         self._base.setBackgroundColor(*self._config.background, 1.0)
 
         root = self.build_scene()
         root.reparentTo(self._base.render)
         try:
-            # Hodnoty až po postavení scény — predtým ešte NodePathy neexistujú.
+            # Values only after the scene is built — before that the NodePaths do not exist.
             self.apply_values(values or {})
             setup_lights(root)
             setup_camera(self._base, root, view=view)
 
-            # Dva snímky: prvý alokuje buffery, druhý už kreslí hotovú scénu.
+            # Two frames: the first allocates the buffers, the second draws the finished scene.
             self._base.graphicsEngine.renderFrame()
             self._base.graphicsEngine.renderFrame()
 
             output.parent.mkdir(parents=True, exist_ok=True)
             self._base.win.saveScreenshot(Filename.fromOsSpecific(str(output)))
         finally:
-            # Scéna sa musí odpojiť, inak by sa pri ďalšom renderi v tom istom
-            # procese kreslili oba stroje naraz.
+            # The scene has to be detached, or the next render in the same process would
+            # draw both machines at once.
             root.removeNode()
         return output
 
     def build_scene(self) -> Any:
-        """Poskladá hierarchiu `NodePath` podľa assembly a vráti jej koreň.
+        """Assemble the `NodePath` hierarchy from the assembly and return its root.
 
-        Zámerne **nepotrebuje okno** ani `ShowBase` — koreň si volajúci pripojí
-        kam chce. Vďaka tomu sa dá celá reťaz (cache → scéna → kinematika →
-        poloha dielu) otestovať headless; viď `tests/integration/test_viz_scene.py`.
+        Deliberately **needs no window** and no `ShowBase` — the caller attaches the root
+        wherever they want. That makes the whole chain (cache → scene → kinematics → part
+        position) testable headless; see `tests/integration/test_viz_scene.py`.
 
-        Samotné skladanie robí `viz.scene.build_scene()`, spoločné s prehliadaním
-        obyčajného STEP súboru v UI. Tu sa navyše zapamätajú CAD polohy uzlov,
-        ku ktorým sa pripočítava pohyb kĺbov.
+        The assembling itself is done by `viz.scene.build_scene()`, shared with browsing a
+        plain STEP file in the UI. What happens additionally here is remembering the CAD
+        placements of the nodes, on top of which joint movement is added.
         """
         built = build_scene(
             self._assembly,
@@ -184,10 +184,10 @@ class MachineViewer:
         return built.root
 
     def apply_values(self, values: dict[str, float]) -> None:
-        """Nastaví polohy kĺbov podľa zadaných hodnôt.
+        """Set the joint poses according to the given values.
 
-        Verejné kvôli testom a budúcemu UI (ručné „posuň os"). Za behu to volá
-        `_apply_snapshot()` s hodnotami zo `StateStore`.
+        Public for the tests and for a future UI (a manual "move the axis"). At run time
+        `_apply_snapshot()` calls it with the values from the `StateStore`.
         """
         from panda3d.core import LQuaternion
 
@@ -197,8 +197,9 @@ class MachineViewer:
             if node_path is None:
                 continue
 
-            # Pohyb kĺbu sa pridáva NA VRCH polohy z CAD assembly. Bez toho by
-            # diel pri prvej hodnote z PLC skočil do počiatku rodiča.
+            # Joint movement is added ON TOP of the placement from the CAD assembly.
+            # Without that, the part would jump to its parent's origin on the first value
+            # from the PLC.
             base_xyz, base_quat = self._base_transforms[self._plan.joint_to_node[joint_name]]
             node_path.setPos(
                 base_xyz[0] + pose.translation[0],
@@ -216,11 +217,11 @@ class MachineViewer:
 
     @staticmethod
     def _apply_transform(node_path: Any, transform: Transform) -> None:
-        """Nastaví pevnú transformáciu uzla.
+        """Set the fixed transformation of a node.
 
-        Rotácia ide cez kvaternión, nie cez HPR: prevod rpy → HPR by znamenal
-        hádať konvenciu poradia osí Panda3D, kým `rpy_to_quat` je overený
-        proti rotačnej matici v `tests/unit/viz/test_transforms.py`.
+        The rotation goes through a quaternion, not through HPR: converting rpy → HPR
+        would mean guessing Panda3D's axis order convention, whereas `rpy_to_quat` is
+        verified against a rotation matrix in `tests/unit/viz/test_transforms.py`.
         """
         from panda3d.core import LQuaternion
 
@@ -228,22 +229,22 @@ class MachineViewer:
         node_path.setQuat(LQuaternion(*rpy_to_quat(transform.rpy)))
 
     def _update_task(self, _task: Any) -> Any:
-        """Jeden frame: snapshot → kinematika → scéna.
+        """One frame: snapshot → kinematics → scene.
 
-        Nikdy nesmie vyhodiť výnimku — pád tejto úlohy znamená zamrznutú scénu.
+        Must never raise an exception — this task dying means a frozen scene.
         """
         from direct.task import Task
 
         try:
             self._apply_snapshot()
         except Exception:
-            logger.exception("chyba v update tasku, pokračujem")
+            logger.exception("error in the update task, carrying on")
         return Task.cont
 
     def _apply_snapshot(self) -> None:
         store = self._source.store
-        # Renderujeme voči času dát, nie voči lokálnym hodinám: pri replay
-        # aj pri zaostávajúcom spojení je to jediná zmysluplná referencia.
+        # We render against the time of the data, not against the local clock: on replay
+        # and on a lagging connection that is the only meaningful reference.
         latest = store.latest_time()
         if latest is None:
             return
@@ -260,20 +261,22 @@ class MachineViewer:
 
     @property
     def scene_root(self) -> Any:
-        """Koreň scény stroja. `None`, kým nebehalo `build_scene()`."""
+        """The root of the machine's scene. `None` until `build_scene()` has run."""
         return self._scene_root
 
     def node_path(self, path: str) -> Any | None:
-        """`NodePath` uzla podľa jeho stabilnej cesty, alebo `None`.
+        """The `NodePath` of a node by its stable path, or `None`.
 
-        Slúži testom a budúcemu UI (výber dielu v strome → zvýraznenie v scéne).
+        Serves the tests and a future UI (selecting a part in the tree → highlighting it
+        in the scene).
         """
         return self._node_paths.get(path)
 
     @property
     def stale_signals(self) -> frozenset[str]:
-        """Signály, ktoré prestali chodiť. Scéna ich zobrazuje poslednou známou hodnotou.
+        """The signals that have stopped arriving. The scene shows them at their last known value.
 
-        Slúži HUD-u na vizuálne označenie — dáta sa nezahadzujú, len sa označia.
+        Serves the HUD for marking them visually — the data is not discarded, only
+        flagged.
         """
         return self._stale_signals

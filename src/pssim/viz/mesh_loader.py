@@ -1,11 +1,12 @@
-"""Prevod `cad.mesh.MeshData` na Panda3D `GeomNode`.
+"""Converting `cad.mesh.MeshData` into a Panda3D `GeomNode`.
 
-Toto je jediné miesto, kde sa neutrálny formát z cache stretáva s Panda3D.
-`cad/` o Panda3D nevie a `domain/` už vôbec — viď docs/architecture.md.
+This is the only place where the neutral format from the cache meets Panda3D. `cad/` knows
+nothing about Panda3D and `domain/` even less — see docs/architecture.md.
 
-Dáta sa do bufferov kopírujú **naraz cez `copyDataFrom`**, nie po riadkoch cez
-`GeomVertexWriter`. Pri zostave s miliónom trojuholníkov je rozdiel medzi
-sekundami a minútami; práve preto je formát cache numpy pole a nie textový.
+The data is copied into the buffers **in one go through `copyDataFrom`**, not row by row
+through `GeomVertexWriter`. On an assembly with a million triangles the difference is
+between seconds and minutes; that is exactly why the cache format is a numpy array and not
+text.
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ logger = get_logger(__name__)
 
 
 def geom_node_from_mesh(mesh: MeshData, name: str) -> Any:
-    """Postaví `GeomNode` z meshu.
+    """Build a `GeomNode` from a mesh.
 
-    Prázdny mesh dá prázdny `GeomNode` — volajúci ho môže pripojiť do scény
-    bez ďalšej kontroly.
+    An empty mesh gives an empty `GeomNode` — the caller can attach it to the scene
+    without a further check.
     """
     from panda3d.core import (
         Geom,
@@ -40,15 +41,15 @@ def geom_node_from_mesh(mesh: MeshData, name: str) -> Any:
     if mesh.is_empty:
         return node
 
-    # V3n3 = pozícia + normála, oboje 3× float32, prekladané v jednom poli.
+    # V3n3 = position + normal, both 3× float32, interleaved in one array.
     vertex_data = GeomVertexData(name, GeomVertexFormat.getV3n3(), Geom.UHStatic)
     vertex_data.setNumRows(mesh.vertex_count)
     interleaved = np.hstack([mesh.vertices, mesh.normals]).astype(np.float32)
     vertex_data.modifyArray(0).modifyHandle().copyDataFrom(interleaved.tobytes())
 
     primitive = GeomTriangles(Geom.UHStatic)
-    # Bez NTUint32 sa indexy orežú na 16 bitov a diel nad 65 535 vrcholov
-    # sa rozsype na nezmyselnú spleť trojuholníkov.
+    # Without NTUint32 the indices are truncated to 16 bits and a part with more than
+    # 65 535 vertices falls apart into a meaningless tangle of triangles.
     primitive.setIndexType(GeomEnums.NTUint32)
     primitive.modifyVertices().modifyHandle().copyDataFrom(
         np.ascontiguousarray(mesh.indices, dtype=np.uint32).tobytes()
@@ -62,19 +63,19 @@ def geom_node_from_mesh(mesh: MeshData, name: str) -> Any:
 
 
 def load_geom_node(mesh_path: str | Path, name: str) -> Any | None:
-    """Načíta mesh z cache a postaví z neho `GeomNode`.
+    """Read a mesh from the cache and build a `GeomNode` from it.
 
-    Vracia `None`, ak súbor chýba alebo je poškodený. Chýbajúci mesh **nesmie
-    zhodiť štart aplikácie** — zvyšok stroja sa má zobraziť a používateľ dostane
-    varovanie v logu, nie traceback.
+    Returns `None` if the file is missing or damaged. A missing mesh **must not bring down
+    application startup** — the rest of the machine should be displayed and the user gets a
+    warning in the log, not a traceback.
     """
     path = Path(mesh_path)
     if not path.is_file():
-        logger.warning("mesh chýba v cache", node=name, file=str(path))
+        logger.warning("mesh missing from the cache", node=name, file=str(path))
         return None
 
     try:
         return geom_node_from_mesh(read_mesh(path), name)
     except Exception:
-        logger.exception("mesh sa nedá načítať, preskakujem", node=name, file=str(path))
+        logger.exception("mesh cannot be read, skipping it", node=name, file=str(path))
         return None

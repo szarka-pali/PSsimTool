@@ -1,11 +1,11 @@
-"""Stavba hierarchie `NodePath` z cache.
+"""Building the `NodePath` hierarchy from the cache.
 
-Vyčlenené z `viz/app.py`, lebo scénu treba postaviť aj **bez definície stroja** —
-pri obyčajnom otvorení STEP súboru v UI žiadne `machines/*.yaml` neexistuje
-a žiadne kĺby nie sú.
+Split out of `viz/app.py` because the scene also has to be built **without a machine
+definition** — when simply opening a STEP file in the UI there is no `machines/*.yaml` and
+there are no joints.
 
-Nepotrebuje okno ani `ShowBase`: vracia odpojený koreň, ktorý si volajúci
-pripojí, kam chce. Vďaka tomu sa dá testovať headless.
+It needs neither a window nor a `ShowBase`: it returns a detached root that the caller
+attaches wherever they want. That makes it testable headless.
 """
 
 from __future__ import annotations
@@ -25,19 +25,19 @@ logger = get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class BuiltScene:
-    """Postavená scéna a to, čo o nej treba vedieť ďalej."""
+    """The built scene and what needs to be known about it afterwards."""
 
     root: Any
-    """Koreňový `NodePath`. Nie je pripojený na `render` — spraví to volajúci."""
+    """The root `NodePath`. It is not attached to `render` — the caller does that."""
 
     node_paths: dict[str, Any] = field(default_factory=dict)
-    """Mapovanie stabilná cesta uzla → `NodePath`."""
+    """The mapping from a node's stable path to its `NodePath`."""
 
     base_transforms: dict[str, tuple[Vec3, Quaternion]] = field(default_factory=dict)
-    """Poloha uzla podľa CAD. Pohyb kĺbu sa k nej pripočítava, viď R2c."""
+    """The node's placement from CAD. Joint movement is added on top of it, see R2c."""
 
     missing_meshes: int = 0
-    """Počet uzlov, ktorých geometria v cache chýbala."""
+    """How many nodes had geometry missing from the cache."""
 
     @property
     def is_empty(self) -> bool:
@@ -50,11 +50,11 @@ def build_scene(
     name: str = "model",
     flatten: frozenset[str] = frozenset(),
 ) -> BuiltScene:
-    """Poskladá scénu podľa assembly a načíta geometriu z cache.
+    """Assemble the scene from the assembly and load the geometry from the cache.
 
-    `flatten` sú cesty uzlov, ktoré sa smú spojiť do jedného `Geom` — typicky
-    statické diely. Pohyblivé uzly sa flattenovať nesmú, prišli by o vlastnú
-    transformáciu.
+    `flatten` holds the paths of the nodes that may be merged into a single `Geom` —
+    typically the static parts. Moving nodes must not be flattened, they would lose their
+    own transformation.
     """
     from panda3d.core import NodePath
 
@@ -63,8 +63,8 @@ def build_scene(
     base_transforms: dict[str, tuple[Vec3, Quaternion]] = {}
     missing_meshes = 0
 
-    # Poradie rodič-pred-potomkom je POVINNÉ: rodiča hľadáme medzi už
-    # vytvorenými uzlami a pri opačnom poradí by strom vyšiel plochý.
+    # The parent-before-child order is MANDATORY: the parent is looked up among the nodes
+    # already created, and in the opposite order the tree would come out flat.
     for node in assembly.nodes_parents_first:
         parent = _parent_of(node.path, node_paths, root)
         node_path = parent.attachNewNode(node.name)
@@ -83,7 +83,7 @@ def build_scene(
 
     if missing_meshes:
         logger.warning(
-            "časť geometrie chýba — spusti `pssim import-step`",
+            "some geometry is missing - run `pssim import-step`",
             missing=missing_meshes,
             total=len(assembly.nodes),
         )
@@ -109,11 +109,11 @@ def _parent_of(path: str, node_paths: dict[str, Any], root: Any) -> Any:
 
 
 def _apply_transform(node_path: Any, transform: Transform) -> None:
-    """Nastaví pevnú transformáciu uzla.
+    """Set the fixed transformation of a node.
 
-    Rotácia ide cez kvaternión, nie cez HPR: prevod rpy → HPR by znamenal hádať
-    konvenciu poradia osí Panda3D, kým `rpy_to_quat` je overený proti rotačnej
-    matici v `tests/unit/viz/test_transforms.py`.
+    The rotation goes through a quaternion, not through HPR: converting rpy → HPR would
+    mean guessing Panda3D's axis order convention, whereas `rpy_to_quat` is verified
+    against a rotation matrix in `tests/unit/viz/test_transforms.py`.
     """
     from panda3d.core import LQuaternion
 

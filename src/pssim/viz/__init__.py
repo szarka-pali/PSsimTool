@@ -1,9 +1,9 @@
-"""Panda3D vizualizácia.
+"""Panda3D visualisation.
 
-Panda3D typy (`NodePath`, `LVector3`, `LQuaternion`, `Geom`) sa nesmú objaviť
-v signatúrach mimo tohto balíka. Doména vracia `JointPose` (os + uhol / posun)
-a `viz/` si to preloží.
+Panda3D types (`NodePath`, `LVector3`, `LQuaternion`, `Geom`) must not appear in
+signatures outside this package. The domain returns a `JointPose` (axis + angle /
+translation) and `viz/` translates it.
 
-Import `panda3d` je ťažký a vyžaduje grafický kontext — celý balík sa importuje
-až v `cli.run`, nikdy na module level inde.
+Importing `panda3d` is heavy and requires a graphics context — the whole package is
+imported in `cli.run`, never at module level anywhere else.
 """

@@ -1,11 +1,12 @@
-"""Kamera a osvetlenie scény.
+"""The scene camera and lighting.
 
-Oddelené od `app.py`, lebo je to jediná časť vizualizácie, ktorá musí poznať
-**mierku scény**. Stroje sú v metroch a bývajú od 0,1 m (jeden diel) po 20 m
-(linka), zatiaľ čo Panda3D má default near clip **1.0** a kameru v počiatku.
-Pri malom stroji to znamená prázdne okno: celý model je vnútri near roviny.
+Separated from `app.py` because it is the only part of the visualisation that has to know
+the **scale of the scene**. Machines are in metres and run from 0.1 m (a single part) to
+20 m (a line), while Panda3D has a default near clip of **1.0** and the camera at the
+origin. On a small machine that means an empty window: the whole model is inside the near
+plane.
 
-Výpočet vzdialenosti kamery je čistá funkcia, aby sa dal otestovať bez okna.
+Computing the camera distance is a pure function, so it can be tested without a window.
 """
 
 from __future__ import annotations
@@ -31,18 +32,19 @@ __all__ = [
 
 DEFAULT_FOV_DEG: Final = 40.0
 
-#: Koľkonásobok polomeru scény necháme okolo modelu. 1.0 = model presne vyplní
-#: záber; viac dá odstup, aby bolo vidieť aj pohyb osí mimo kľudovej polohy.
+#: How many times the scene radius we leave around the model. 1.0 = the model exactly
+#: fills the view; more gives clearance, so movement of the axes away from the rest
+#: position stays visible.
 FRAMING_MARGIN: Final = 1.6
 
-#: Náhradný polomer, keď je scéna prázdna alebo bez hraníc (chýbajúca geometria).
+#: The fallback radius when the scene is empty or has no bounds (missing geometry).
 FALLBACK_RADIUS_M: Final = 1.0
 
 
 def frame_distance(radius_m: float, fov_deg: float = DEFAULT_FOV_DEG) -> float:
-    """Vzdialenosť kamery, pri ktorej guľa daného polomeru vyplní záber.
+    """The camera distance at which a sphere of the given radius fills the view.
 
-    Čistá funkcia — testuje sa bez Panda3D.
+    A pure function — tested without Panda3D.
     """
     if radius_m <= 0.0:
         radius_m = FALLBACK_RADIUS_M
@@ -51,10 +53,10 @@ def frame_distance(radius_m: float, fov_deg: float = DEFAULT_FOV_DEG) -> float:
 
 
 def clip_planes(radius_m: float) -> tuple[float, float]:
-    """Near a far rovina odvodené od veľkosti scény.
+    """The near and far planes, derived from the size of the scene.
 
-    Fixné hodnoty tu nefungujú: default near 1.0 oreže celý 0,2 m diel,
-    zatiaľ čo near 0.001 na 20 m linke rozbije presnosť depth bufferu.
+    Fixed values do not work here: the default near of 1.0 clips a whole 0.2 m part,
+    while a near of 0.001 on a 20 m line destroys the precision of the depth buffer.
     """
     if radius_m <= 0.0:
         radius_m = FALLBACK_RADIUS_M
@@ -62,22 +64,22 @@ def clip_planes(radius_m: float) -> tuple[float, float]:
 
 
 def scene_radius(root: Any) -> tuple[Any, float]:
-    """Stred a polomer scény. Prázdna scéna dá počiatok a náhradný polomer."""
+    """The centre and radius of the scene. An empty scene gives the origin and the fallback radius."""
     from panda3d.core import LPoint3
 
     bounds = root.getBounds()
     if bounds.isEmpty() or bounds.getRadius() <= 0.0:
-        logger.warning("scéna nemá rozmery — chýba geometria?")
+        logger.warning("the scene has no dimensions - is the geometry missing?")
         return LPoint3(0.0, 0.0, 0.0), FALLBACK_RADIUS_M
     return bounds.getCenter(), float(bounds.getRadius())
 
 
 def view_direction(view: str) -> tuple[float, float, float]:
-    """Jednotkový vektor od stredu modelu ku kamere pre daný štandardný pohľad.
+    """The unit vector from the centre of the model towards the camera for a standard view.
 
-    Odvodené z `viz.orbit.STANDARD_VIEWS`, ktoré sú **jediný zdroj pravdy** —
-    definícia „čo je čelný pohľad" nesmie existovať na dvoch miestach, inak
-    sa interaktívna kamera a `pssim screenshot` časom rozídu.
+    Derived from `viz.orbit.STANDARD_VIEWS`, which is the **single source of truth** —
+    the definition of "what the front view is" must not exist in two places, or the
+    interactive camera and `pssim screenshot` will drift apart over time.
     """
     azimuth, elevation = standard_view(view)
     horizontal = math.cos(elevation)
@@ -94,13 +96,13 @@ def setup_camera(
     fov_deg: float = DEFAULT_FOV_DEG,
     view: str = DEFAULT_VIEW,
 ) -> None:
-    """Nastaví kameru tak, aby bol stroj celý v zábere.
+    """Set the camera so the whole machine is in view.
 
-    Kamera sa nastavuje **priamo** a trackball sa k nej až potom dosynchronizuje.
-    Opačné poradie (nastaviť len trackball) funguje v okne, ale nie pri renderi
-    do súboru: trackball prenáša transformáciu do kamery cez data graph, ktorý
-    `graphicsEngine.renderFrame()` sám o sebe nepretraverzuje, takže kamera
-    zostane v počiatku a obrázok vyjde prázdny.
+    The camera is set **directly** and the trackball is synchronised to it afterwards.
+    The other order (setting only the trackball) works in a window but not when rendering
+    to a file: the trackball feeds its transformation into the camera through the data
+    graph, which `graphicsEngine.renderFrame()` does not traverse on its own, so the
+    camera stays at the origin and the image comes out empty.
     """
     from panda3d.core import LPoint3, LVector3
 
@@ -120,7 +122,7 @@ def setup_camera(
     _sync_trackball(base, center)
 
     logger.info(
-        "kamera nastavená",
+        "camera set",
         radius_m=round(radius, 3),
         near_m=round(near, 4),
         far_m=round(far, 1),
@@ -129,15 +131,16 @@ def setup_camera(
 
 
 def _sync_trackball(base: Any, center: Any) -> None:
-    """Nastaví trackball tak, aby myš pokračovala z aktuálneho pohľadu kamery.
+    """Set the trackball so the mouse continues from the camera's current view.
 
-    Bez tohto by prvý snímok v okne prepísal kameru trackballom a záber
-    by sa vrátil do počiatku. Trackball drží **inverznú** transformáciu kamery.
+    Without this, the first frame in the window would overwrite the camera from the
+    trackball and the view would jump back to the origin. The trackball holds the
+    **inverse** of the camera transformation.
     """
     from panda3d.core import LMatrix4, LPoint3
 
     trackball = getattr(base, "trackball", None)
-    if trackball is None:  # offscreen render nemá myš, a teda ani trackball
+    if trackball is None:  # an offscreen render has no mouse, and so no trackball
         return
 
     inverse = LMatrix4()
@@ -147,15 +150,15 @@ def _sync_trackball(base: Any, center: Any) -> None:
 
 
 def setup_lights(target: Any) -> None:
-    """Základné osvetlenie pripojené na daný podstrom.
+    """Basic lighting attached to the given subtree.
 
-    Bez svetiel Panda3D renderuje plochú neosvetlenú farbu — model je vidieť,
-    ale ako siluetu bez tvaru. Dve smerové svetlá z rôznych strán plus ambient
-    stačia na to, aby boli hrany dielov čitateľné.
+    Without lights Panda3D renders a flat unlit colour — the model is visible, but as a
+    silhouette with no shape. Two directional lights from different sides plus an ambient
+    are enough to make the edges of the parts readable.
 
-    Svetlá visia na **koreni stroja**, nie na `render`. Vďaka tomu zmiznú spolu
-    so scénou; keby viseli na `render`, pri opakovanom renderi v jednom procese
-    by sa hromadili a obraz by postupne vybielil.
+    The lights hang on the **machine root**, not on `render`. That way they disappear
+    together with the scene; hanging on `render` they would accumulate across repeated
+    renders in one process and the image would gradually wash out.
     """
     from panda3d.core import AmbientLight, DirectionalLight
 

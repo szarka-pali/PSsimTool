@@ -1,15 +1,15 @@
-"""Orbitálna kamera — čistý model bez Panda3D.
+"""The orbit camera — a pure model with no Panda3D.
 
-Stav kamery je popísaný sféricky: bod, okolo ktorého sa točí (`target`),
-vzdialenosť od neho a dva uhly. Vďaka tomu je orbitovanie triviálne a nikdy
-sa nestratí „hore" — to je problém, ktorý má voľná kamera s kvaterniónom.
+The camera state is described spherically: the point it turns around (`target`), the
+distance from it, and two angles. That makes orbiting trivial and "up" is never lost —
+which is the problem a free camera with a quaternion has.
 
-Modul je zámerne bez Panda3D, aby sa dala celá matematika ovládania otestovať
-v `tests/unit/` bez okna. Panda3D časť (čítanie myši, aplikácia na kameru)
-je v `viz/orbit_control.py`.
+The module deliberately has no Panda3D, so the whole of the control maths can be tested in
+`tests/unit/` without a window. The Panda3D part (reading the mouse, applying it to the
+camera) is in `viz/orbit_control.py`.
 
-Súradnice zodpovedajú Panda3D: **Z je hore, +Y dopredu**. Pri `azimuth = 0`
-je kamera na `-Y` a pozerá na `+Y` — teda čelný pohľad.
+The coordinates follow Panda3D: **Z is up, +Y is forward**. At `azimuth = 0` the camera is
+at `-Y` looking towards `+Y` — that is, the front view.
 """
 
 from __future__ import annotations
@@ -21,27 +21,28 @@ from typing import Final
 
 from pssim.domain.machine import Vec3
 
-#: Elevácia sa nesmie dostať presne na pól — v zenite stráca `lookAt` referenciu
-#: „hore" a obraz sa preklopí. Necháme malú rezervu.
+#: The elevation must never reach exactly the pole — at the zenith `lookAt` loses its
+#: "up" reference and the image flips. We leave a small margin.
 MAX_ELEVATION_RAD: Final = math.pi / 2 - 1e-3
 
-#: Medze priblíženia ako násobok polomeru scény. Bez nich sa dá dozoomovať
-#: dovnútra dielu alebo odletieť tak ďaleko, že model zmizne v jednom pixeli.
+#: The zoom limits as a multiple of the scene radius. Without them you can zoom inside a
+#: part, or fly so far out that the model disappears into a single pixel.
 MIN_DISTANCE_FACTOR: Final = 0.05
 MAX_DISTANCE_FACTOR: Final = 50.0
 
 DEFAULT_FOV_DEG: Final = 40.0
 
-#: Východiskový trojštvrťový pohľad.
+#: The default three-quarter view.
 DEFAULT_AZIMUTH_RAD: Final = math.radians(-35.0)
 DEFAULT_ELEVATION_RAD: Final = math.radians(25.0)
 
-#: Štandardné pohľady ako `(azimut, elevácia)` v radiánoch. **Jediný zdroj pravdy** —
-#: `viz/camera.py` si z nich odvodí smerový vektor, UI z nich robí položky menu.
+#: The standard views as `(azimuth, elevation)` in radians. The **single source of truth** —
+#: `viz/camera.py` derives the direction vector from them, and the UI turns them into menu
+#: entries.
 #:
-#: Pri `azimuth = 0` je kamera na `-Y` a pozerá na `+Y`, čo je čelný pohľad.
-#: `top` a `bottom` používajú orezanú eleváciu, nie presne `±pi/2` — v zenite
-#: stráca `lookAt` referenciu „hore" a obraz sa preklopí.
+#: At `azimuth = 0` the camera is at `-Y` looking towards `+Y`, which is the front view.
+#: `top` and `bottom` use the clamped elevation, not exactly `±pi/2` — at the zenith
+#: `lookAt` loses its "up" reference and the image flips.
 STANDARD_VIEWS: Final[dict[str, tuple[float, float]]] = {
     "iso": (DEFAULT_AZIMUTH_RAD, DEFAULT_ELEVATION_RAD),
     "front": (0.0, 0.0),
@@ -56,7 +57,7 @@ DEFAULT_VIEW: Final = "iso"
 
 
 def standard_view(name: str) -> tuple[float, float]:
-    """Uhly štandardného pohľadu. Neznámy názov je `ValueError`."""
+    """The angles of a standard view. An unknown name is a `ValueError`."""
     try:
         return STANDARD_VIEWS[name]
     except KeyError:
@@ -65,7 +66,7 @@ def standard_view(name: str) -> tuple[float, float]:
 
 
 class DragAction(StrEnum):
-    """Čo robí ťahanie myšou."""
+    """What dragging the mouse does."""
 
     NONE = "none"
     ORBIT = "orbit"
@@ -73,32 +74,33 @@ class DragAction(StrEnum):
 
 
 def drag_action(button: int, *, shift: bool = False) -> DragAction:
-    """Mapovanie tlačidla myši na akciu.
+    """The mapping from a mouse button to an action.
 
-    Konvencia je prevzatá z CAD nástrojov (SolidWorks, Fusion, Inventor):
+    The convention is taken from CAD tools (SolidWorks, Fusion, Inventor):
 
-    - **stredné tlačidlo** — otáčanie
-    - **Shift + stredné** — posun
-    - **pravé tlačidlo** — posun (skratka, aby sa dalo bez klávesnice)
-    - **ľavé tlačidlo** — otáčanie (bežné vo viewer-och; výber dielu zatiaľ nie je)
+    - **the middle button** — orbit
+    - **Shift + middle** — pan
+    - **the right button** — pan (a shortcut, so it works without the keyboard)
+    - **the left button** — orbit (common in viewers; part selection does not exist yet)
 
-    Celá konvencia je v tejto jedinej funkcii — zmena väzieb je zmena tu.
+    The whole convention is in this single function — changing the bindings means
+    changing it here.
     """
-    if button == 2:  # stredné
+    if button == 2:  # middle
         return DragAction.PAN if shift else DragAction.ORBIT
-    if button == 3:  # pravé
+    if button == 3:  # right
         return DragAction.PAN
-    if button == 1:  # ľavé
+    if button == 1:  # left
         return DragAction.ORBIT
     return DragAction.NONE
 
 
 @dataclass(frozen=True, slots=True)
 class OrbitCamera:
-    """Poloha kamery okolo bodu záujmu.
+    """The position of the camera around the point of interest.
 
-    Nemenná — každá operácia vracia nový stav. Vďaka tomu sa dá porovnávať
-    „pred a po" a nedá sa omylom zmeniť stav uprostred výpočtu.
+    Immutable — every operation returns a new state. That makes "before and after"
+    comparable and makes it impossible to change the state by accident mid-computation.
     """
 
     target: Vec3 = (0.0, 0.0, 0.0)
@@ -110,15 +112,15 @@ class OrbitCamera:
 
     def __post_init__(self) -> None:
         if self.distance_m <= 0.0:
-            raise ValueError("distance_m musí byť > 0")
+            raise ValueError("distance_m must be > 0")
         if self.min_distance_m > self.max_distance_m:
-            raise ValueError("min_distance_m nesmie byť väčšie ako max_distance_m")
+            raise ValueError("min_distance_m must not be greater than max_distance_m")
 
-    # -- odvodené vektory ---------------------------------------------------
+    # -- derived vectors ----------------------------------------------------
 
     @property
     def eye(self) -> Vec3:
-        """Poloha kamery v scéne."""
+        """The position of the camera in the scene."""
         horizontal = self.distance_m * math.cos(self.elevation_rad)
         return (
             self.target[0] + horizontal * math.sin(self.azimuth_rad),
@@ -128,7 +130,7 @@ class OrbitCamera:
 
     @property
     def forward(self) -> Vec3:
-        """Jednotkový vektor od kamery k cieľu."""
+        """The unit vector from the camera to the target."""
         eye = self.eye
         direction = (
             self.target[0] - eye[0],
@@ -139,22 +141,22 @@ class OrbitCamera:
 
     @property
     def right(self) -> Vec3:
-        """Jednotkový vektor doprava po obrazovke.
+        """The unit vector pointing right across the screen.
 
-        Leží vždy v rovine XY — kamera sa nenakláňa nabok (žiadny roll),
-        čo je pri prehliadaní strojov to, čo používateľ čaká.
+        Always lies in the XY plane — the camera never rolls sideways, which is what a
+        user expects when inspecting machines.
         """
         return (math.cos(self.azimuth_rad), math.sin(self.azimuth_rad), 0.0)
 
     @property
     def up(self) -> Vec3:
-        """Jednotkový vektor nahor po obrazovke."""
+        """The unit vector pointing up across the screen."""
         return _normalized(_cross(self.right, self.forward))
 
-    # -- operácie -----------------------------------------------------------
+    # -- operations ---------------------------------------------------------
 
     def orbit(self, delta_azimuth_rad: float, delta_elevation_rad: float) -> OrbitCamera:
-        """Otočí kameru okolo cieľa. Elevácia sa oreže pred pólmi."""
+        """Orbit the camera around the target. The elevation is clamped short of the poles."""
         return replace(
             self,
             azimuth_rad=_wrap_angle(self.azimuth_rad + delta_azimuth_rad),
@@ -166,21 +168,21 @@ class OrbitCamera:
         )
 
     def zoom(self, factor: float) -> OrbitCamera:
-        """Priblíži (`factor < 1`) alebo oddiali (`factor > 1`).
+        """Zoom in (`factor < 1`) or out (`factor > 1`).
 
-        Násobenie, nie pripočítanie: pri odzoomovanom pohľade má krok kolieska
-        posunúť kameru o veľa, pri priblíženom o málo. Sčítanie by v detaile
-        preskakovalo cez celý model.
+        Multiplicative, not additive: in a zoomed-out view a wheel step should move the
+        camera a long way, in a zoomed-in one only a little. Adding would jump across the
+        whole model when looking at a detail.
         """
         if factor <= 0.0:
-            raise ValueError("factor musí byť > 0")
+            raise ValueError("factor must be > 0")
         return replace(
             self,
             distance_m=_clamp(self.distance_m * factor, self.min_distance_m, self.max_distance_m),
         )
 
     def pan(self, right_m: float, up_m: float) -> OrbitCamera:
-        """Posunie cieľ (a s ním kameru) v rovine obrazovky."""
+        """Move the target (and the camera with it) in the plane of the screen."""
         right = self.right
         up = self.up
         return replace(
@@ -199,37 +201,37 @@ class OrbitCamera:
         viewport_height_px: int,
         fov_deg: float = DEFAULT_FOV_DEG,
     ) -> OrbitCamera:
-        """Posun podľa pohybu myši v pixeloch.
+        """Pan by a mouse movement in pixels.
 
-        Mierka závisí od vzdialenosti, takže bod pod kurzorom zostáva pod ním
-        bez ohľadu na priblíženie. Bez toho by posun pri odzoomovanom pohľade
-        pôsobil pomaly a pri priblíženom by preletel cez celý model.
+        The scale depends on the distance, so the point under the cursor stays under it
+        regardless of the zoom. Without that, panning would feel slow in a zoomed-out
+        view and would fly across the whole model in a zoomed-in one.
         """
         if viewport_height_px <= 0:
             return self
         world_per_pixel = (
             2.0 * self.distance_m * math.tan(math.radians(fov_deg) / 2.0) / viewport_height_px
         )
-        # Ťahanie doprava posúva model doprava, teda cieľ doľava.
+        # Dragging right moves the model right, which means moving the target left.
         return self.pan(-delta_x_px * world_per_pixel, delta_y_px * world_per_pixel)
 
     def looking_at(self, target: Vec3) -> OrbitCamera:
         return replace(self, target=target)
 
     def with_view(self, name: str) -> OrbitCamera:
-        """Prepne na štandardný pohľad.
+        """Switch to a standard view.
 
-        Cieľ **ani vzdialenosť sa nemenia** — používateľ chce zmeniť uhol
-        pohľadu, nie stratiť priblíženie, ktoré si nastavil.
+        Neither the target **nor the distance changes** — the user wants to change the
+        viewing angle, not lose the zoom they set.
         """
         azimuth, elevation = standard_view(name)
         return replace(self, azimuth_rad=azimuth, elevation_rad=elevation)
 
     def project(self, vector: Vec3) -> tuple[float, float]:
-        """Premietne svetový vektor do roviny obrazovky ako `(doprava, hore)`.
+        """Project a world vector into the plane of the screen as `(right, up)`.
 
-        Slúži na kreslenie orientačných ikoniek v UI: os, ktorá mieri do
-        obrazovky, vyjde blízko `(0, 0)`.
+        Used for drawing the orientation icons in the UI: an axis pointing into the
+        screen comes out close to `(0, 0)`.
         """
         right, up = self.right, self.up
         return (
@@ -237,7 +239,7 @@ class OrbitCamera:
             sum(a * b for a, b in zip(vector, up, strict=True)),
         )
 
-    # -- rámovanie ----------------------------------------------------------
+    # -- framing ------------------------------------------------------------
 
     @classmethod
     def framing(
@@ -247,9 +249,9 @@ class OrbitCamera:
         fov_deg: float = DEFAULT_FOV_DEG,
         margin: float = 1.3,
     ) -> OrbitCamera:
-        """Kamera, ktorá má guľu `(center, radius)` celú v zábere.
+        """A camera that has the whole sphere `(center, radius)` in view.
 
-        Toto je „vycentrovanie na model" — volá sa po načítaní súboru.
+        This is "centre on the model" — called after a file is loaded.
         """
         safe_radius = radius_m if radius_m > 0.0 else 1.0
         distance = safe_radius * margin / math.sin(math.radians(max(fov_deg, 1.0)) / 2.0)
@@ -261,21 +263,21 @@ class OrbitCamera:
         )
 
     def clip_planes(self) -> tuple[float, float]:
-        """Near a far rovina pre aktuálnu vzdialenosť.
+        """The near and far planes for the current distance.
 
-        Odvodené od vzdialenosti, nie fixné: default near 1.0 v Panda3D oreže
-        celý 0,2 m diel, zatiaľ čo 0.001 na 20 m linke rozbije depth buffer.
+        Derived from the distance rather than fixed: Panda3D's default near of 1.0 clips a
+        whole 0.2 m part, while 0.001 on a 20 m line destroys the depth buffer.
         """
         near = max(self.distance_m * 0.001, 1e-4)
         far = self.distance_m * 100.0 + self.max_distance_m
         return near, far
 
 
-#: Koľko sa kamera otočí na jeden pixel ťahania. Pri 0,4°/px prejde otočenie
-#: o 180° zhruba cez polovicu obrazovky, čo je bežné tempo v CAD nástrojoch.
+#: How far the camera turns per pixel of dragging. At 0.4°/px a 180° turn takes roughly
+#: half the screen, which is the usual pace in CAD tools.
 ORBIT_RAD_PER_PIXEL: Final = math.radians(0.4)
 
-#: Násobok vzdialenosti na jeden zub kolieska.
+#: The distance multiplier per notch of the wheel.
 ZOOM_STEP: Final = 1.15
 
 
@@ -287,11 +289,11 @@ def apply_drag(
     viewport_height_px: int,
     fov_deg: float = DEFAULT_FOV_DEG,
 ) -> OrbitCamera:
-    """Premietne ťahanie myšou na nový stav kamery.
+    """Project a mouse drag onto a new camera state.
 
-    Čistá funkcia — Panda3D časť (`viz/orbit_control.py`) len dodá čísla.
-    Znamienka sú zvolené tak, aby to pôsobilo ako „chytím model a otáčam ním":
-    ťah doprava otočí model doprava, ťah nadol ho nakloní k pozorovateľovi.
+    A pure function — the Panda3D part (`viz/orbit_control.py`) only supplies the numbers.
+    The signs are chosen so that it feels like "grabbing the model and turning it":
+    dragging right turns the model right, dragging down tilts it towards the viewer.
     """
     if action is DragAction.ORBIT:
         return camera.orbit(
@@ -304,10 +306,10 @@ def apply_drag(
 
 
 def apply_wheel(camera: OrbitCamera, steps: int) -> OrbitCamera:
-    """Priblíži alebo oddiali o zadaný počet zubov kolieska.
+    """Zoom in or out by the given number of wheel notches.
 
-    Kladné `steps` priblížia — to je smer, ktorý čaká väčšina používateľov
-    („koliesko od seba = bližšie k modelu").
+    Positive `steps` zoom in — that is the direction most users expect ("wheel away from
+    me = closer to the model").
     """
     if steps == 0:
         return camera
@@ -319,7 +321,7 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 
 def _wrap_angle(angle_rad: float) -> float:
-    """Zloží uhol do (-pi, pi], aby po mnohých otáčkach nerástol donekonečna."""
+    """Fold an angle into (-pi, pi], so it does not grow without bound after many turns."""
     return (angle_rad + math.pi) % (2.0 * math.pi) - math.pi
 
 

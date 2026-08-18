@@ -138,7 +138,7 @@ def import_step_command(
         angular_deflection_rad=angular,
     )
     metadata = _guard(lambda: import_step(settings, cache_dir, force=force))
-    typer.echo(f"uzlov:        {len(metadata.assembly.nodes)}")
+    typer.echo(f"nodes:      {len(metadata.assembly.nodes)}")
     typer.echo(f"triangles:  {metadata.assembly.triangle_count}")
 
 

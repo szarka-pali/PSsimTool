@@ -41,7 +41,7 @@ def read_recording(path: str | Path) -> tuple[RecordedSample, ...]:
     try:
         lines = file_path.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
-        raise DataSourceError(f"záznam sa nedá prečítať: {file_path}: {exc}") from exc
+        raise DataSourceError(f"the recording cannot be read: {file_path}: {exc}") from exc
 
     samples: list[RecordedSample] = []
     skipped = 0
@@ -61,7 +61,7 @@ def read_recording(path: str | Path) -> tuple[RecordedSample, ...]:
             logger.debug("skipping a damaged line", file=str(file_path), line=line_number)
 
     if not samples:
-        raise DataSourceError(f"záznam {file_path} neobsahuje ani jednu použiteľnú vzorku")
+        raise DataSourceError(f"the recording {file_path} contains not a single usable sample")
     if skipped:
         logger.warning(
             "the recording contained damaged lines", file=str(file_path), skipped=skipped

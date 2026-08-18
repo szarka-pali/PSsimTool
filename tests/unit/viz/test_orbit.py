@@ -357,7 +357,7 @@ class TestStandardnePohlady:
         assert moved.with_view("front").target == (1.0, 2.0, 3.0)
 
     def test_neznamy_pohlad_vypise_podporovane(self) -> None:
-        with pytest.raises(ValueError, match="podporované:"):
+        with pytest.raises(ValueError, match="supported:"):
             camera().with_view("zozadu-zhora")
 
     @pytest.mark.parametrize("name", sorted(STANDARD_VIEWS))

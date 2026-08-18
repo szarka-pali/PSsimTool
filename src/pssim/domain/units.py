@@ -35,7 +35,7 @@ def length_scale_to_m(unit: str) -> float:
         return LENGTH_UNITS[unit]
     except KeyError:
         known = ", ".join(sorted(LENGTH_UNITS))
-        raise ValueError(f"neznáma jednotka dĺžky {unit!r}; podporované: {known}") from None
+        raise ValueError(f"unknown length unit {unit!r}; supported: {known}") from None
 
 
 def encoder_increments_to_rad(increments_per_revolution: int) -> float:

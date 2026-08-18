@@ -72,7 +72,7 @@ class TestMapovanie:
 
 class TestChybneUzly:
     def test_neexistujuci_child_je_chyba(self) -> None:
-        with pytest.raises(ConfigError, match="neexistuje"):
+        with pytest.raises(ConfigError, match="does not exist"):
             plan_scene(
                 machine(prismatic_joint(parent="base", child="base/neexistuje")),
                 assembly("base", "base/portal"),
@@ -87,7 +87,7 @@ class TestChybneUzly:
 
     def test_chyba_ponukne_podobne_cesty(self) -> None:
         # Assembly má tisíc uzlov — bez nápovedy sa chyba nedá vyriešiť.
-        with pytest.raises(ConfigError, match="Podobné cesty"):
+        with pytest.raises(ConfigError, match="Similar paths"):
             plan_scene(
                 machine(prismatic_joint(parent="base", child="portal")),
                 assembly("base", "base/portal"),

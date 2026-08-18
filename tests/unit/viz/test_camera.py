@@ -120,5 +120,5 @@ class TestSmeryPohladu:
         assert view_direction("front") == pytest.approx((0.0, -1.0, 0.0), abs=1e-9)
 
     def test_neznamy_smer_vypise_podporovane(self) -> None:
-        with pytest.raises(ValueError, match="podporované:"):
+        with pytest.raises(ValueError, match="supported:"):
             view_direction("zozadu-zhora")

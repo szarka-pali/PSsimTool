@@ -24,7 +24,7 @@ class TestDlzka:
         assert 1000.0 * length_scale_to_m("mm") == pytest.approx(1.0)
 
     def test_neznama_jednotka_vypise_podporovane(self) -> None:
-        with pytest.raises(ValueError, match="podporované: in, m, mm, um"):
+        with pytest.raises(ValueError, match="supported: in, m, mm, um"):
             length_scale_to_m("stopa")
 
 

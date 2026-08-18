@@ -130,7 +130,7 @@ class TestValidacia:
         body = BASE.split("    signal:")[0]
         path = write_machine(tmp_path, body)
 
-        with pytest.raises(ConfigError, match="bez signálu: os_x"):
+        with pytest.raises(ConfigError, match="without a signal: os_x"):
             load_machine(path)
 
     def test_fixed_klb_signal_nepotrebuje(self, tmp_path: Path) -> None:
@@ -156,11 +156,11 @@ class TestValidacia:
     def test_neplatny_yaml_je_chyba(self, tmp_path: Path) -> None:
         path = write_machine(tmp_path, "machine: [nedokoncene\n")
 
-        with pytest.raises(ConfigError, match="neplatný YAML"):
+        with pytest.raises(ConfigError, match="invalid YAML"):
             load_machine(path)
 
     def test_chybajuci_subor_je_chyba(self, tmp_path: Path) -> None:
-        with pytest.raises(ConfigError, match="sa nedá prečítať"):
+        with pytest.raises(ConfigError, match="cannot be read"):
             load_machine(tmp_path / "nic.yaml")
 
     def test_chybova_sprava_obsahuje_cestu_k_suboru(self, tmp_path: Path) -> None:

@@ -56,7 +56,7 @@ class RecordingStore(StateStore):
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._file = self._path.open("w", encoding="utf-8", buffering=1)
         except OSError as exc:
-            raise DataSourceError(f"záznam sa nedá otvoriť: {self._path}: {exc}") from exc
+            raise DataSourceError(f"the recording cannot be opened: {self._path}: {exc}") from exc
 
     def close(self) -> None:
         if self._file is not None:

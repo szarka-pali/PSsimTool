@@ -348,7 +348,7 @@ class TestChybneVstupy:
     def test_neexistujuci_subor_je_chyba(self, tmp_path: Path) -> None:
         missing = ImportSettings(step_file=tmp_path / "nic.step", scale_to_m=1e-3, units="mm")
 
-        with pytest.raises(CadImportError, match="neexistuje"):
+        with pytest.raises(CadImportError, match="does not exist"):
             import_step(missing, tmp_path)
 
     def test_nezmyselny_obsah_je_chyba(self, tmp_path: Path) -> None:

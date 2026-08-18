@@ -62,7 +62,7 @@ def standard_view(name: str) -> tuple[float, float]:
         return STANDARD_VIEWS[name]
     except KeyError:
         known = ", ".join(STANDARD_VIEWS)
-        raise ValueError(f"neznámy pohľad {name!r}; podporované: {known}") from None
+        raise ValueError(f"unknown view {name!r}; supported: {known}") from None
 
 
 class DragAction(StrEnum):

@@ -56,9 +56,9 @@ def plan_scene(machine: Machine, assembly: CadAssembly) -> ScenePlan:
         for role, path in (("parent", joint.parent), ("child", joint.child)):
             if path not in known:
                 similar = assembly.similar_paths(path)
-                hint = f" Podobné cesty: {', '.join(similar)}" if similar else ""
+                hint = f" Similar paths: {', '.join(similar)}" if similar else ""
                 raise ConfigError(
-                    f"kĺb {joint.name!r}: uzol {path!r} ({role}) v assembly neexistuje.{hint}"
+                    f"joint {joint.name!r}: the node {path!r} ({role}) does not exist in the assembly.{hint}"
                 )
         joint_to_node[joint.name] = joint.child
 

@@ -161,7 +161,7 @@ def import_step(
     `force=True`).
     """
     if not settings.step_file.is_file():
-        raise CadImportError(f"STEP súbor neexistuje: {settings.step_file}")
+        raise CadImportError(f"the STEP file does not exist: {settings.step_file}")
 
     entry = CacheEntry(root=cache_root, key=cache_key_for(settings))
     if entry.exists and not force:
@@ -230,8 +230,8 @@ def read_step(settings: ImportSettings) -> tuple[tuple[RawNode, ...], dict[str, 
     shape_tool.GetFreeShapes(free_shapes)
     if free_shapes.Length() == 0:
         raise CadImportError(
-            f"{settings.step_file}: dokument neobsahuje žiadny shape. "
-            f"Súbor je prázdny alebo sa nepodaril transfer."
+            f"{settings.step_file}: the document contains no shape. "
+            f"The file is empty or the transfer failed."
         )
 
     # Geometry is tessellated once per part definition; instances share it.
@@ -265,7 +265,7 @@ def _open_document(step_file: Path) -> Any:
     # or you get an empty document and no error.
     status = reader.ReadFile(str(step_file))
     if status != IFSelect_ReturnStatus.IFSelect_RetDone:
-        raise CadImportError(f"{step_file}: STEP sa nedá prečítať (status {status})")
+        raise CadImportError(f"{step_file}: the STEP cannot be read (status {status})")
     if not reader.Transfer(doc):
         raise CadImportError(f"{step_file}: transfer do XCAF dokumentu zlyhal")
 

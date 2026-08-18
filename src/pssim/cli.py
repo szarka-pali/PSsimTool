@@ -87,7 +87,7 @@ def ui(
     usable = available_languages()
     if language not in usable:
         raise typer.BadParameter(
-            f"jazyk {language!r} nie je k dispozícii; dostupné: {', '.join(sorted(usable))}"
+            f"language {language!r} is not available; available: {', '.join(sorted(usable))}"
         )
 
     raise typer.Exit(code=run(language=language))
@@ -101,9 +101,9 @@ def validate(machine: MachineArg) -> None:
     loaded = _guard(lambda: load_machine(machine))
     typer.echo(f"stroj:      {loaded.machine.name}")
     typer.echo(
-        f"kĺby:       {len(loaded.machine.joints)} ({len(loaded.machine.moving_joints)} pohyblivých)"
+        f"joints:     {len(loaded.machine.joints)} ({len(loaded.machine.moving_joints)} moving)"
     )
-    typer.echo(f"signály:    {len(loaded.bindings)}")
+    typer.echo(f"signals:    {len(loaded.bindings)}")
     typer.echo(f"STEP:       {loaded.step_file}")
     typer.echo(f"jednotky:   {loaded.units} (scale {loaded.scale_to_m})")
     typer.echo(
@@ -141,7 +141,7 @@ def import_step_command(
     )
     metadata = _guard(lambda: import_step(settings, cache_dir, force=force))
     typer.echo(f"uzlov:        {len(metadata.assembly.nodes)}")
-    typer.echo(f"trojuholníkov:{metadata.assembly.triangle_count}")
+    typer.echo(f"triangles:  {metadata.assembly.triangle_count}")
 
 
 @app.command()
@@ -194,7 +194,7 @@ def record(
             pass
         finally:
             source.stop()
-        typer.echo(f"zaznamenaných vzoriek: {store.sample_count} → {output}")
+        typer.echo(f"samples recorded: {store.sample_count} → {output}")
 
 
 @app.command()
@@ -216,7 +216,7 @@ def replay(
     entry = CacheEntry(root=cache_dir, key=cache_key_for(_settings(loaded)))
     metadata = _guard(entry.read)
     source = ReplaySource(recording, speed=speed, loop=loop)
-    typer.echo(f"záznam: {source.duration_s:.1f} s")
+    typer.echo(f"recording: {source.duration_s:.1f} s")
 
     viewer = MachineViewer(loaded, metadata.assembly, source, entry.directory)
     _guard(viewer.run)
@@ -259,7 +259,7 @@ def screenshot(
 
     viewer = MachineViewer(loaded, metadata.assembly, _StaticSource(StateStore()), entry.directory)
     path = _guard(lambda: viewer.render_screenshot(output, view=view, values=_parse_values(values)))
-    typer.echo(f"zapísané: {path}")
+    typer.echo(f"written: {path}")
 
 
 def _parse_values(raw: str | None) -> dict[str, float]:
@@ -270,11 +270,11 @@ def _parse_values(raw: str | None) -> dict[str, float]:
     for item in raw.split(","):
         name, _, number = item.partition("=")
         if not number:
-            raise typer.BadParameter(f"očakávam `nazov=hodnota`, dostal som {item!r}")
+            raise typer.BadParameter(f"expected `name=value`, got {item!r}")
         try:
             values[name.strip()] = float(number)
         except ValueError as exc:
-            raise typer.BadParameter(f"{number!r} nie je číslo") from exc
+            raise typer.BadParameter(f"{number!r} is not a number") from exc
     return values
 
 
@@ -324,7 +324,7 @@ async def _probe(endpoint: str, browse: str | None) -> None:
     from asyncua import Client
 
     async with Client(url=endpoint) as client:
-        typer.echo(f"pripojené: {endpoint}")
+        typer.echo(f"connected: {endpoint}")
         root = client.get_node(browse) if browse else client.nodes.objects
         for child in await root.get_children():
             name = await child.read_browse_name()

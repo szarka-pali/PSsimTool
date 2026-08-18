@@ -80,9 +80,9 @@ class TestCitanie:
         path = tmp_path / "prazdny.jsonl"
         path.write_text("\n\n", encoding="utf-8")
 
-        with pytest.raises(DataSourceError, match="ani jednu použiteľnú vzorku"):
+        with pytest.raises(DataSourceError, match="not a single usable sample"):
             read_recording(path)
 
     def test_neexistujuci_subor_je_chyba(self, tmp_path: Path) -> None:
-        with pytest.raises(DataSourceError, match="sa nedá prečítať"):
+        with pytest.raises(DataSourceError, match="cannot be read"):
             read_recording(tmp_path / "nic.jsonl")

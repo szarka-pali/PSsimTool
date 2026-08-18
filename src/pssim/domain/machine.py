@@ -70,14 +70,16 @@ class Joint:
                 # Deliberately not normalised: the length of the vector would
                 # otherwise scale the movement unnoticed, and that is very hard to find.
                 raise ConfigError(
-                    f"kĺb {self.name!r}: os {self.axis} nie je jednotkový vektor "
-                    f"(dĺžka {norm_sq**0.5:.6f}). Znormalizuj ju v machines/*.yaml."
+                    f"joint {self.name!r}: the axis {self.axis} is not a unit vector "
+                    f"(length {norm_sq**0.5:.6f}). Normalise it in machines/*.yaml."
                 )
 
         if self.limits is not None:
             low, high = self.limits
             if low > high:
-                raise ConfigError(f"kĺb {self.name!r}: dolný limit {low} je väčší ako horný {high}")
+                raise ConfigError(
+                    f"joint {self.name!r}: the lower limit {low} is greater than the upper {high}"
+                )
 
     @property
     def has_limits(self) -> bool:
@@ -106,7 +108,7 @@ class Machine:
         seen: set[str] = set()
         for joint in self.joints:
             if joint.name in seen:
-                raise ConfigError(f"duplicitný názov kĺbu {joint.name!r}")
+                raise ConfigError(f"duplicate joint name {joint.name!r}")
             seen.add(joint.name)
 
     def _check_single_parent(self) -> None:
@@ -115,8 +117,8 @@ class Machine:
         for joint in self.joints:
             if joint.child in owner:
                 raise ConfigError(
-                    f"uzol {joint.child!r} je potomkom dvoch kĺbov: "
-                    f"{owner[joint.child]!r} a {joint.name!r}. Kinematika musí byť strom."
+                    f"the node {joint.child!r} is the child of two joints: "
+                    f"{owner[joint.child]!r} and {joint.name!r}. The kinematics must be a tree."
                 )
             owner[joint.child] = joint.name
 
@@ -128,8 +130,8 @@ class Machine:
             while node in parent_of:
                 if node in visited:
                     raise ConfigError(
-                        f"cyklus v kinematickom reťazci pri uzle {node!r}. "
-                        f"Skontroluj parent/child v machines/*.yaml."
+                        f"a cycle in the kinematic chain at the node {node!r}. "
+                        f"Check parent/child in machines/*.yaml."
                     )
                 visited.add(node)
                 node = parent_of[node]
@@ -148,7 +150,9 @@ class Machine:
             if candidate.name == name:
                 return candidate
         known = ", ".join(self.joint_names) or "(none)"
-        raise ConfigError(f"kĺb {name!r} v stroji {self.name!r} neexistuje; dostupné: {known}")
+        raise ConfigError(
+            f"the joint {name!r} does not exist in the machine {self.name!r}; available: {known}"
+        )
 
     def chain_to_root(self, node: str) -> tuple[Joint, ...]:
         """The joints from `node` up to the root, ordered from the one nearest the node.

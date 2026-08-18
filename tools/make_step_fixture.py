@@ -1,23 +1,27 @@
-"""Vygeneruje malý STEP fixture pre testy importu.
+"""Generate a small STEP fixture for the import tests.
 
-Spustenie::
+Run it with::
 
     uv run python tools/make_step_fixture.py
 
-Výsledok (`tests/data/fixture.step`) je vo verzovaní — je malý a testy ho
-potrebujú. Reálne CAD súbory v repozitári nie sú, viď `models/README.md`.
+The result (`tests/data/fixture.step`) is versioned — it is small and the tests need
+it. Real CAD files are not in the repository, see `models/README.md`.
 
-Zostava je zámerne postavená tak, aby obsahovala presne tie prípady, ktoré
-robia problém pri reálnych súboroch:
+The assembly is deliberately built to contain exactly the cases that cause trouble
+with real files:
 
-    base                     assembly, koreň
-      portal                 assembly, posunutý o 100 mm v X
-        Part1                dva rovnomenní siblingovia → indexovanie [1]/[2]
+    base                     assembly, the root
+      portal                 assembly, translated by 100 mm in X
+        Part1                two siblings of the same name -> indexing [1]/[2]
         Part1
-        hlava                otočený diel → overuje rotáciu z gp_Trsf
-      kryt                   jednoduchý diel s farbou
+        hlava                a rotated part -> verifies the rotation from gp_Trsf
+      kryt                   a simple part with a colour
 
-Rozmery sú v milimetroch, aby sa dal otestovať prevod na metre.
+The dimensions are in millimetres, so the conversion to metres can be tested.
+
+The part names inside the assembly are Slovak because they are **data**: they are
+written into the fixture and the tests assert on them. Renaming them would mean
+regenerating the fixture and editing the assertions.
 """
 
 from __future__ import annotations
@@ -27,10 +31,10 @@ from pathlib import Path
 
 FIXTURE_PATH = Path(__file__).resolve().parents[1] / "tests" / "data" / "fixture.step"
 
-#: Posun portálu v mm. Testy overujú, že po importe je z toho 0.1 m.
+#: The portal offset in mm. The tests verify that after the import it is 0.1 m.
 PORTAL_OFFSET_MM = 100.0
 
-#: Otočenie hlavy okolo Z v radiánoch (90°).
+#: The rotation of the head about Z in radians (90°).
 HEAD_ROTATION_RAD = 1.5707963267948966
 
 
@@ -75,16 +79,16 @@ def build() -> None:
         trsf.SetRotation(gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0)), angle_rad)
         return TopLoc_Location(trsf)
 
-    # Definície dielov (každá sa dá inštancovať viackrát).
+    # The part definitions (each can be instantiated several times).
     part_def = named_solid("Part1", 20.0, 20.0, 20.0)
     head_def = named_solid("hlava", 30.0, 10.0, 10.0)
     cover_def = named_solid("kryt", 200.0, 5.0, 80.0)
 
-    # Zostava.
+    # The assembly.
     root = assembly("base")
     portal = assembly("portal")
 
-    # Dvaja rovnomenní siblingovia — kvôli tomu existuje indexovanie [n].
+    # Two siblings of the same name - the reason indexing [n] exists.
     shape_tool.AddComponent(portal, part_def, translation(0.0, 0.0, 0.0))
     shape_tool.AddComponent(portal, part_def, translation(0.0, 40.0, 0.0))
     shape_tool.AddComponent(portal, head_def, rotation_z(HEAD_ROTATION_RAD))
@@ -92,8 +96,8 @@ def build() -> None:
     shape_tool.AddComponent(root, portal, translation(PORTAL_OFFSET_MM, 0.0, 0.0))
     cover_instance = shape_tool.AddComponent(root, cover_def, translation(0.0, -40.0, 0.0))
 
-    # Farba len na jednom dieli — zvyšok musí dostať default. Diel bez farby
-    # je v reálnych súboroch úplne bežný.
+    # A colour on one part only - the rest must get the default. A part without a
+    # colour is entirely common in real files.
     color_tool.SetColor(
         cover_instance,
         Quantity_Color(0.2, 0.4, 0.8, Quantity_TOC_RGB),
@@ -106,21 +110,21 @@ def build() -> None:
     writer.SetColorMode(True)
     writer.SetNameMode(True)
     if not writer.Transfer(doc):
-        raise SystemExit("Transfer do STEP writeru zlyhal")
+        raise SystemExit("Transfer into the STEP writer failed")
 
     FIXTURE_PATH.parent.mkdir(parents=True, exist_ok=True)
     status = writer.Write(str(FIXTURE_PATH))
 
     if status != IFSelect_ReturnStatus.IFSelect_RetDone:
-        raise SystemExit(f"zápis STEP zlyhal so statusom {status}")
+        raise SystemExit(f"writing the STEP failed with status {status}")
 
     size_kb = FIXTURE_PATH.stat().st_size / 1024
-    print(f"zapísané: {FIXTURE_PATH} ({size_kb:.1f} kB)")
+    print(f"written: {FIXTURE_PATH} ({size_kb:.1f} kB)")
 
 
 if __name__ == "__main__":
     try:
         build()
     except ImportError as exc:
-        raise SystemExit(f"chýba OpenCASCADE — spusti `uv sync --extra cad`\n{exc}") from exc
+        raise SystemExit(f"OpenCASCADE is missing - run `uv sync --extra cad`\n{exc}") from exc
     sys.exit(0)

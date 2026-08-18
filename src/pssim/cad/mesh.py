@@ -48,14 +48,14 @@ class MeshData:
 
     def __post_init__(self) -> None:
         if self.vertices.ndim != 2 or self.vertices.shape[1] != 3:
-            raise ValueError(f"vertices musia mať tvar (N, 3), majú {self.vertices.shape}")
+            raise ValueError(f"vertices must have shape (N, 3), they have {self.vertices.shape}")
         if self.normals.shape != self.vertices.shape:
             raise ValueError(
-                f"normals {self.normals.shape} musia mať rovnaký tvar ako vertices "
-                f"{self.vertices.shape} — jedna normála na vrchol"
+                f"normals {self.normals.shape} must have the same shape as vertices "
+                f"{self.vertices.shape} - one normal per vertex"
             )
         if self.indices.ndim != 2 or self.indices.shape[1] != 3:
-            raise ValueError(f"indices musia mať tvar (M, 3), majú {self.indices.shape}")
+            raise ValueError(f"indices must have shape (M, 3), they have {self.indices.shape}")
         if len(self.indices) and int(self.indices.max()) >= len(self.vertices):
             raise ValueError(
                 f"index {int(self.indices.max())} mieri mimo {len(self.vertices)} vrcholov"
@@ -176,7 +176,7 @@ def write_mesh(path: str | Path, mesh: MeshData) -> None:
             )
         temporary.replace(file_path)
     except OSError as exc:
-        raise CacheError(f"{file_path}: mesh sa nedá zapísať: {exc}") from exc
+        raise CacheError(f"{file_path}: the mesh cannot be written: {exc}") from exc
 
 
 def read_mesh(path: str | Path) -> MeshData:
@@ -186,13 +186,13 @@ def read_mesh(path: str | Path) -> MeshData:
         with np.load(file_path) as archive:
             missing = [name for name in _REQUIRED_ARRAYS if name not in archive]
             if missing:
-                raise CacheError(f"{file_path}: v mesh súbore chýba {', '.join(missing)}")
+                raise CacheError(f"{file_path}: the mesh file is missing {', '.join(missing)}")
 
             version = int(archive["version"][0]) if "version" in archive else 0
             if version != MESH_FORMAT_VERSION:
                 raise CacheError(
-                    f"{file_path}: mesh je vo formáte verzie {version}, "
-                    f"aktuálna je {MESH_FORMAT_VERSION}. Zmaž cache a importuj znovu."
+                    f"{file_path}: the mesh is in format version {version}, "
+                    f"the current one is {MESH_FORMAT_VERSION}. Delete the cache and import again."
                 )
 
             return MeshData(
@@ -201,6 +201,6 @@ def read_mesh(path: str | Path) -> MeshData:
                 indices=np.ascontiguousarray(archive["indices"], dtype=np.uint32),
             )
     except OSError as exc:
-        raise CacheError(f"{file_path}: mesh sa nedá prečítať: {exc}") from exc
+        raise CacheError(f"{file_path}: the mesh cannot be read: {exc}") from exc
     except ValueError as exc:
-        raise CacheError(f"{file_path}: mesh súbor je poškodený: {exc}") from exc
+        raise CacheError(f"{file_path}: the mesh file is damaged: {exc}") from exc

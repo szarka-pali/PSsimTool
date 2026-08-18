@@ -110,7 +110,7 @@ class CacheMetadata:
                 ),
             )
         except (KeyError, TypeError, ValueError) as exc:
-            raise CacheError(f"meta.json je poškodený alebo neúplný: {exc}") from exc
+            raise CacheError(f"meta.json is damaged or incomplete: {exc}") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,14 +145,14 @@ class CacheEntry:
         try:
             raw = json.loads(self.metadata_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise CacheError(f"{self.metadata_path}: nedá sa prečítať: {exc}") from exc
+            raise CacheError(f"{self.metadata_path}: cannot be read: {exc}") from exc
 
         metadata = CacheMetadata.from_dict(raw)
         if metadata.key.importer_version != self.key.importer_version:
             raise CacheError(
-                f"{self.metadata_path}: cache je z importéra verzie "
-                f"{metadata.key.importer_version}, aktuálna je {self.key.importer_version}. "
-                f"Zmaž adresár cache a importuj znovu."
+                f"{self.metadata_path}: the cache is from importer version "
+                f"{metadata.key.importer_version}, the current one is {self.key.importer_version}. "
+                f"Delete the cache directory and import again."
             )
         return metadata
 
@@ -171,7 +171,7 @@ class CacheEntry:
             )
             temporary.replace(self.metadata_path)
         except OSError as exc:
-            raise CacheError(f"{self.metadata_path}: nedá sa zapísať: {exc}") from exc
+            raise CacheError(f"{self.metadata_path}: cannot be written: {exc}") from exc
 
 
 def file_sha256(path: str | Path) -> str:
@@ -183,7 +183,7 @@ def file_sha256(path: str | Path) -> str:
             while chunk := handle.read(_HASH_CHUNK_BYTES):
                 digest.update(chunk)
     except OSError as exc:
-        raise CacheError(f"{file_path}: nedá sa prečítať: {exc}") from exc
+        raise CacheError(f"{file_path}: cannot be read: {exc}") from exc
     return digest.hexdigest()
 
 

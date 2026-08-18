@@ -33,7 +33,7 @@ def square() -> MeshData:
 
 class TestValidacia:
     def test_zly_tvar_vrcholov_je_chyba(self) -> None:
-        with pytest.raises(ValueError, match=r"tvar \(N, 3\)"):
+        with pytest.raises(ValueError, match=r"shape \(N, 3\)"):
             MeshData(
                 vertices=np.zeros((4, 2), dtype=np.float32),
                 normals=np.zeros((4, 2), dtype=np.float32),
@@ -41,7 +41,7 @@ class TestValidacia:
             )
 
     def test_pocet_normal_musi_sediet_s_vrcholmi(self) -> None:
-        with pytest.raises(ValueError, match="jedna normála na vrchol"):
+        with pytest.raises(ValueError, match="one normal per vertex"):
             MeshData(
                 vertices=np.zeros((4, 3), dtype=np.float32),
                 normals=np.zeros((3, 3), dtype=np.float32),
@@ -142,7 +142,7 @@ class TestZapisACitanie:
         assert list(tmp_path.glob("*.tmp")) == []
 
     def test_chybajuci_subor_je_chyba(self, tmp_path: Path) -> None:
-        with pytest.raises(CacheError, match="sa nedá prečítať"):
+        with pytest.raises(CacheError, match="cannot be read"):
             read_mesh(tmp_path / "nic.npz")
 
     def test_poskodeny_subor_je_chyba(self, tmp_path: Path) -> None:
@@ -164,7 +164,7 @@ class TestZapisACitanie:
                 indices=mesh.indices,
             )
 
-        with pytest.raises(CacheError, match="formáte verzie"):
+        with pytest.raises(CacheError, match="format version"):
             read_mesh(path)
 
 

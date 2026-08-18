@@ -79,7 +79,7 @@ class TestZapisACitanie:
         entry = CacheEntry(root=tmp_path, key=key())
         entry.write(metadata(key(importer_version=IMPORTER_VERSION - 1)))
 
-        with pytest.raises(CacheError, match="importéra verzie"):
+        with pytest.raises(CacheError, match="importer version"):
             entry.read()
 
     def test_poskodeny_json_je_chyba(self, tmp_path: Path) -> None:
@@ -87,7 +87,7 @@ class TestZapisACitanie:
         entry.directory.mkdir(parents=True)
         entry.metadata_path.write_text("{nedokoncene", encoding="utf-8")
 
-        with pytest.raises(CacheError, match="nedá sa prečítať"):
+        with pytest.raises(CacheError, match="cannot be read"):
             entry.read()
 
     def test_neuplny_json_je_chyba(self, tmp_path: Path) -> None:
@@ -95,7 +95,7 @@ class TestZapisACitanie:
         entry.directory.mkdir(parents=True)
         entry.metadata_path.write_text('{"importer_version": 1}', encoding="utf-8")
 
-        with pytest.raises(CacheError, match="poškodený alebo neúplný"):
+        with pytest.raises(CacheError, match="damaged or incomplete"):
             entry.read()
 
     def test_zapis_nezanecha_docasny_subor(self, tmp_path: Path) -> None:
@@ -124,7 +124,7 @@ class TestHashovanie:
         assert file_sha256(first) != file_sha256(second)
 
     def test_chybajuci_subor_je_chyba(self, tmp_path: Path) -> None:
-        with pytest.raises(CacheError, match="nedá sa prečítať"):
+        with pytest.raises(CacheError, match="cannot be read"):
             file_sha256(tmp_path / "nic.step")
 
 

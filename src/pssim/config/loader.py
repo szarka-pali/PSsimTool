@@ -89,15 +89,15 @@ def _read_yaml(yaml_path: Path) -> dict[str, Any]:
     try:
         text = yaml_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ConfigError(f"{yaml_path}: súbor sa nedá prečítať: {exc}") from exc
+        raise ConfigError(f"{yaml_path}: the file cannot be read: {exc}") from exc
 
     try:
         raw = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ConfigError(f"{yaml_path}: neplatný YAML: {exc}") from exc
+        raise ConfigError(f"{yaml_path}: invalid YAML: {exc}") from exc
 
     if not isinstance(raw, dict):
-        raise ConfigError(f"{yaml_path}: koreň musí byť mapovanie, nie {type(raw).__name__}")
+        raise ConfigError(f"{yaml_path}: the root must be a mapping, not {type(raw).__name__}")
     return raw
 
 
@@ -106,7 +106,7 @@ def _validate(raw: dict[str, Any], yaml_path: Path) -> MachineSpec:
         return MachineSpec.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(
-            f"{yaml_path}: neplatná definícia stroja:\n{_format_errors(exc)}"
+            f"{yaml_path}: invalid machine definition:\n{_format_errors(exc)}"
         ) from exc
 
 
@@ -138,7 +138,7 @@ def _to_joint(spec: JointSpec, yaml_path: Path) -> Joint:
             origin=Transform(xyz=spec.origin.xyz, rpy=spec.origin.rpy),
         )
     except ConfigError as exc:
-        raise ConfigError(f"{yaml_path}: kĺb {spec.name!r}: {exc}") from exc
+        raise ConfigError(f"{yaml_path}: joint {spec.name!r}: {exc}") from exc
 
 
 def _normalize(axis: Vec3) -> Vec3:
@@ -160,7 +160,7 @@ def _build_machine(name: str, joints: tuple[Joint, ...]) -> Machine:
     except ConfigError:
         raise
     except Exception as exc:  # pragma: no cover - defence against the unexpected
-        raise ConfigError(f"stroj {name!r} sa nedá poskladať: {exc}") from exc
+        raise ConfigError(f"machine {name!r} cannot be assembled: {exc}") from exc
 
 
 def _to_bindings(specs: tuple[JointSpec, ...]) -> list[JointBinding]:
@@ -186,6 +186,6 @@ def _check_moving_joints_have_signals(
     missing = [joint.name for joint in machine.moving_joints if joint.name not in bound]
     if missing:
         raise ConfigError(
-            f"{yaml_path}: pohyblivé kĺby bez signálu: {', '.join(missing)}. "
-            f"Doplň `signal:` alebo zmeň typ na `fixed`."
+            f"{yaml_path}: moving joints without a signal: {', '.join(missing)}. "
+            f"Add `signal:` or change the type to `fixed`."
         )

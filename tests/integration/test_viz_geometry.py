@@ -1,13 +1,14 @@
-"""Integračné testy vizualizačnej vrstvy proti reálnemu Panda3D.
+"""Integration tests of the visualisation layer against real Panda3D.
 
-Vyžadujú `uv sync --extra viz`. Spustenie: ``uv run pytest -m viz``
+They require `uv sync --extra viz`. Run with: ``uv run pytest -m viz``
 
-Okno sa neotvára — `NodePath` aj `Geom` sa dajú postaviť a preveriť bez neho.
-Testy overujú dve veci, ktoré sa inak zistia až vizuálne („nejako to nesedí"):
+No window is opened — both `NodePath` and `Geom` can be built and checked without one.
+The tests cover two things that would otherwise only show up visually ("something
+looks off"):
 
-1. že geometria z cache dorazí do `Geom` nepoškodená
-2. že **Panda3D interpretuje náš kvaternión rovnako, ako ho počítame** —
-   to je konvenčná pasca, kde chyba vyzerá ako náhodne otočený diel
+1. that geometry from the cache reaches the `Geom` undamaged
+2. that **Panda3D interprets our quaternion the same way we compute it** — a
+   convention trap where the mistake looks like a randomly rotated part
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ SQUARE_VERTICES = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=n
 SQUARE_INDICES = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
 
 
-class TestGeomZMeshu:
-    def test_prazdny_mesh_da_prazdny_uzol(self) -> None:
+class TestGeomFromMesh:
+    def test_an_empty_mesh_gives_an_empty_node(self) -> None:
         node = geom_node_from_mesh(empty_mesh(), "prazdny")
 
         assert node.getNumGeoms() == 0
@@ -53,7 +54,7 @@ class TestGeomZMeshu:
         assert node.getGeom(0).getPrimitive(0).getNumPrimitives() == 2
 
     def test_bounding_box_zodpoveda_vrcholom(self) -> None:
-        # Ak by sa interleaved buffer skopíroval zle, rozmery by boli nezmyselné.
+        # If the interleaved buffer were copied wrongly, the dimensions would be nonsense.
         node = geom_node_from_mesh(build_mesh(SQUARE_VERTICES * 3.0, SQUARE_INDICES), "stvorec")
 
         bounds = node.getBounds()
@@ -61,7 +62,7 @@ class TestGeomZMeshu:
         assert bounds.getRadius() == pytest.approx(math.sqrt(2) * 1.5, abs=1e-5)
 
     def test_velky_mesh_nepretecie_16bit_indexy(self) -> None:
-        # Bez NTUint32 by sa diel nad 65 535 vrcholov rozsypal na spleť trojuholníkov.
+        # Without NTUint32 a part over 65 535 vertices falls apart into a tangle.
         vertex_count = 70_000
         vertices = np.zeros((vertex_count, 3), dtype=np.float32)
         vertices[:, 0] = np.arange(vertex_count, dtype=np.float32)
@@ -72,36 +73,36 @@ class TestGeomZMeshu:
         assert node.getGeom(0).getVertexData().getNumRows() == vertex_count
 
 
-class TestNacitanieZCache:
-    def test_chybajuci_subor_vrati_none(self, tmp_path: Path) -> None:
-        # Chýbajúci mesh nesmie zhodiť štart — zvyšok stroja sa má zobraziť.
+class TestLoadingFromCache:
+    def test_a_missing_file_returns_none(self, tmp_path: Path) -> None:
+        # A missing mesh must not bring down startup — the rest of the machine should show.
         assert load_geom_node(tmp_path / "nic.npz", "chyba") is None
 
-    def test_poskodeny_subor_vrati_none(self, tmp_path: Path) -> None:
+    def test_a_damaged_file_returns_none(self, tmp_path: Path) -> None:
         broken = tmp_path / "rozbity.npz"
         broken.write_bytes(b"toto nie je npz")
 
         assert load_geom_node(broken, "rozbity") is None
 
-    def test_geometria_z_fixture_dorazi_do_geomu(self, tmp_path: Path) -> None:
+    def test_the_fixture_geometry_reaches_the_geom(self, tmp_path: Path) -> None:
         settings = ImportSettings(step_file=FIXTURE, scale_to_m=1e-3, units="mm")
         metadata = import_step(settings, tmp_path)
-        cover = metadata.assembly.node("base/kryt")
+        cover = metadata.assembly.node("base/cover")
 
         assert cover is not None
         assert cover.mesh is not None
-        node = load_geom_node(tmp_path / metadata.key.digest / cover.mesh, "kryt")
+        node = load_geom_node(tmp_path / metadata.key.digest / cover.mesh, "cover")
 
         assert node is not None
         assert node.getGeom(0).getPrimitive(0).getNumPrimitives() == 12
 
 
-class TestKonvenciaOtocenia:
-    """Overuje, že Panda3D chápe náš kvaternión rovnako ako my.
+class TestRotationConvention:
+    """Verifies that Panda3D understands our quaternion the way we do.
 
-    Toto je ten test, kvôli ktorému sú `viz/transforms.py` čisté funkcie:
-    keby konvencia nesedela, diel by bol otočený inak, než hovorí STEP,
-    a hľadalo by sa to očami.
+    This is the test the pure functions in `viz/transforms.py` exist for: if the
+    convention did not match, the part would be rotated differently from what the STEP
+    says, and it would have to be found by eye.
     """
 
     @staticmethod
@@ -109,7 +110,7 @@ class TestKonvenciaOtocenia:
         quat: tuple[float, float, float, float],
         point: tuple[float, float, float],
     ) -> tuple[float, float, float]:
-        """Otočí bod tak, ako to spraví Panda3D pri `setQuat`. Okno netreba."""
+        """Rotate a point the way Panda3D does on `setQuat`. No window needed."""
         from panda3d.core import LPoint3, LQuaternion, NodePath
 
         node_path = NodePath("test")
@@ -150,8 +151,8 @@ class TestKonvenciaOtocenia:
             rotate_point(quat, point), abs=1e-5
         )
 
-    def test_otocenie_hlavy_z_fixture(self) -> None:
-        # `hlava` je vo fixture otočená o 90° okolo Z: +X sa má stať +Y.
+    def test_the_head_rotation_from_the_fixture(self) -> None:
+        # `head` is rotated by 90° about Z in the fixture: +X should become +Y.
         quat = rpy_to_quat((0.0, 0.0, math.pi / 2))
 
         assert self.panda_transform(quat, (1.0, 0.0, 0.0)) == pytest.approx(

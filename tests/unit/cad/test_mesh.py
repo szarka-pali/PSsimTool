@@ -1,6 +1,6 @@
-"""Testy neutrálneho formátu meshu.
+"""Tests of the neutral mesh format.
 
-Bez OpenCASCADE aj bez Panda3D — je to čistý numpy formát.
+Without OpenCASCADE and without Panda3D — it is a pure numpy format.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pssim.cad.mesh import (
 )
 from pssim.domain.errors import CacheError
 
-#: Štvorec v rovine z=0, dva trojuholníky. Normály musia mieriť na +Z.
+#: A square in the plane z=0, two triangles. The normals must point at +Z.
 SQUARE_VERTICES = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.float32)
 SQUARE_INDICES = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
 
@@ -31,8 +31,8 @@ def square() -> MeshData:
     return build_mesh(SQUARE_VERTICES, SQUARE_INDICES)
 
 
-class TestValidacia:
-    def test_zly_tvar_vrcholov_je_chyba(self) -> None:
+class TestValidation:
+    def test_a_wrong_vertex_shape_is_an_error(self) -> None:
         with pytest.raises(ValueError, match=r"shape \(N, 3\)"):
             MeshData(
                 vertices=np.zeros((4, 2), dtype=np.float32),
@@ -40,7 +40,7 @@ class TestValidacia:
                 indices=np.zeros((0, 3), dtype=np.uint32),
             )
 
-    def test_pocet_normal_musi_sediet_s_vrcholmi(self) -> None:
+    def test_the_normal_count_must_match_the_vertices(self) -> None:
         with pytest.raises(ValueError, match="one normal per vertex"):
             MeshData(
                 vertices=np.zeros((4, 3), dtype=np.float32),
@@ -48,22 +48,22 @@ class TestValidacia:
                 indices=np.zeros((0, 3), dtype=np.uint32),
             )
 
-    def test_index_mimo_rozsahu_je_chyba(self) -> None:
-        # Bez tejto kontroly by Panda3D čítal mimo buffer a padol až pri renderi.
+    def test_an_index_out_of_range_is_an_error(self) -> None:
+        # Without this check Panda3D would read past the buffer and crash at render time.
         with pytest.raises(ValueError, match="mieri mimo"):
             build_mesh(SQUARE_VERTICES, np.array([[0, 1, 99]], dtype=np.uint32))
 
-    def test_prazdny_mesh_je_platny(self) -> None:
+    def test_an_empty_mesh_is_valid(self) -> None:
         assert empty_mesh().is_empty is True
 
 
-class TestNormaly:
-    def test_stvorec_v_rovine_z_ma_normaly_hore(self) -> None:
+class TestNormals:
+    def test_a_square_in_the_z_plane_has_normals_up(self) -> None:
         normals = compute_vertex_normals(SQUARE_VERTICES, SQUARE_INDICES)
 
         assert normals == pytest.approx(np.tile([0.0, 0.0, 1.0], (4, 1)), abs=1e-6)
 
-    def test_normaly_su_jednotkove(self) -> None:
+    def test_the_normals_are_unit_length(self) -> None:
         mesh = build_mesh(
             np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32),
             np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.uint32),
@@ -74,21 +74,21 @@ class TestNormaly:
         assert lengths == pytest.approx(np.ones(4), abs=1e-6)
 
     def test_obratene_poradie_obrati_normalu(self) -> None:
-        # Presne toto rieši oprava windingu pri TopAbs_REVERSED plochách.
+        # This is exactly what the winding fix for TopAbs_REVERSED faces is for.
         flipped = compute_vertex_normals(SQUARE_VERTICES, SQUARE_INDICES[:, ::-1])
 
         assert flipped == pytest.approx(np.tile([0.0, 0.0, -1.0], (4, 1)), abs=1e-6)
 
     def test_osamoteny_vrchol_dostane_nahradnu_normalu(self) -> None:
-        # Nulová normála by v scéne dala čiernu plochu.
+        # A zero normal would give a black face in the scene.
         vertices = np.vstack([SQUARE_VERTICES, [[5, 5, 5]]]).astype(np.float32)
 
         normals = compute_vertex_normals(vertices, SQUARE_INDICES)
 
         assert normals[4] == pytest.approx([0.0, 0.0, 1.0], abs=1e-6)
 
-    def test_zdielany_vrchol_priemeruje_susedne_plochy(self) -> None:
-        # Dve steny pravého uhla → normála zdieľaného vrchola má ísť po uhlopriečke.
+    def test_a_shared_vertex_averages_the_adjacent_faces(self) -> None:
+        # Two faces of a right angle → the shared vertex normal should run along the diagonal.
         vertices = np.array(
             [[0, 0, 0], [1, 0, 0], [1, 1, 0], [1, 0, 1], [0, 0, 1]], dtype=np.float32
         )
@@ -99,7 +99,7 @@ class TestNormaly:
         assert np.linalg.norm(normals[0]) == pytest.approx(1.0, abs=1e-6)
 
 
-class TestZapisACitanie:
+class TestWritingAndReading:
     def test_roundtrip_zachova_vrcholy(self, tmp_path: Path) -> None:
         path = tmp_path / "mesh.npz"
         write_mesh(path, square())
@@ -119,8 +119,8 @@ class TestZapisACitanie:
         assert read_mesh(path).normals == pytest.approx(square().normals, abs=1e-6)
 
     def test_typy_su_zjednotene(self, tmp_path: Path) -> None:
-        # Do cache sa nesmú dostať raz float64 a raz float32 podľa toho,
-        # odkiaľ dáta prišli — Panda3D číta buffer po bajtoch.
+        # The cache must not end up with float64 in one place and float32 in another
+        # depending on where the data came from — Panda3D reads the buffer byte by byte.
         path = tmp_path / "mesh.npz"
         write_mesh(path, build_mesh(SQUARE_VERTICES.astype(np.float64), SQUARE_INDICES))
 
@@ -129,30 +129,30 @@ class TestZapisACitanie:
         assert loaded.vertices.dtype == np.float32
         assert loaded.indices.dtype == np.uint32
 
-    def test_zapis_vytvori_chybajuci_adresar(self, tmp_path: Path) -> None:
+    def test_the_write_creates_a_missing_directory(self, tmp_path: Path) -> None:
         path = tmp_path / "hlbsie" / "este" / "mesh.npz"
 
         write_mesh(path, square())
 
         assert path.is_file()
 
-    def test_zapis_nezanecha_docasny_subor(self, tmp_path: Path) -> None:
+    def test_the_write_leaves_no_temporary_file(self, tmp_path: Path) -> None:
         write_mesh(tmp_path / "mesh.npz", square())
 
         assert list(tmp_path.glob("*.tmp")) == []
 
-    def test_chybajuci_subor_je_chyba(self, tmp_path: Path) -> None:
+    def test_a_missing_file_is_an_error_too(self, tmp_path: Path) -> None:
         with pytest.raises(CacheError, match="cannot be read"):
             read_mesh(tmp_path / "nic.npz")
 
-    def test_poskodeny_subor_je_chyba(self, tmp_path: Path) -> None:
+    def test_a_damaged_file_is_an_error(self, tmp_path: Path) -> None:
         path = tmp_path / "mesh.npz"
         path.write_bytes(b"toto nie je npz")
 
         with pytest.raises(CacheError):
             read_mesh(path)
 
-    def test_stara_verzia_formatu_je_chyba(self, tmp_path: Path) -> None:
+    def test_an_old_format_version_is_an_error(self, tmp_path: Path) -> None:
         path = tmp_path / "mesh.npz"
         mesh = square()
         with path.open("wb") as handle:
@@ -168,7 +168,7 @@ class TestZapisACitanie:
             read_mesh(path)
 
 
-class TestOdvodeneUdaje:
+class TestDerivedValues:
     def test_pocty(self) -> None:
         mesh = square()
 
@@ -180,7 +180,7 @@ class TestOdvodeneUdaje:
         assert low == pytest.approx((0.0, 0.0, 0.0), abs=1e-6)
         assert high == pytest.approx((1.0, 1.0, 0.0), abs=1e-6)
 
-    def test_bounding_box_prazdneho_meshu_je_nulovy(self) -> None:
+    def test_the_bounding_box_of_an_empty_mesh_is_zero(self) -> None:
         low, high = empty_mesh().bounding_box()
 
         assert low == high == (0.0, 0.0, 0.0)

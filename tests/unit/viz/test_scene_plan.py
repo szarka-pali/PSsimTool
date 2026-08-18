@@ -1,7 +1,7 @@
-"""Testy plánu scény.
+"""Tests of the scene plan.
 
-Rozdelenie na statickú a pohyblivú geometriu je čistá logika — testuje sa bez
-Panda3D a bez otvorenia okna.
+Splitting the geometry into static and moving is pure logic — tested without Panda3D
+and without opening a window.
 """
 
 from __future__ import annotations
@@ -13,28 +13,28 @@ from pssim.viz.scene_builder import plan_scene
 from tests.factories import assembly, fixed_joint, machine, prismatic_joint, revolute_joint
 
 
-class TestRozdelenie:
-    def test_potomok_pohybliveho_klbu_je_pohyblivy(self) -> None:
-        # Potomkovia sa hýbu spolu s dielom, takže sa nesmú flattenovať.
+class TestSplitting:
+    def test_a_child_of_a_moving_joint_moves(self) -> None:
+        # The children move together with the part, so they must not be flattened.
         plan = plan_scene(
             machine(prismatic_joint(parent="base", child="base/portal")),
-            assembly("base", "base/portal", "base/portal/vozik"),
+            assembly("base", "base/portal", "base/portal/carriage"),
         )
 
-        assert plan.moving_nodes == ("base/portal", "base/portal/vozik")
+        assert plan.moving_nodes == ("base/portal", "base/portal/carriage")
 
-    def test_uzol_mimo_pohybliveho_podstromu_je_staticky(self) -> None:
+    def test_a_node_outside_a_moving_subtree_is_static(self) -> None:
         plan = plan_scene(
             machine(prismatic_joint(parent="base", child="base/portal")),
-            assembly("base", "base/portal", "base/kryt"),
+            assembly("base", "base/portal", "base/cover"),
         )
 
-        assert plan.static_nodes == ("base", "base/kryt")
+        assert plan.static_nodes == ("base", "base/cover")
 
-    def test_fixed_klb_nerobi_uzol_pohyblivym(self) -> None:
+    def test_a_fixed_joint_does_not_make_a_node_move(self) -> None:
         plan = plan_scene(
-            machine(fixed_joint(parent="base", child="base/kryt")),
-            assembly("base", "base/kryt"),
+            machine(fixed_joint(parent="base", child="base/cover")),
+            assembly("base", "base/cover"),
         )
 
         assert plan.moving_nodes == ()
@@ -48,45 +48,45 @@ class TestRozdelenie:
 
         assert "base/portal2" in plan.static_nodes
 
-    def test_viac_klbov_v_retazci(self) -> None:
+    def test_several_joints_in_a_chain(self) -> None:
         plan = plan_scene(
             machine(
                 prismatic_joint(name="x", parent="base", child="base/portal"),
-                revolute_joint(name="c", parent="base/portal", child="base/portal/hlava"),
+                revolute_joint(name="c", parent="base/portal", child="base/portal/head"),
             ),
-            assembly("base", "base/portal", "base/portal/hlava"),
+            assembly("base", "base/portal", "base/portal/head"),
         )
 
-        assert plan.moving_nodes == ("base/portal", "base/portal/hlava")
+        assert plan.moving_nodes == ("base/portal", "base/portal/head")
 
 
-class TestMapovanie:
-    def test_klb_mieri_na_svojho_potomka(self) -> None:
+class TestMapping:
+    def test_a_joint_points_at_its_child(self) -> None:
         plan = plan_scene(
-            machine(prismatic_joint(name="os_x", parent="base", child="base/portal")),
+            machine(prismatic_joint(name="axis_x", parent="base", child="base/portal")),
             assembly("base", "base/portal"),
         )
 
-        assert plan.joint_to_node["os_x"] == "base/portal"
+        assert plan.joint_to_node["axis_x"] == "base/portal"
 
 
-class TestChybneUzly:
-    def test_neexistujuci_child_je_chyba(self) -> None:
+class TestBadNodes:
+    def test_a_missing_child_is_an_error(self) -> None:
         with pytest.raises(ConfigError, match="does not exist"):
             plan_scene(
                 machine(prismatic_joint(parent="base", child="base/neexistuje")),
                 assembly("base", "base/portal"),
             )
 
-    def test_neexistujuci_parent_je_chyba(self) -> None:
+    def test_a_missing_parent_is_an_error(self) -> None:
         with pytest.raises(ConfigError, match="parent"):
             plan_scene(
                 machine(prismatic_joint(parent="nieje", child="base")),
                 assembly("base"),
             )
 
-    def test_chyba_ponukne_podobne_cesty(self) -> None:
-        # Assembly má tisíc uzlov — bez nápovedy sa chyba nedá vyriešiť.
+    def test_the_error_offers_similar_paths(self) -> None:
+        # An assembly has a thousand nodes — without a hint the error cannot be resolved.
         with pytest.raises(ConfigError, match="Similar paths"):
             plan_scene(
                 machine(prismatic_joint(parent="base", child="portal")),

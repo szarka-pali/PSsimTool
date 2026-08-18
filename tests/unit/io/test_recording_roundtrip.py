@@ -1,4 +1,4 @@
-"""Testy záznamu a jeho spätného načítania."""
+"""Tests of recording and reading it back."""
 
 from __future__ import annotations
 
@@ -11,21 +11,21 @@ from pssim.io.recorder import RecordingStore
 from pssim.io.replay import read_recording
 
 
-class TestZaznam:
-    def test_zapisane_vzorky_sa_daju_nacitat(self, tmp_path: Path) -> None:
+class TestRecording:
+    def test_written_samples_can_be_read_back(self, tmp_path: Path) -> None:
         path = tmp_path / "beh.jsonl"
         with RecordingStore(path) as store:
-            store.put("os_x", value=1.5, source_time_s=10.0)
-            store.put("os_z", value=2.5, source_time_s=10.1)
+            store.put("axis_x", value=1.5, source_time_s=10.0)
+            store.put("axis_z", value=2.5, source_time_s=10.1)
 
         samples = read_recording(path)
 
         assert [(item.signal, item.sample.value) for item in samples] == [
-            ("os_x", 1.5),
-            ("os_z", 2.5),
+            ("axis_x", 1.5),
+            ("axis_z", 2.5),
         ]
 
-    def test_zaznam_sa_zoradi_podla_casu(self, tmp_path: Path) -> None:
+    def test_the_recording_is_ordered_by_time(self, tmp_path: Path) -> None:
         path = tmp_path / "beh.jsonl"
         with RecordingStore(path) as store:
             store.put("a", value=1.0, source_time_s=5.0)
@@ -35,33 +35,33 @@ class TestZaznam:
 
         assert times == sorted(times)
 
-    def test_store_zostava_pouzitelny_aj_pocas_zaznamu(self, tmp_path: Path) -> None:
+    def test_the_store_stays_usable_while_recording(self, tmp_path: Path) -> None:
         with RecordingStore(tmp_path / "beh.jsonl") as store:
-            store.put("os_x", value=0.0, source_time_s=0.0)
-            store.put("os_x", value=2.0, source_time_s=2.0)
+            store.put("axis_x", value=0.0, source_time_s=0.0)
+            store.put("axis_x", value=2.0, source_time_s=2.0)
 
-            assert store.sample("os_x", at_time_s=1.0) == pytest.approx(1.0)
+            assert store.sample("axis_x", at_time_s=1.0) == pytest.approx(1.0)
 
-    def test_pocita_vzorky(self, tmp_path: Path) -> None:
+    def test_the_samples_are_counted(self, tmp_path: Path) -> None:
         with RecordingStore(tmp_path / "beh.jsonl") as store:
             for step in range(5):
-                store.put("os_x", value=float(step), source_time_s=float(step))
+                store.put("axis_x", value=float(step), source_time_s=float(step))
 
             assert store.sample_count == 5
 
-    def test_bez_otvorenia_nezapisuje_ale_nespadne(self, tmp_path: Path) -> None:
+    def test_with_nothing_open_it_writes_nothing_but_survives(self, tmp_path: Path) -> None:
         store = RecordingStore(tmp_path / "beh.jsonl")
 
-        store.put("os_x", value=1.0, source_time_s=0.0)
+        store.put("axis_x", value=1.0, source_time_s=0.0)
 
         assert store.sample_count == 0
-        assert store.sample("os_x", at_time_s=0.0) == pytest.approx(1.0)
+        assert store.sample("axis_x", at_time_s=0.0) == pytest.approx(1.0)
 
 
-class TestCitanie:
-    def test_poskodeny_riadok_sa_preskoci(self, tmp_path: Path) -> None:
-        # Prerušený zápis zanechá posledný riadok nekompletný — nesmie to
-        # znehodnotiť celý záznam.
+class TestReading:
+    def test_a_damaged_line_is_skipped(self, tmp_path: Path) -> None:
+        # An interrupted write leaves the last line incomplete — that must not
+        # invalidate the whole recording.
         path = tmp_path / "beh.jsonl"
         path.write_text(
             '{"t": 1.0, "signal": "a", "value": 1.0}\n{"t": 2.0, "sig\n',
@@ -70,19 +70,19 @@ class TestCitanie:
 
         assert len(read_recording(path)) == 1
 
-    def test_prazdne_riadky_sa_ignoruju(self, tmp_path: Path) -> None:
+    def test_empty_lines_are_ignored(self, tmp_path: Path) -> None:
         path = tmp_path / "beh.jsonl"
         path.write_text('\n{"t": 1.0, "signal": "a", "value": 1.0}\n\n', encoding="utf-8")
 
         assert len(read_recording(path)) == 1
 
-    def test_zaznam_bez_pouzitelnej_vzorky_je_chyba(self, tmp_path: Path) -> None:
+    def test_a_recording_with_no_usable_sample_is_an_error(self, tmp_path: Path) -> None:
         path = tmp_path / "prazdny.jsonl"
         path.write_text("\n\n", encoding="utf-8")
 
         with pytest.raises(DataSourceError, match="not a single usable sample"):
             read_recording(path)
 
-    def test_neexistujuci_subor_je_chyba(self, tmp_path: Path) -> None:
+    def test_a_missing_file_is_an_error(self, tmp_path: Path) -> None:
         with pytest.raises(DataSourceError, match="cannot be read"):
             read_recording(tmp_path / "nic.jsonl")

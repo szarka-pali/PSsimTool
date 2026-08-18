@@ -1,7 +1,8 @@
-"""Továrne na testovacie dáta.
+"""Factories for test data.
 
-Testy nevyrábajú modely ručne inline — mení sa tým jedno miesto, keď sa rozšíri
-schéma, a testy zostanú čitateľné (vidno len to, čo je pre daný test podstatné).
+The tests do not build models by hand inline — that way there is one place to change
+when the schema grows, and the tests stay readable (only what matters to a given test
+is visible).
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pssim.domain.machine import Joint, JointType, Machine, Transform
 
 
 def prismatic_joint(
-    name: str = "os_x",
+    name: str = "axis_x",
     parent: str = "base",
     child: str = "portal",
     axis: tuple[float, float, float] = (1.0, 0.0, 0.0),
@@ -33,9 +34,9 @@ def prismatic_joint(
 
 
 def revolute_joint(
-    name: str = "os_c",
+    name: str = "axis_c",
     parent: str = "portal",
-    child: str = "hlava",
+    child: str = "head",
     axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
     limits: tuple[float, float] | None = (-math.pi, math.pi),
 ) -> Joint:
@@ -49,7 +50,7 @@ def revolute_joint(
     )
 
 
-def fixed_joint(name: str = "kryt", parent: str = "base", child: str = "kryt") -> Joint:
+def fixed_joint(name: str = "cover", parent: str = "base", child: str = "cover") -> Joint:
     return Joint(name=name, parent=parent, child=child, type=JointType.FIXED)
 
 
@@ -58,7 +59,7 @@ def machine(*joints: Joint, name: str = "test") -> Machine:
 
 
 def buffer_with(*pairs: tuple[float, float], capacity: int = 32) -> SignalBuffer:
-    """Buffer naplnený vzorkami `(source_time_s, value)`."""
+    """A buffer filled with `(source_time_s, value)` samples."""
     signal_buffer = SignalBuffer(capacity=capacity)
     for source_time_s, value in pairs:
         signal_buffer.put(Sample(source_time_s=source_time_s, value=value))
@@ -66,7 +67,7 @@ def buffer_with(*pairs: tuple[float, float], capacity: int = 32) -> SignalBuffer
 
 
 def assembly(*paths: str) -> CadAssembly:
-    """Plochý assembly zo zoznamu ciest. Deti sa odvodia z prefixov."""
+    """A flat assembly from a list of paths. Children are derived from the prefixes."""
     nodes = tuple(
         CadNode(
             path=path,
@@ -87,7 +88,7 @@ machine: test
 step_file: models/test.step
 units: mm
 joints:
-  - name: os_x
+  - name: axis_x
     parent: base
     child: portal
     type: prismatic

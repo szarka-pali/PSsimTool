@@ -200,7 +200,7 @@ assets/cache/<hash>/
 ```json
 {
   "importer_version": 1,
-  "source_file": "models/priklad.step",
+  "source_file": "models/example.step",
   "source_sha256": "…",
   "units_used": "mm",
   "scale_to_m": 0.001,

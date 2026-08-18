@@ -1,14 +1,14 @@
-"""Testy napojenia myši na kameru v Panda3D.
+"""Tests of the mouse-to-camera wiring in Panda3D.
 
-Matematiku ovládania pokrýva `tests/unit/viz/test_orbit.py`. Tu ide o to,
-či sú udalosti naozaj **zapojené** — či `wheel_up` skutočne dorazí do kamery
-a či stlačenie tlačidla prepne správnu akciu. To je časť, ktorú unit test
-neoverí, lebo potrebuje živý Panda3D.
+The control maths is covered by `tests/unit/viz/test_orbit.py`. This is about whether
+the events are actually **connected** — whether `wheel_up` really reaches the camera and
+whether pressing a button selects the right action. That is the part a unit test cannot
+cover, because it needs a live Panda3D.
 
-Udalosti sa posielajú cez `messenger`, takže netreba skutočnú myš. Okno sa
-neotvára — beží to nad offscreen bufferom.
+The events are sent through `messenger`, so no real mouse is needed. No window is
+opened — it runs over an offscreen buffer.
 
-Vyžaduje `uv sync --extra viz`. Spustenie: ``uv run pytest -m viz``
+Requires `uv sync --extra viz`. Run with: ``uv run pytest -m viz``
 """
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ pytestmark = pytest.mark.viz
 
 @pytest.fixture(scope="module")
 def base() -> Any:
-    """Offscreen `ShowBase`. Panda3D dovolí len jednu na proces, preto modulový scope."""
+    """An offscreen `ShowBase`. Panda3D allows one per process, hence module scope."""
     return offscreen_showbase((320, 240))
 
 
 @pytest.fixture
 def controller(base: Any) -> Iterator[OrbitController]:
-    """Zapnutý ovládač s predvídateľnou počiatočnou kamerou."""
+    """The controller enabled, with a predictable initial camera."""
     instance = OrbitController(
         base,
         OrbitCamera(
@@ -46,11 +46,11 @@ def controller(base: Any) -> Iterator[OrbitController]:
 
 
 def send(base: Any, event: str) -> None:
-    """Pošle udalosť tak, ako by prišla z myši."""
+    """Send an event the way it would arrive from the mouse."""
     base.messenger.send(event)
 
 
-class TestKoliesko:
+class TestWheel:
     def test_wheel_up_priblizi(self, base: Any, controller: OrbitController) -> None:
         before = controller.camera.distance_m
 
@@ -65,8 +65,10 @@ class TestKoliesko:
 
         assert controller.camera.distance_m > before
 
-    def test_koliesko_posunie_kameru_v_scene(self, base: Any, controller: OrbitController) -> None:
-        # Nestačí zmeniť model — musí sa to preniesť aj do Panda3D kamery.
+    def test_the_wheel_moves_the_camera_in_the_scene(
+        self, base: Any, controller: OrbitController
+    ) -> None:
+        # Changing the model is not enough — it has to reach the Panda3D camera too.
         before = base.camera.getPos().length()
 
         send(base, "wheel_up")
@@ -79,23 +81,27 @@ class TestKoliesko:
         assert controller.camera.target == (0.0, 0.0, 0.0)
 
 
-class TestTlacidla:
-    def test_stredne_tlacidlo_zapne_otacanie(self, base: Any, controller: OrbitController) -> None:
+class TestButtons:
+    def test_the_middle_button_starts_orbiting(
+        self, base: Any, controller: OrbitController
+    ) -> None:
         send(base, "mouse2")
 
         assert controller.action is DragAction.ORBIT
 
-    def test_shift_so_strednym_zapne_posun(self, base: Any, controller: OrbitController) -> None:
+    def test_shift_with_the_middle_button_starts_panning(
+        self, base: Any, controller: OrbitController
+    ) -> None:
         send(base, "shift-mouse2")
 
         assert controller.action is DragAction.PAN
 
-    def test_prave_tlacidlo_zapne_posun(self, base: Any, controller: OrbitController) -> None:
+    def test_the_right_button_starts_panning(self, base: Any, controller: OrbitController) -> None:
         send(base, "mouse3")
 
         assert controller.action is DragAction.PAN
 
-    def test_pustenie_ukonci_tahanie(self, base: Any, controller: OrbitController) -> None:
+    def test_releasing_ends_the_drag(self, base: Any, controller: OrbitController) -> None:
         send(base, "mouse2")
 
         send(base, "mouse2-up")
@@ -103,8 +109,8 @@ class TestTlacidla:
         assert controller.action is DragAction.NONE
 
 
-class TestPrenosDoSceny:
-    def test_kamera_stoji_v_spravnej_vzdialenosti(
+class TestReachingTheScene:
+    def test_the_camera_stands_at_the_right_distance(
         self, controller: OrbitController, base: Any
     ) -> None:
         controller.set_camera(
@@ -115,10 +121,8 @@ class TestPrenosDoSceny:
 
         assert (position[0], position[1], position[2]) == pytest.approx((1.0, -3.0, 3.0), abs=1e-4)
 
-    def test_orezove_roviny_sa_prisposobia_mierke(
-        self, controller: OrbitController, base: Any
-    ) -> None:
-        # Malý model potrebuje malú near rovinu, inak sa celý oreže.
+    def test_the_clip_planes_follow_the_scale(self, controller: OrbitController, base: Any) -> None:
+        # A small model needs a small near plane, or all of it gets clipped.
         controller.set_camera(OrbitCamera(target=(0.0, 0.0, 0.0), distance_m=0.2))
 
         assert base.camLens.getNear() < 0.2

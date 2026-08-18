@@ -7,7 +7,7 @@ docs/architecture.md R7.
 The format is one JSON object per line, so a recording can be read with `head` and so
 that an interrupted write does not destroy the whole file:
 
-    {"t": 12.345, "signal": "os_x", "value": 1.2345}
+    {"t": 12.345, "signal": "axis_x", "value": 1.2345}
 
 `t` is the internal monotonic scale in seconds. A recording is therefore **relative** —
 there is no way to tell from it when exactly it ran. That is deliberate: recordings from

@@ -1,8 +1,8 @@
-"""Testy skladania stabilných ciest uzlov.
+"""Tests of composing stable node paths.
 
-Cesty musia byť medzi importmi deterministické — `machines/*.yaml` sa na ne
-odkazuje. Toto je jediná časť `step_import.py`, ktorá je čistá a testovateľná
-bez OpenCASCADE.
+The paths must be deterministic between imports — `machines/*.yaml` refers to them.
+This is the one part of `step_import.py` that is pure and testable without
+OpenCASCADE.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from pssim.domain.machine import Transform
 def raw(
     name: str, *children: RawNode, geometry: bool = True, mesh_key: str | None = None
 ) -> RawNode:
-    """Uzol pre testy. Listy majú geometriu, uzly s deťmi sú organizačné.
+    """A node for the tests. Leaves have geometry, nodes with children are organisational.
 
-    `mesh_key` sa dá zadať explicitne, aby sa dalo otestovať zdieľanie meshu
-    medzi inštanciami toho istého dielu.
+    `mesh_key` can be given explicitly so that sharing a mesh between instances of the
+    same part can be tested.
     """
     is_leaf = geometry and not children
     return RawNode(
@@ -31,35 +31,35 @@ def raw(
     )
 
 
-class TestCesty:
-    def test_jeden_koren(self) -> None:
+class TestPaths:
+    def test_a_single_root(self) -> None:
         assembly = build_paths((raw("base"),))
 
         assert assembly.roots == ("base",)
 
-    def test_vnorenie_sa_spoji_lomitkom(self) -> None:
-        assembly = build_paths((raw("base", raw("portal", raw("vozik"))),))
+    def test_nesting_is_joined_with_a_slash(self) -> None:
+        assembly = build_paths((raw("base", raw("portal", raw("carriage"))),))
 
         assert {node.path for node in assembly.nodes} == {
             "base",
             "base/portal",
-            "base/portal/vozik",
+            "base/portal/carriage",
         }
 
-    def test_unikatny_nazov_nedostane_index(self) -> None:
+    def test_a_unique_name_is_not_indexed(self) -> None:
         assembly = build_paths((raw("base", raw("portal")),))
 
         assert assembly.node("base/portal") is not None
 
-    def test_rovnomenni_siblingovia_dostanu_index_od_jednotky(self) -> None:
-        # Desať `Part1` v jednej zostave je v praxi bežné.
+    def test_siblings_of_one_name_are_indexed_from_one(self) -> None:
+        # Ten `Part1`s in one assembly is common in practice.
         assembly = build_paths((raw("base", raw("Part1"), raw("Part1"), raw("Part1")),))
 
         paths = {node.path for node in assembly.nodes}
 
         assert {"base/Part1[1]", "base/Part1[2]", "base/Part1[3]"} <= paths
 
-    def test_indexovanie_je_lokalne_pre_uroven(self) -> None:
+    def test_indexing_is_local_to_a_level(self) -> None:
         assembly = build_paths(
             (raw("base", raw("A", raw("X"), raw("X")), raw("B", raw("X"), raw("X"))),)
         )
@@ -68,7 +68,7 @@ class TestCesty:
 
         assert {"base/A/X[1]", "base/A/X[2]", "base/B/X[1]", "base/B/X[2]"} <= paths
 
-    def test_poradie_je_deterministicke(self) -> None:
+    def test_the_order_is_deterministic(self) -> None:
         tree = (raw("base", raw("P"), raw("P")),)
 
         first = [node.path for node in build_paths(tree).nodes]
@@ -76,7 +76,7 @@ class TestCesty:
 
         assert first == second
 
-    def test_deti_su_zaznamenane_v_rodicovi(self) -> None:
+    def test_children_are_recorded_on_the_parent(self) -> None:
         assembly = build_paths((raw("base", raw("a"), raw("b")),))
         base = assembly.node("base")
 
@@ -84,29 +84,31 @@ class TestCesty:
         assert base.children == ("base/a", "base/b")
 
 
-class TestPoradieUzlov:
-    def test_nodes_je_zdola_nahor(self) -> None:
-        # Rekurzívny prechod zapisuje uzol až po jeho deťoch. Kto stavia
-        # hierarchiu, musí použiť nodes_parents_first — inak vyjde plochý strom.
+class TestNodeOrder:
+    def test_nodes_is_bottom_up(self) -> None:
+        # The recursive walk appends a node after its children. Anyone building a
+        # hierarchy must use nodes_parents_first, or the tree comes out flat.
         assembly = build_paths((raw("base", raw("diel")),))
 
         paths = [node.path for node in assembly.nodes]
 
         assert paths.index("base/diel") < paths.index("base")
 
-    def test_nodes_parents_first_ma_rodica_pred_potomkom(self) -> None:
-        assembly = build_paths((raw("base", raw("portal", raw("vozik"))),))
+    def test_nodes_parents_first_puts_the_parent_first(self) -> None:
+        assembly = build_paths((raw("base", raw("portal", raw("carriage"))),))
 
         paths = [node.path for node in assembly.nodes_parents_first]
 
-        assert paths.index("base") < paths.index("base/portal") < paths.index("base/portal/vozik")
+        assert (
+            paths.index("base") < paths.index("base/portal") < paths.index("base/portal/carriage")
+        )
 
-    def test_nodes_parents_first_obsahuje_vsetky_uzly(self) -> None:
+    def test_nodes_parents_first_contains_every_node(self) -> None:
         assembly = build_paths((raw("base", raw("a"), raw("b", raw("c"))),))
 
         assert len(assembly.nodes_parents_first) == len(assembly.nodes)
 
-    def test_nodes_parents_first_je_deterministicke(self) -> None:
+    def test_nodes_parents_first_is_deterministic(self) -> None:
         tree = (raw("base", raw("P"), raw("P"), raw("Q")),)
 
         first = [node.path for node in build_paths(tree).nodes_parents_first]
@@ -115,9 +117,9 @@ class TestPoradieUzlov:
         assert first == second
 
 
-class TestZdielanieMeshu:
-    def test_instancie_toho_isteho_dielu_zdielaju_subor(self) -> None:
-        # Zostava s tisíckou skrutiek má mať v cache jednu skrutku, nie tisíc kópií.
+class TestMeshSharing:
+    def test_instances_of_one_part_share_a_file(self) -> None:
+        # An assembly with a thousand screws should have one screw in the cache, not a thousand.
         assembly = build_paths(
             (raw("base", raw("Bolt", mesh_key="def:bolt"), raw("Bolt", mesh_key="def:bolt")),)
         )
@@ -129,7 +131,7 @@ class TestZdielanieMeshu:
         assert second is not None
         assert first.mesh == second.mesh
 
-    def test_rozne_diely_maju_rozne_subory(self) -> None:
+    def test_different_parts_have_different_files(self) -> None:
         assembly = build_paths((raw("base", raw("a"), raw("b")),))
 
         first = assembly.node("base/a")
@@ -139,8 +141,8 @@ class TestZdielanieMeshu:
         assert second is not None
         assert first.mesh != second.mesh
 
-    def test_rovnomenne_ale_rozne_diely_sa_nezlejú(self) -> None:
-        # Dva rôzne diely môžu mať v STEP rovnaké meno — rozlišuje ich mesh_key.
+    def test_same_named_but_different_parts_do_not_merge(self) -> None:
+        # Two different parts may share a name in STEP — the mesh_key tells them apart.
         assembly = build_paths(
             (raw("base", raw("Part", mesh_key="def:1"), raw("Part", mesh_key="def:2")),)
         )
@@ -153,48 +155,48 @@ class TestZdielanieMeshu:
         assert first.mesh != second.mesh
 
 
-class TestGeometria:
-    def test_uzol_s_geometriou_ma_mesh(self) -> None:
+class TestGeometry:
+    def test_a_node_with_geometry_has_a_mesh(self) -> None:
         assembly = build_paths((raw("diel"),))
         node = assembly.node("diel")
 
         assert node is not None
         assert node.has_geometry is True
 
-    def test_organizacny_uzol_nema_mesh(self) -> None:
+    def test_an_organisational_node_has_no_mesh(self) -> None:
         assembly = build_paths((raw("base", raw("diel")),))
         base = assembly.node("base")
 
         assert base is not None
         assert base.mesh is None
 
-    def test_pocet_trojuholnikov_sa_scitava(self) -> None:
+    def test_the_triangle_counts_add_up(self) -> None:
         assembly = build_paths((raw("base", raw("a"), raw("b")),))
 
         assert assembly.triangle_count == 24
 
 
-class TestSkalovanie:
-    def test_translacia_sa_skaluje(self) -> None:
-        # Ak sa vrcholy zmenšia 1000x a offsety nie, model sa rozsype na kusy.
+class TestScaling:
+    def test_translation_is_scaled(self) -> None:
+        # If the vertices shrink 1000x and the offsets do not, the model falls apart.
         scaled = scale_transform(Transform(xyz=(1000.0, 2000.0, 0.0)), 1e-3)
 
         assert scaled.xyz == pytest.approx((1.0, 2.0, 0.0))
 
-    def test_rotacia_sa_neskaluje(self) -> None:
+    def test_rotation_is_not_scaled(self) -> None:
         scaled = scale_transform(Transform(rpy=(0.5, 0.0, 0.0)), 1e-3)
 
         assert scaled.rpy == pytest.approx((0.5, 0.0, 0.0))
 
 
-class TestPodobneCesty:
+class TestSimilarPaths:
     def test_najde_podobnu_cestu_pre_chybovu_spravu(self) -> None:
-        # Bez tohto je „uzol sa nenašiel" nepoužiteľná chyba pri tisícke uzlov.
-        assembly = build_paths((raw("base", raw("portal"), raw("kryt")),))
+        # Without this, "node not found" is a useless error when there are a thousand nodes.
+        assembly = build_paths((raw("base", raw("portal"), raw("cover")),))
 
         assert "base/portal" in assembly.similar_paths("portal")
 
-    def test_neznama_cesta_vrati_prazdno_alebo_kandidatov(self) -> None:
+    def test_an_unknown_path_returns_nothing_or_candidates(self) -> None:
         assembly = build_paths((raw("base"),))
 
         assert isinstance(assembly.similar_paths("zzz_neexistuje"), tuple)

@@ -1,4 +1,4 @@
-"""Testy prevodu času PLC na internú monotónnu škálu."""
+"""Tests of converting PLC time onto the internal monotonic scale."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from pssim.io.timebase import Timebase
 EPOCH = datetime(2026, 8, 14, 12, 0, 0, tzinfo=UTC)
 
 
-class TestInicializacia:
-    def test_prva_vzorka_urci_offset(self) -> None:
+class TestInitialisation:
+    def test_the_first_sample_fixes_the_offset(self) -> None:
         timebase = Timebase()
 
         internal = timebase.to_internal(EPOCH, now_monotonic_s=1000.0)
@@ -20,19 +20,19 @@ class TestInicializacia:
         assert internal == pytest.approx(1000.0)
         assert timebase.is_initialized is True
 
-    def test_pred_prvou_vzorkou_nie_je_offset(self) -> None:
+    def test_there_is_no_offset_before_the_first_sample(self) -> None:
         assert Timebase().offset_s is None
 
-    def test_naivny_datetime_je_chyba(self) -> None:
-        # Naivná hodnota znamená, že sa niekde stratila informácia o zóne.
+    def test_a_naive_datetime_is_an_error(self) -> None:
+        # A naive value means the zone information was lost somewhere.
         with pytest.raises(ValueError, match="tz-aware"):
             Timebase().to_internal(datetime(2026, 8, 14, 12, 0, 0), now_monotonic_s=0.0)  # noqa: DTZ001
 
 
-class TestPrevod:
+class TestConversion:
     def test_offset_zostava_pevny(self) -> None:
-        # Keby sa offset prepočítaval priebežne, každý skok hodín PLC by sa
-        # premietol do interpolácie a diely by poskakovali.
+        # If the offset were recomputed continuously, every jump of the PLC clock would
+        # feed into the interpolation and the parts would hop about.
         timebase = Timebase()
         timebase.to_internal(EPOCH, now_monotonic_s=1000.0)
 
@@ -40,10 +40,10 @@ class TestPrevod:
 
         assert internal == pytest.approx(1005.0)
 
-    def test_zachova_rozostupy_medzi_vzorkami(self) -> None:
-        # Tolerancia je 1 us, nie menej: `datetime.timestamp()` je float sekúnd
-        # od epochy (~1.8e9), takže rozlíšenie float64 je tu rádovo 1e-7 s.
-        # Pre dáta s periódou 20-100 ms je to o päť rádov viac, než treba.
+    def test_the_gaps_between_samples_are_preserved(self) -> None:
+        # The tolerance is 1 us, not less: `datetime.timestamp()` is float seconds since
+        # the epoch (~1.8e9), so the resolution of float64 here is of the order of 1e-7 s.
+        # For data with a 20-100 ms period that is five orders of magnitude more than needed.
         timebase = Timebase()
         timebase.to_internal(EPOCH, now_monotonic_s=1000.0)
 
@@ -65,7 +65,7 @@ class TestPrevod:
 
 
 class TestDrift:
-    def test_bez_driftu_nie_je_priznak(self) -> None:
+    def test_no_drift_raises_no_flag(self) -> None:
         timebase = Timebase(max_drift_s=5.0)
         timebase.to_internal(EPOCH, now_monotonic_s=1000.0)
 

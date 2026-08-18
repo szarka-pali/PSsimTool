@@ -1,14 +1,14 @@
-# Spustiteľné demo — jediná definícia stroja, ktorá funguje bez reálneho CAD.
+# A runnable demo — the one machine definition that works without real CAD.
 #
-# Používa testovací fixture (tests/data/fixture.step) a signály, ktoré generuje
-# `pssim mock-server`. Slúži na overenie, že celá reťaz beží:
+# It uses the test fixture (tests/data/fixture.step) and the signals
+# `pssim mock-server` generates. It serves to verify that the whole chain runs:
 #
-#   mock server → OPC UA → StateStore → kinematika → Panda3D
+#   mock server → OPC UA → StateStore → kinematics → Panda3D
 #
-# Pre reálny stroj si sprav vlastný súbor podľa machines/priklad.yaml.
+# For a real machine, make your own file following machines/example.yaml.
 
 machine: demo
-description: Demo na fixture geometrii, riadené mock serverom
+description: A demo on the fixture geometry, driven by the mock server
 
 step_file: tests/data/fixture.step
 units: mm
@@ -22,8 +22,8 @@ source:
   stale_after_s: 1.0
 
 joints:
-  # Portál sa posúva po X. Mock posiela mm v rozsahu 50–2450.
-  - name: os_x
+  # The portal travels along X. The mock sends mm in the range 50-2450.
+  - name: axis_x
     parent: base
     child: base/portal
     type: prismatic
@@ -33,8 +33,9 @@ joints:
       node: "ns=2;s=Axes.X.ActPos"
       scale: 0.001
 
-  # Druhý diel portálu ide hore-dole. Mock posiela mm v rozsahu 50–750.
-  - name: os_z
+  # The second part of the portal moves up and down. The mock sends mm in the
+  # range 50-750.
+  - name: axis_z
     parent: base/portal
     child: base/portal/Part1[2]
     type: prismatic
@@ -44,10 +45,10 @@ joints:
       node: "ns=2;s=Axes.Z.ActPos"
       scale: 0.001
 
-  # Hlava sa otáča. Mock posiela tisíciny stupňa (±90 000).
-  - name: os_c
+  # The head rotates. The mock sends thousandths of a degree (±90 000).
+  - name: axis_c
     parent: base/portal
-    child: base/portal/hlava
+    child: base/portal/head
     type: revolute
     axis: [0, 0, 1]
     limits: [-3.14159265, 3.14159265]
@@ -55,8 +56,8 @@ joints:
       node: "ns=2;s=Axes.C.ActPos"
       scale: 1.7453292519943296e-05
 
-  # Kryt je pevný — je tu, aby demo obsahovalo aj statickú geometriu.
-  - name: kryt
+  # The cover is fixed — it is here so the demo contains static geometry too.
+  - name: cover
     parent: base
-    child: base/kryt
+    child: base/cover
     type: fixed

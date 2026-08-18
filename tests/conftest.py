@@ -1,4 +1,4 @@
-"""Spoločná konfigurácia testov."""
+"""Configuration shared by the tests."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from tests.factories import MACHINE_YAML
 
 @pytest.fixture
 def machine_yaml(tmp_path: Path) -> Path:
-    """Minimálna platná definícia stroja na disku.
+    """A minimal valid machine definition on disk.
 
-    Leží v `<tmp>/machines/`, aby sa správne odvodil koreň projektu pri
-    rozlišovaní relatívnej cesty k `step_file`.
+    It sits in `<tmp>/machines/` so the project root is derived correctly when the
+    relative path to `step_file` is resolved.
     """
     machines_dir = tmp_path / "machines"
     machines_dir.mkdir()

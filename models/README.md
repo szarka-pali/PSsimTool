@@ -1,12 +1,12 @@
 # models/
 
-Vstupné CAD súbory (STEP). **Nie sú vo verzovaní** — sú veľké a často obsahujú
-duševné vlastníctvo zákazníka. Patria do artefaktového úložiska, nie do gitu.
+Input CAD files (STEP). **They are not versioned** — they are large and often contain a
+customer's intellectual property. They belong in artifact storage, not in git.
 
-Cesty na ne sa uvádzajú v `machines/*.yaml` v poli `step_file`.
+Paths to them are given in `machines/*.yaml`, in the `step_file` field.
 
-Po nakopírovaní súboru spusti import do cache:
+After copying a file in, run the import into the cache:
 
 ```bash
-uv run pssim import-step models/priklad.step --machine machines/priklad.yaml
+uv run pssim import-step models/example.step --machine machines/example.yaml
 ```

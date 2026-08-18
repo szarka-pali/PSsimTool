@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "_comment_": "Zdieľané s tímom, verzuj to. Tokeny NIKDY nepíš sem — použi $PREMENNÁ, ktorá sa načíta z prostredia. Osobné servery si daj cez `claude mcp add --scope local`. PSsimTool je desktopová 3D aplikácia — browser/DB MCP servery tu nemajú čo robiť, preto sú vyhodené.",
+    "_comment_": "Shared with the team, keep it versioned. NEVER write tokens here - use $VARIABLE, read from the environment. Personal servers go through `claude mcp add --scope local`. PSsimTool is a desktop 3D application - browser/DB MCP servers have no business here, which is why they are gone.",
 
     "github": {
       "type": "http",

@@ -41,7 +41,7 @@ class MockAxis:
         return self.center + self.amplitude * math.sin(angle)
 
 
-#: Axes matching `machines/priklad.yaml`. Values in mm and in thousandths of a degree,
+#: Axes matching `machines/example.yaml`. Values in mm and in thousandths of a degree,
 #: that is, exactly as a servo typically sends them.
 DEFAULT_AXES: Final = (
     MockAxis(name="Axes.X.ActPos", amplitude=1200.0, center=1250.0, period_s=8.0),

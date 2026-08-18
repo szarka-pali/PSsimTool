@@ -1,0 +1,69 @@
+# The reference machine definition. It matches the axes `pssim mock-server` generates,
+# so it runs without a PLC and without a CAD file (importing the geometry still needs one).
+#
+# The complete schema, with every field:
+#   .claude/skills/domenovy-kontext/referencie/opcua-mapovanie.md
+
+machine: example
+description: Gantry palletiser — two linear axes and a rotating head
+
+# --- geometry --------------------------------------------------------------
+step_file: models/example.step
+units: mm
+tessellation:
+  linear_deflection_mm: 0.5
+  angular_deflection_rad: 0.35
+
+# --- connection ------------------------------------------------------------
+# CAREFUL: the endpoint here is a LOCAL MOCK. Real endpoints belong in the
+# environment (PSSIM_OPCUA_ENDPOINT) or on the CLI — this file is versioned.
+source:
+  endpoint: opc.tcp://localhost:4840/pssim/
+  publishing_interval_ms: 50
+  stale_after_s: 1.0
+
+# --- kinematics ------------------------------------------------------------
+joints:
+  # The gantry's travel along X. The PLC sends mm, hence scale 0.001.
+  - name: axis_x
+    parent: base
+    child: portal
+    type: prismatic
+    axis: [1, 0, 0]
+    limits: [0.0, 2.5]
+    signal:
+      node: "ns=2;s=Axes.X.ActPos"
+      scale: 0.001
+
+  # The lift. The carriage is a child of the portal, so it moves with it.
+  - name: axis_z
+    parent: portal
+    child: portal/carriage
+    type: prismatic
+    axis: [0, 0, 1]
+    limits: [0.0, 0.8]
+    origin:
+      xyz: [0.0, 0.0, 0.15]
+    signal:
+      node: "ns=2;s=Axes.Z.ActPos"
+      scale: 0.001
+
+  # The rotating head. The servo sends thousandths of a degree, so
+  # scale = pi/180/1000.
+  - name: axis_c
+    parent: portal/carriage
+    child: portal/carriage/head
+    type: revolute
+    axis: [0, 0, 1]
+    limits: [-3.14159265, 3.14159265]
+    signal:
+      node: "ns=2;s=Axes.C.ActPos"
+      scale: 1.7453292519943296e-05
+
+  # The cover does not move — it is here only for the fixed offset in the hierarchy.
+  - name: cover
+    parent: base
+    child: cover
+    type: fixed
+    origin:
+      xyz: [0.0, -0.4, 0.0]

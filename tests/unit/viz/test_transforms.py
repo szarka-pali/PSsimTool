@@ -1,8 +1,8 @@
-"""Testy konvencií otočení.
+"""Tests of the rotation conventions.
 
-Zmyslom je overiť kvaternióny proti **nezávisle zostavenej rotačnej matici**.
-Konvencie sú tá časť 3D kódu, kde sa chyba prejaví ako „diel je otočený nejako
-divne" a hľadá sa najhoršie.
+The point is to check the quaternions against an **independently built rotation
+matrix**. Conventions are the part of 3D code where a mistake shows up as "the part is
+turned somehow oddly" and is the worst to track down.
 """
 
 from __future__ import annotations
@@ -38,41 +38,41 @@ def rotation_z(angle: float) -> np.ndarray:
 
 
 class TestAxisAngle:
-    def test_nulovy_uhol_je_identita(self) -> None:
+    def test_a_zero_angle_is_the_identity(self) -> None:
         assert axis_angle_to_quat((0.0, 0.0, 1.0), 0.0) == pytest.approx(IDENTITY_QUAT, abs=1e-12)
 
-    def test_nulova_os_je_identita(self) -> None:
-        # Nemá sa stať (loader to odmietne), ale scéna nesmie spadnúť.
+    def test_a_zero_axis_is_the_identity(self) -> None:
+        # Should not happen (the loader rejects it), but the scene must not crash.
         assert axis_angle_to_quat((0.0, 0.0, 0.0), 1.0) == pytest.approx(IDENTITY_QUAT, abs=1e-12)
 
-    def test_os_sa_normalizuje(self) -> None:
+    def test_the_axis_is_normalised(self) -> None:
         long_axis = axis_angle_to_quat((0.0, 0.0, 5.0), math.pi / 3)
         unit_axis = axis_angle_to_quat((0.0, 0.0, 1.0), math.pi / 3)
 
         assert long_axis == pytest.approx(unit_axis, abs=1e-12)
 
-    def test_otocenie_o_90_okolo_z(self) -> None:
+    def test_a_90_degree_rotation_about_z(self) -> None:
         quat = axis_angle_to_quat((0.0, 0.0, 1.0), math.pi / 2)
 
         assert rotate_point(quat, (1.0, 0.0, 0.0)) == pytest.approx((0.0, 1.0, 0.0), abs=1e-9)
 
-    def test_otocenie_o_90_okolo_x(self) -> None:
+    def test_a_90_degree_rotation_about_x(self) -> None:
         quat = axis_angle_to_quat((1.0, 0.0, 0.0), math.pi / 2)
 
         assert rotate_point(quat, (0.0, 1.0, 0.0)) == pytest.approx((0.0, 0.0, 1.0), abs=1e-9)
 
-    def test_zaporny_uhol_otoci_opacne(self) -> None:
+    def test_a_negative_angle_turns_the_other_way(self) -> None:
         quat = axis_angle_to_quat((0.0, 0.0, 1.0), -math.pi / 2)
 
         assert rotate_point(quat, (1.0, 0.0, 0.0)) == pytest.approx((0.0, -1.0, 0.0), abs=1e-9)
 
-    def test_matica_je_ortogonalna(self) -> None:
+    def test_the_matrix_is_orthogonal(self) -> None:
         matrix = quat_to_matrix(axis_angle_to_quat((1.0, 2.0, 3.0), 0.7))
 
         assert matrix @ matrix.T == pytest.approx(np.eye(3), abs=1e-9)
 
 
-class TestSucin:
+class TestProduct:
     def test_identita_nic_nemeni(self) -> None:
         quat = axis_angle_to_quat((0.0, 1.0, 0.0), 0.4)
 
@@ -108,15 +108,15 @@ class TestRpy:
         ],
     )
     def test_zodpoveda_intrinsic_xyz_matici(self, rpy: tuple[float, float, float]) -> None:
-        # Toto je ten test, ktorý drží konvenciu: gp_Intrinsic_XYZ z OCC
-        # znamená Rx @ Ry @ Rz. Ak sa poradie zmení, rozsypú sa všetky machines/*.yaml.
+        # This is the test that holds the convention: gp_Intrinsic_XYZ from OCC means
+        # Rx @ Ry @ Rz. Change the order and every machines/*.yaml falls apart.
         roll, pitch, yaw = rpy
         expected = rotation_x(roll) @ rotation_y(pitch) @ rotation_z(yaw)
 
         assert quat_to_matrix(rpy_to_quat(rpy)) == pytest.approx(expected, abs=1e-9)
 
-    def test_otocenie_o_90_okolo_z_ako_vo_fixture(self) -> None:
-        # `hlava` vo fixture.step má presne toto otočenie.
+    def test_a_90_degree_rotation_about_z_as_in_the_fixture(self) -> None:
+        # `head` in fixture.step carries exactly this rotation.
         quat = rpy_to_quat((0.0, 0.0, math.pi / 2))
 
         assert rotate_point(quat, (1.0, 0.0, 0.0)) == pytest.approx((0.0, 1.0, 0.0), abs=1e-9)

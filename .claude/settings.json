@@ -50,7 +50,13 @@
       "Edit(certs/**)",
       "Edit(uv.lock)",
       "Edit(assets/cache/**)",
-      "Edit(models/**)",
+      "Edit(models/**/*.step)",
+      "Edit(models/**/*.stp)",
+      "Edit(models/**/*.iges)",
+      "Edit(models/**/*.igs)",
+      "Edit(models/**/*.jt)",
+      "Edit(models/**/*.sldprt)",
+      "Edit(models/**/*.sldasm)",
       "Edit(recordings/**)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
@@ -71,7 +77,7 @@
           {
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/format-and-lint.sh",
-            "statusMessage": "Formátujem a lintujem zmenený súbor",
+            "statusMessage": "Formatting and linting the changed file",
             "timeout": 120
           }
         ]

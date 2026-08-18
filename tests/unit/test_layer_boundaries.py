@@ -1,7 +1,7 @@
-"""Vynucuje hranice vrstiev z CLAUDE.md.
+"""Enforces the layer boundaries from CLAUDE.md.
 
-Pravidlo „domain/ importuje len stdlib" je ľahké porušiť z pohodlnosti a ťažké
-si všimnúť v code review. Preto je to test, nie len veta v dokumentácii.
+The rule "domain/ imports stdlib only" is easy to break out of convenience and hard to
+notice in code review. Hence a test, not just a sentence in the documentation.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ import pytest
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "pssim"
 
-#: Balíky, ktoré `domain/` nesmie importovať za žiadnych okolností.
+#: Packages `domain/` must not import under any circumstances.
 FORBIDDEN_IN_DOMAIN = frozenset(
     {"numpy", "pydantic", "yaml", "panda3d", "direct", "asyncua", "OCP", "trimesh", "typer"}
 )
 
-#: Vrstvy a to, čo z projektu smú importovať.
+#: The layers and what they may import from the project.
 ALLOWED_PROJECT_IMPORTS = {
     "domain": frozenset({"domain"}),
     "config": frozenset({"domain", "config"}),
@@ -33,7 +33,7 @@ def python_files(package: str) -> list[Path]:
 
 
 def imported_roots(path: Path) -> set[str]:
-    """Korene všetkých importov v súbore, vrátane tých vnútri funkcií."""
+    """The roots of every import in a file, including those inside functions."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     roots: set[str] = set()
     for node in ast.walk(tree):
@@ -66,7 +66,7 @@ def test_domain_importuje_len_stdlib(path: Path) -> None:
 
     assert not forbidden, (
         f"{path.relative_to(SRC)} importuje {sorted(forbidden)}. "
-        f"domain/ smie importovať výhradne stdlib — viď CLAUDE.md."
+        f"domain/ may import stdlib only - see CLAUDE.md."
     )
 
 
@@ -80,26 +80,26 @@ def test_vrstva_neimportuje_vyssie_vrstvy(layer: str) -> None:
             violations.append(f"{path.relative_to(SRC)} → pssim.{imported}")
 
     assert not violations, (
-        f"vrstva {layer}/ importuje vyššie vrstvy: {violations}. "
-        f"Závislosti idú len dovnútra — viď docs/architecture.md."
+        f"the layer {layer}/ imports layers above it: {violations}. "
+        f"Dependencies point inwards only - see docs/architecture.md."
     )
 
 
-def test_panda3d_nie_je_mimo_viz() -> None:
+def test_panda3d_is_not_imported_outside_viz() -> None:
     violations: list[str] = []
     for layer in ("domain", "config", "io", "cad"):
         for path in python_files(layer):
             if {"panda3d", "direct"} & imported_roots(path):
                 violations.append(str(path.relative_to(SRC)))
 
-    assert not violations, f"Panda3D patrí len do viz/: {violations}"
+    assert not violations, f"Panda3D belongs in viz/ only: {violations}"
 
 
-def test_ocp_nie_je_mimo_cad() -> None:
+def test_ocp_is_not_imported_outside_cad() -> None:
     violations: list[str] = []
     for layer in ("domain", "config", "io", "viz"):
         for path in python_files(layer):
             if "OCP" in imported_roots(path):
                 violations.append(str(path.relative_to(SRC)))
 
-    assert not violations, f"OpenCASCADE patrí len do cad/: {violations}"
+    assert not violations, f"OpenCASCADE belongs in cad/ only: {violations}"

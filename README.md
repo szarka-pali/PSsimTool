@@ -227,7 +227,7 @@ A window opens with a gantry that moves according to the values from the mock se
 
 ### With your own machine
 
-Copy `machines/priklad.yaml`, adjust the node paths and OPC UA nodes, and import the
+Copy `machines/example.yaml`, adjust the node paths and OPC UA nodes, and import the
 geometry (takes minutes, the result is cached):
 
 ```bash
@@ -246,11 +246,11 @@ PLC ──► io/ (asyncua) ──► StateStore ──► domain/ ────�
 joint, and which OPC UA node drives it.
 
 ```yaml
-machine: priklad
-step_file: models/priklad.step
+machine: example
+step_file: models/example.step
 units: mm
 joints:
-  - name: os_x
+  - name: axis_x
     parent: base
     child: portal
     type: prismatic
@@ -273,8 +273,8 @@ Domain glossary and signal mapping: `.claude/skills/domenovy-kontext/`.
 | All tests | `uv run pytest` |
 | Lint + format | `uv run ruff format . && uv run ruff check --fix .` |
 | Type check | `uv run pyright` |
-| Record data from a PLC | `uv run pssim record machines/priklad.yaml -o recordings/beh.jsonl` |
-| Replay a recording | `uv run pssim replay recordings/beh.jsonl machines/priklad.yaml` |
+| Record data from a PLC | `uv run pssim record machines/example.yaml -o recordings/run.jsonl` |
+| Replay a recording | `uv run pssim replay recordings/run.jsonl machines/example.yaml` |
 
 `ruff check` and `pytest tests/unit` must pass before a commit.
 

@@ -25,7 +25,7 @@ for 3.13+). `uv` fetches the right version itself.
 |---|---|
 | Install dependencies | `uv sync --all-extras` |
 | Run the desktop app | `uv run pssim ui` |
-| Run against a live PLC | `uv run pssim run machines/priklad.yaml` |
+| Run against a live PLC | `uv run pssim run machines/example.yaml` |
 | Mock PLC (second terminal) | `uv run pssim mock-server` |
 | **Tests (fast)** | `uv run pytest tests/unit -q` |
 | Tests against the mock PLC | `uv run pytest -m integration` |

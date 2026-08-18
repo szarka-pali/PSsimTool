@@ -1,7 +1,8 @@
-"""Testy rámovania kamery.
+"""Tests of camera framing.
 
-Čisté funkcie, bez Panda3D. Kritické je, že sa všetko odvodzuje od **veľkosti
-scény** — fixné hodnoty tu nefungujú a práve ony spôsobili prvý prázdny render.
+Pure functions, no Panda3D. What matters is that everything is derived from the **size
+of the scene** — fixed values do not work here, and they are exactly what caused the
+first empty render.
 """
 
 from __future__ import annotations
@@ -20,8 +21,8 @@ from pssim.viz.camera import (
 )
 
 
-class TestVzdialenostKamery:
-    def test_vacsia_scena_potrebuje_vacsiu_vzdialenost(self) -> None:
+class TestCameraDistance:
+    def test_a_larger_scene_needs_a_larger_distance(self) -> None:
         assert frame_distance(1.0) > frame_distance(0.1)
 
     def test_skaluje_linearne_s_polomerom(self) -> None:
@@ -30,8 +31,8 @@ class TestVzdialenostKamery:
     def test_sirsi_zorny_uhol_dovoli_ist_blizsie(self) -> None:
         assert frame_distance(1.0, fov_deg=90.0) < frame_distance(1.0, fov_deg=30.0)
 
-    def test_cely_model_sa_vojde_do_zaberu(self) -> None:
-        # Polovičný zorný uhol musí „obsiahnuť" polomer scény zo vzdialenosti d.
+    def test_the_whole_model_fits_in_the_frame(self) -> None:
+        # Half the field of view has to "cover" the scene radius from distance d.
         radius = 0.5
         distance = frame_distance(radius, DEFAULT_FOV_DEG)
 
@@ -40,56 +41,56 @@ class TestVzdialenostKamery:
         assert max_visible_radius >= radius
 
     @pytest.mark.parametrize("radius", [0.0, -1.0])
-    def test_nezmyselny_polomer_pouzije_nahradny(self, radius: float) -> None:
+    def test_a_nonsense_radius_uses_the_fallback(self, radius: float) -> None:
         assert frame_distance(radius) == pytest.approx(frame_distance(FALLBACK_RADIUS_M))
 
     def test_nulovy_zorny_uhol_nespadne(self) -> None:
         assert frame_distance(1.0, fov_deg=0.0) > 0.0
 
 
-class TestOrezoveRoviny:
-    def test_near_je_pod_velkostou_sceny(self) -> None:
-        # Toto je presne tá chyba, čo spôsobila prázdne okno: default near 1.0
-        # pri 0,1 m stroji oreže úplne všetko.
+class TestClipPlanes:
+    def test_near_is_below_the_scene_size(self) -> None:
+        # This is exactly the fault that caused the empty window: a default near of 1.0
+        # clips absolutely everything on a 0.1 m machine.
         near, _ = clip_planes(0.113)
 
         assert near < 0.113
 
-    def test_far_je_nad_velkostou_sceny(self) -> None:
+    def test_far_is_above_the_scene_size(self) -> None:
         _, far = clip_planes(0.113)
 
         assert far > 0.113
 
-    def test_roviny_skaluju_so_scenou(self) -> None:
+    def test_the_planes_scale_with_the_scene(self) -> None:
         small_near, small_far = clip_planes(0.1)
         big_near, big_far = clip_planes(10.0)
 
         assert big_near > small_near
         assert big_far > small_far
 
-    def test_near_je_vzdy_kladne(self) -> None:
+    def test_near_is_always_positive(self) -> None:
         near, _ = clip_planes(0.001)
 
         assert near > 0.0
 
-    def test_pomer_far_near_je_rozumny_pre_depth_buffer(self) -> None:
-        # Príliš veľký pomer rozbije presnosť depth bufferu a plochy začnú blikať.
+    def test_the_far_near_ratio_is_sane_for_the_depth_buffer(self) -> None:
+        # Too large a ratio destroys depth buffer precision and the faces start flickering.
         near, far = clip_planes(5.0)
 
         assert far / near <= 100_000
 
     @pytest.mark.parametrize("radius", [0.0, -1.0])
-    def test_nezmyselny_polomer_pouzije_nahradny(self, radius: float) -> None:
+    def test_a_nonsense_radius_uses_the_fallback(self, radius: float) -> None:
         assert clip_planes(radius) == clip_planes(FALLBACK_RADIUS_M)
 
 
-class TestSmeryPohladu:
-    def test_default_je_znamy(self) -> None:
+class TestViewDirections:
+    def test_the_default_view_is_known(self) -> None:
         assert "iso" in STANDARD_VIEWS
 
     @pytest.mark.parametrize("name", sorted(STANDARD_VIEWS))
-    def test_ziadny_smer_nie_je_nulovy(self, name: str) -> None:
-        # Nulový vektor by pri normalizácii dal NaN a scéna by zmizla.
+    def test_no_direction_is_the_zero_vector(self, name: str) -> None:
+        # A zero vector would give NaN when normalised and the scene would disappear.
         assert any(component != 0.0 for component in view_direction(name))
 
     def test_front_a_back_su_opacne(self) -> None:
@@ -98,11 +99,11 @@ class TestSmeryPohladu:
 
         assert front == pytest.approx(tuple(-component for component in back))
 
-    def test_top_nie_je_presne_v_osi_up(self) -> None:
-        # Čisto +Z by rozbilo lookAt — smer pohľadu by bol rovnobežný s osou up.
+    def test_top_is_not_exactly_on_the_up_axis(self) -> None:
+        # Pure +Z would break lookAt — the viewing direction would be parallel to up.
         assert view_direction("top")[1] != 0.0
 
-    def test_smery_su_jednotkove(self) -> None:
+    def test_the_directions_are_unit_length(self) -> None:
         for name in STANDARD_VIEWS:
             length = math.sqrt(sum(component**2 for component in view_direction(name)))
             assert length == pytest.approx(1.0, abs=1e-9), name
@@ -116,7 +117,7 @@ class TestSmeryPohladu:
     def test_top_a_bottom_su_opacne_vo_vyske(self) -> None:
         assert view_direction("top")[2] == pytest.approx(-view_direction("bottom")[2], abs=1e-9)
 
-    def test_celny_pohlad_je_na_zapornej_y(self) -> None:
+    def test_the_front_view_is_on_negative_y(self) -> None:
         assert view_direction("front") == pytest.approx((0.0, -1.0, 0.0), abs=1e-9)
 
     def test_neznamy_smer_vypise_podporovane(self) -> None:

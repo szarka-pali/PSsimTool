@@ -1,10 +1,10 @@
-"""Testy mechanizmu prekladov a anglických textov UI.
+"""Tests of the translation mechanism and of the English UI strings.
 
-Zdrojový jazyk je angličtina, takže bez nainštalovaného prekladu musí appka
-ukazovať texty tak, ako sú napísané v kóde. To je zároveň zmysel týchto testov:
-chýbajúci alebo pokazený preklad **nesmie** appku zhodiť.
+The source language is English, so with no translation installed the application must
+show the strings as they are written in the code. That is also the point of these
+tests: a missing or broken translation **must not** bring the application down.
 
-Bežia headless cez `QT_QPA_PLATFORM=offscreen`.
+They run headless through `QT_QPA_PLATFORM=offscreen`.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def qt_app() -> QApplication:
 
 
 class _StubViewport(QWidget):
-    """Viewport bez Panda3D. Musí mať `set_view`, inak okno hlášku nenastaví."""
+    """A viewport without Panda3D. It must have `set_view`, or the window sets no message."""
 
     def set_view(self, name: str) -> None:
         self.last_view = name
@@ -63,42 +63,42 @@ def window(qt_app: QApplication) -> Iterator[MainWindow]:
     instance.close()
 
 
-class TestRegisterJazykov:
-    def test_zdrojovy_jazyk_je_anglictina(self) -> None:
+class TestLanguageRegistry:
+    def test_the_source_language_is_english(self) -> None:
         assert SOURCE_LANGUAGE == "en"
 
-    def test_zdrojovy_jazyk_je_vzdy_dostupny(self) -> None:
-        # Nepotrebuje `.qm` súbor — texty sú v ňom napísané v kóde.
+    def test_the_source_language_is_always_available(self) -> None:
+        # Needs no `.qm` file — the strings are written in the code.
         assert SOURCE_LANGUAGE in available_languages()
 
     def test_jazyky_su_pomenovane_vo_svojom_jazyku(self) -> None:
-        # Budúce menu má zobrazovať „Slovenčina", nie „Slovak".
+        # A future menu should show "Slovenčina", not "Slovak".
         assert LANGUAGES["sk"] == "Slovenčina"
 
     def test_dostupne_su_podmnozinou_registrovanych(self) -> None:
         assert set(available_languages()) <= set(LANGUAGES)
 
-    def test_jazyk_bez_prekladu_nie_je_dostupny(self) -> None:
-        # `sk` je registrovaný, ale `.qm` preň zatiaľ neexistuje.
+    def test_a_language_without_a_translation_is_unavailable(self) -> None:
+        # `sk` is registered, but no `.qm` exists for it yet.
         if not translation_file("sk").is_file():
             assert "sk" not in available_languages()
 
-    def test_nazov_suboru_prekladu(self) -> None:
+    def test_the_translation_file_name(self) -> None:
         assert translation_file("de").name == "pssim_de.qm"
 
 
-class TestInstalaciaPrekladu:
+class TestInstallingATranslation:
     def test_zdrojovy_jazyk_nic_neinstaluje(self, qt_app: QApplication) -> None:
         assert install_translator(qt_app, SOURCE_LANGUAGE) is False
 
     def test_neznamy_jazyk_nespadne(self, qt_app: QApplication) -> None:
-        # Preklep v kóde jazyka nesmie zhodiť štart aplikácie.
+        # A typo in a language code must not bring down application startup.
         assert install_translator(qt_app, "klingon") is False
 
-    def test_chybajuci_preklad_nespadne(self, qt_app: QApplication) -> None:
+    def test_a_missing_translation_does_not_crash(self, qt_app: QApplication) -> None:
         assert install_translator(qt_app, "sk") is (translation_file("sk").is_file())
 
-    def test_poskodeny_subor_prekladu_nespadne(
+    def test_a_damaged_translation_file_does_not_crash(
         self, qt_app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         broken = tmp_path / "pssim_sk.qm"
@@ -108,40 +108,40 @@ class TestInstalaciaPrekladu:
         assert install_translator(qt_app, "sk") is False
 
 
-class TestAnglickeTextyOkna:
-    def test_stavovy_riadok_je_po_anglicky(self, window: MainWindow) -> None:
+class TestEnglishWindowText:
+    def test_the_status_bar_is_in_english(self, window: MainWindow) -> None:
         assert window.statusBar().currentMessage() == "Ready"
 
-    def test_lista_ma_anglicky_nazov(self, window: MainWindow) -> None:
+    def test_the_toolbar_has_an_english_name(self, window: MainWindow) -> None:
         assert window.toolbar.windowTitle() == "View"
 
-    def test_tlacidlo_pohladu_je_po_anglicky(self, window: MainWindow) -> None:
+    def test_the_view_button_is_in_english(self, window: MainWindow) -> None:
         assert window.view_button.text() == "View"
 
-    def test_zobraz_cele_je_po_anglicky(self, window: MainWindow) -> None:
+    def test_fit_to_view_is_in_english(self, window: MainWindow) -> None:
         assert window.fit_action.text() == "Fit to view"
 
-    def test_popis_akcie_exit_je_po_anglicky(self, window: MainWindow) -> None:
+    def test_the_exit_status_tip_is_in_english(self, window: MainWindow) -> None:
         assert window.exit_action.statusTip() == "Quit the application"
 
-    def test_prepnutie_pohladu_hlasi_po_anglicky(self, window: MainWindow) -> None:
+    def test_switching_the_view_reports_in_english(self, window: MainWindow) -> None:
         window.set_view("top")
 
         assert window.statusBar().currentMessage() == "View: top"
 
-    def test_filter_suborov_je_po_anglicky(self) -> None:
+    def test_the_file_filter_is_in_english(self) -> None:
         assert "CAD files" in cad_file_filter()
         assert "All files" in cad_file_filter()
 
 
-class TestAnglickeTextyDialogu:
-    def test_nazov_dialogu(self, qt_app: QApplication) -> None:
+class TestEnglishDialogText:
+    def test_the_dialog_title(self, qt_app: QApplication) -> None:
         dialog = PlacementDialog()
 
         assert dialog.windowTitle() == "Model Placement"
         dialog.close()
 
-    def test_skupiny_maju_anglicke_nazvy(self, qt_app: QApplication) -> None:
+    def test_the_groups_have_english_names(self, qt_app: QApplication) -> None:
         from PySide6.QtWidgets import QGroupBox
 
         dialog = PlacementDialog()
@@ -151,12 +151,12 @@ class TestAnglickeTextyDialogu:
         assert titles == {"Translation", "Rotation"}
 
 
-class TestPrelozitelneHlasky:
-    def test_identita_sa_popise_po_anglicky(self) -> None:
+class TestTranslatableMessages:
+    def test_the_identity_is_described_in_english(self) -> None:
         assert describe_placement(Transform()) == "Model at origin, no rotation"
 
-    def test_popis_uvadza_milimetre_nie_metre(self) -> None:
-        # Keby popis ukázal 0.1, používateľ by hľadal, kde sa mu stratilo 100.
+    def test_the_description_states_millimetres_not_metres(self) -> None:
+        # If the description showed 0.1, the user would go looking for the missing 100.
         text = describe_placement(to_transform(PlacementDisplay(x_mm=100.0)))
 
         assert "100" in text
@@ -168,18 +168,18 @@ class TestPrelozitelneHlasky:
         assert "45" in text
         assert "°" in text
 
-    def test_popis_je_po_anglicky(self) -> None:
+    def test_the_description_is_in_english(self) -> None:
         text = describe_placement(to_transform(PlacementDisplay(x_mm=1.0)))
 
         assert "Moved" in text
         assert "rotated" in text
 
-    def test_otocenie_o_ciely_stupen_sa_nezaokruhli_zle(self) -> None:
+    def test_a_whole_degree_of_rotation_is_not_rounded_badly(self) -> None:
         text = describe_placement(Transform(rpy=(0.0, 0.0, math.pi)))
 
         assert "180" in text
 
-    def test_popis_modelu_bez_assembly(self) -> None:
+    def test_describing_a_model_with_no_assembly(self) -> None:
         assert describe_assembly(None) == "Model loaded"
 
     def test_popis_modelu_uvadza_pocty(self) -> None:
@@ -196,6 +196,6 @@ class TestPrelozitelneHlasky:
         assert "2 parts" in text
         assert "12 triangles" in text
 
-    def test_doplnok_o_chybajucej_geometrii(self) -> None:
+    def test_the_missing_geometry_suffix(self) -> None:
         assert "3" in missing_geometry_suffix(3)
         assert "geometry missing" in missing_geometry_suffix(3)

@@ -1,10 +1,9 @@
-"""Testy hlavného okna.
+"""Tests of the main window.
 
-Bežia **headless** — `QT_QPA_PLATFORM=offscreen` sa nastaví skôr, než sa
-importuje PySide6, takže sa neotvorí žiadne okno a testy fungujú aj na stroji
-bez displeja.
+They run **headless** — `QT_QPA_PLATFORM=offscreen` is set before PySide6 is imported,
+so no window opens and the tests work on a machine with no display.
 
-Vyžaduje `uv sync --extra ui`. Spustenie: ``uv run pytest -m ui``
+Requires `uv sync --extra ui`. Run with: ``uv run pytest -m ui``
 """
 
 from __future__ import annotations
@@ -16,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-# Musí byť pred importom PySide6, inak si Qt vyberie platformu podľa prostredia
-# a na CI bez displeja spadne.
+# Must come before importing PySide6, or Qt picks its platform from the environment
+# and dies on CI with no display.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
@@ -37,7 +36,7 @@ pytestmark = pytest.mark.ui
 
 @pytest.fixture(scope="module")
 def qt_app() -> QApplication:
-    """Jediná `QApplication` na modul — Qt viac ako jednu nedovolí."""
+    """One `QApplication` per module — Qt allows no more than one."""
     existing = QApplication.instance()
     if isinstance(existing, QApplication):
         return existing
@@ -46,11 +45,11 @@ def qt_app() -> QApplication:
 
 @pytest.fixture
 def window(qt_app: QApplication) -> Iterator[MainWindow]:
-    """Čerstvé okno pre každý test. Po teste sa zavrie.
+    """A fresh window for every test, closed afterwards.
 
-    Namiesto skutočného 3D viewportu dostane obyčajný widget: `ShowBase` smie
-    v procese existovať len raz, takže sa v testoch nevytvára vôbec. Zobrazenie
-    geometrie overuje `tests/integration/test_viz_scene.py` a reálne spustenie.
+    Instead of the real 3D viewport it gets a plain widget: `ShowBase` may exist only
+    once per process, so in the tests it is never created at all. Displaying geometry
+    is verified by `tests/integration/test_viz_scene.py` and by real runs.
     """
     instance = MainWindow(viewport_factory=QWidget)
     yield instance
@@ -58,10 +57,10 @@ def window(qt_app: QApplication) -> Iterator[MainWindow]:
 
 
 def _pick_file(path: Path | None) -> Callable[..., tuple[str, str]]:
-    """Náhrada `QFileDialog.getOpenFileName`.
+    """Stand-in for `QFileDialog.getOpenFileName`.
 
-    `None` znamená, že používateľ stlačil Zrušiť — Qt v tom prípade vracia
-    prázdny reťazec, nie `None`.
+    `None` means the user pressed Cancel — Qt then returns an empty string, not
+    `None`.
     """
 
     def fake_dialog(*args: object, **kwargs: object) -> tuple[str, str]:
@@ -71,7 +70,7 @@ def _pick_file(path: Path | None) -> Callable[..., tuple[str, str]]:
 
 
 def _record_loads(recorded: list[Path]) -> Callable[..., None]:
-    """Náhrada `MainWindow.load_file`, ktorá si len zapíše, čo sa malo načítať."""
+    """Stand-in for `MainWindow.load_file` that only records what should have loaded."""
 
     def fake_load(_self: object, path: Path) -> None:
         recorded.append(path)
@@ -80,14 +79,14 @@ def _record_loads(recorded: list[Path]) -> Callable[..., None]:
 
 
 def _skip_loading(_self: object, _path: Path) -> None:
-    """Náhrada `MainWindow.load_file`, ktorá nerobí nič."""
+    """Stand-in for `MainWindow.load_file` that does nothing at all."""
 
 
 class _StubThread(QObject):
-    """Náhrada `StepImportThread`, ktorá nespustí žiadny import.
+    """Stand-in for `StepImportThread` that starts no import.
 
-    Skutočné vlákno by nad neexistujúcim súborom skončilo chybou a tá by
-    otvorila modálny dialóg — ten by v teste nemal kto zavrieť.
+    A real thread over a non-existent file would end in an error, and that error would
+    open a modal dialog with nobody in the test to close it.
     """
 
     started_count = 0
@@ -105,7 +104,7 @@ class _StubThread(QObject):
 
 
 def menu_titles(window: MainWindow) -> list[str]:
-    """Názvy položiek v menu bare, bez klávesových akcelerátorov (`&`)."""
+    """The menu bar entry names, without the keyboard accelerators (`&`)."""
     return [action.text().replace("&", "") for action in window.menuBar().actions()]
 
 
@@ -113,30 +112,30 @@ def menu_items(window: MainWindow, title: str) -> list[str]:
     for action in window.menuBar().actions():
         if action.text().replace("&", "") != title:
             continue
-        # `QAction.menu()` je v stuboch typované ako QObject, hoci vracia QMenu.
+        # `QAction.menu()` is typed as QObject in the stubs, although it returns QMenu.
         submenu = action.menu()
-        assert isinstance(submenu, QMenu), f"menu {title!r} nemá podpoložky"
+        assert isinstance(submenu, QMenu), f"menu {title!r} has no sub-items"
         return [item.text().replace("&", "") for item in submenu.actions()]
-    raise AssertionError(f"menu {title!r} neexistuje; sú tam {menu_titles(window)}")
+    raise AssertionError(f"menu {title!r} does not exist; the menus are {menu_titles(window)}")
 
 
-class TestOkno:
-    def test_ma_nazov(self, window: MainWindow) -> None:
+class TestWindow:
+    def test_the_window_has_a_title(self, window: MainWindow) -> None:
         assert window.windowTitle() == APP_TITLE
 
     def test_ma_stavovy_riadok(self, window: MainWindow) -> None:
         assert window.statusBar() is not None
 
     def test_ma_centralny_widget(self, window: MainWindow) -> None:
-        # Sem neskôr príde 3D viewport z viz/.
+        # The 3D viewport from viz/ goes here later.
         assert window.centralWidget() is not None
 
-    def test_na_zaciatku_nie_je_otvoreny_subor(self, window: MainWindow) -> None:
+    def test_no_file_is_open_at_the_start(self, window: MainWindow) -> None:
         assert window.current_file is None
 
 
 class TestMenu:
-    def test_hlavne_polozky_su_v_poradi(self, window: MainWindow) -> None:
+    def test_the_main_menus_are_in_order(self, window: MainWindow) -> None:
         assert menu_titles(window) == ["File", "Open", "Model"]
 
     def test_file_obsahuje_projektove_polozky(self, window: MainWindow) -> None:
@@ -152,7 +151,7 @@ class TestMenu:
             "Exit",
         ]
 
-    def test_open_obsahuje_otvorenie_3d_suboru(self, window: MainWindow) -> None:
+    def test_the_open_menu_offers_opening_a_3d_file(self, window: MainWindow) -> None:
         assert menu_items(window, "Open") == ["Open 3D file…"]
 
     def test_exit_ma_klavesovu_skratku(self, window: MainWindow) -> None:
@@ -163,29 +162,29 @@ class TestMenu:
 
 
 class TestExit:
-    def test_exit_zavrie_okno(self, window: MainWindow) -> None:
+    def test_exit_closes_the_window(self, window: MainWindow) -> None:
         window.show()
 
         window.exit_action.trigger()
 
         assert not window.isVisible()
 
-    def test_exit_sa_da_zavolat_aj_na_neotvorenom_okne(self, window: MainWindow) -> None:
-        # Nesmie spadnúť, ak používateľ stlačí Ctrl+Q skôr, než sa okno zobrazí.
+    def test_exit_works_on_a_window_never_shown(self, window: MainWindow) -> None:
+        # Must not crash if the user presses Ctrl+Q before the window is shown.
         window.exit_action.trigger()
 
         assert not window.isVisible()
 
 
-class TestOtvorenieSuboru:
-    def test_vybrany_subor_sa_zapamata(self, window: MainWindow, tmp_path: Path) -> None:
+class TestOpeningAFile:
+    def test_the_chosen_file_is_remembered(self, window: MainWindow, tmp_path: Path) -> None:
         step_file = tmp_path / "stroj.step"
 
         window.set_current_file(step_file)
 
         assert window.current_file == step_file
 
-    def test_nazov_okna_ukaze_subor(self, window: MainWindow, tmp_path: Path) -> None:
+    def test_the_window_title_shows_the_file(self, window: MainWindow, tmp_path: Path) -> None:
         window.set_current_file(tmp_path / "stroj.step")
 
         assert "stroj.step" in window.windowTitle()
@@ -206,20 +205,20 @@ class TestOtvorenieSuboru:
 
         assert received == [step_file]
 
-    def test_dialog_s_vyberom_nastavi_subor(
+    def test_the_dialog_sets_the_current_file(
         self, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         step_file = tmp_path / "vybrany.step"
         monkeypatch.setattr(
             "pssim.ui.main_window.QFileDialog.getOpenFileName", _pick_file(step_file)
         )
-        # Skutočný import by tu spustil vlákno nad neexistujúcim súborom
-        # a jeho chyba by otvorila modálny dialóg, ktorý test nemá kto zavrieť.
+        # A real import would start a thread over a non-existent file, and its error
+        # would open a modal dialog with nobody in the test to close it.
         monkeypatch.setattr(MainWindow, "load_file", _skip_loading)
 
         assert window.open_file_dialog() == step_file
 
-    def test_dialog_spusti_nacitanie(
+    def test_the_dialog_starts_the_load(
         self, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         step_file = tmp_path / "vybrany.step"
@@ -236,13 +235,13 @@ class TestOtvorenieSuboru:
     def test_zruseny_dialog_nic_nezmeni(
         self, window: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Prázdny reťazec je to, čo Qt vráti pri stlačení Zrušiť.
+        # An empty string is what Qt returns when Cancel is pressed.
         monkeypatch.setattr("pssim.ui.main_window.QFileDialog.getOpenFileName", _pick_file(None))
 
         assert window.open_file_dialog() is None
         assert window.current_file is None
 
-    def test_zruseny_dialog_nechá_povodny_nazov_okna(
+    def test_a_cancelled_dialog_keeps_the_window_title(
         self, window: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr("pssim.ui.main_window.QFileDialog.getOpenFileName", _pick_file(None))
@@ -251,7 +250,7 @@ class TestOtvorenieSuboru:
 
         assert window.windowTitle() == APP_TITLE
 
-    def test_zruseny_dialog_nespusti_nacitanie(
+    def test_a_cancelled_dialog_starts_nothing(
         self, window: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         loaded: list[Path] = []
@@ -338,17 +337,17 @@ def window_with_viewport(qt_app: QApplication) -> Iterator[tuple[MainWindow, _St
     instance.close()
 
 
-class TestListaPohladov:
+class TestViewToolbar:
     def test_lista_existuje(self, window: MainWindow) -> None:
         assert window.toolbar is not None
 
-    def test_menu_ponuka_vsetky_standardne_pohlady(self, window: MainWindow) -> None:
+    def test_the_menu_offers_every_standard_view(self, window: MainWindow) -> None:
         assert set(window.view_actions) == set(STANDARD_VIEWS)
 
     def test_poradie_zacina_izometriou(self, window: MainWindow) -> None:
         assert [action.text() for action in window.view_menu.actions()][0] == "Isometric"
 
-    def test_menu_obsahuje_zadane_pohlady(self, window: MainWindow) -> None:
+    def test_the_menu_lists_the_specified_views(self, window: MainWindow) -> None:
         labels = [action.text() for action in window.view_menu.actions()]
 
         assert {"Top", "Bottom", "Left", "Right", "Back", "Front"} <= set(labels)
@@ -356,14 +355,14 @@ class TestListaPohladov:
     def test_tlacidlo_ma_rozbalovacie_menu(self, window: MainWindow) -> None:
         assert window.view_button.menu() is window.view_menu
 
-    def test_menu_sa_rozbali_hned_po_kliknuti(self, window: MainWindow) -> None:
-        # Bez InstantPopup by sa menu ukázalo až po podržaní tlačidla.
+    def test_the_menu_opens_on_the_first_click(self, window: MainWindow) -> None:
+        # Without InstantPopup the menu would appear only after holding the button.
         assert window.view_button.popupMode() == QToolButton.ToolButtonPopupMode.InstantPopup
 
-    def test_kazdy_pohlad_ma_ikonu(self, window: MainWindow) -> None:
+    def test_every_view_has_an_icon(self, window: MainWindow) -> None:
         assert all(not action.icon().isNull() for action in window.view_actions.values())
 
-    def test_kazdy_pohlad_ma_skratku(self, window: MainWindow) -> None:
+    def test_every_view_has_a_shortcut(self, window: MainWindow) -> None:
         assert all(not action.shortcut().isEmpty() for action in window.view_actions.values())
 
     def test_skratky_su_unikatne(self, window: MainWindow) -> None:
@@ -371,12 +370,12 @@ class TestListaPohladov:
 
         assert len(set(shortcuts)) == len(shortcuts)
 
-    def test_tlacidlo_zobraz_cele_ma_ikonu(self, window: MainWindow) -> None:
+    def test_the_fit_button_has_an_icon(self, window: MainWindow) -> None:
         assert not window.fit_action.icon().isNull()
 
 
-class TestPrepnutiePohladu:
-    def test_akcia_posle_pohlad_do_viewportu(
+class TestSwitchingViews:
+    def test_the_action_sends_the_view_to_the_viewport(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
@@ -395,7 +394,7 @@ class TestPrepnutiePohladu:
 
         assert viewport.views == [name]
 
-    def test_stavovy_riadok_hlasi_pohlad(
+    def test_the_status_bar_reports_the_view(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, _ = window_with_viewport
@@ -404,7 +403,7 @@ class TestPrepnutiePohladu:
 
         assert "front" in window.statusBar().currentMessage()
 
-    def test_zobraz_cele_zavola_viewport(
+    def test_fit_to_view_calls_the_viewport(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
@@ -414,7 +413,7 @@ class TestPrepnutiePohladu:
 
         assert viewport.fit_calls == [window.models.selected_id]
 
-    def test_zobraz_cele_bez_vyberu_rammuje_vsetko(
+    def test_fit_to_view_frames_everything_with_no_selection(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
@@ -425,8 +424,8 @@ class TestPrepnutiePohladu:
 
         assert viewport.fit_calls == [None]
 
-    def test_viewport_bez_podpory_nespadne(self, window: MainWindow) -> None:
-        # Náhradný widget v testoch `set_view` nemá — okno to musí prežiť.
+    def test_a_viewport_without_support_does_not_crash(self, window: MainWindow) -> None:
+        # The substitute widget in the tests has no `set_view` — the window must survive.
         window.set_view("top")
 
         assert window.centralWidget() is not None
@@ -670,7 +669,7 @@ class TestRemoving:
         assert window.models.is_empty
 
 
-class TestUmiestnenie:
+class TestPlacing:
     def test_menu_model_existuje(self, window: MainWindow) -> None:
         assert "Model" in menu_titles(window)
 
@@ -680,7 +679,7 @@ class TestUmiestnenie:
     def test_polozka_ma_skratku(self, window: MainWindow) -> None:
         assert not window.placement_action.shortcut().isEmpty()
 
-    def test_dialog_sa_otvori(self, window_with_viewport: tuple[MainWindow, _StubViewport]) -> None:
+    def test_the_dialog_opens(self, window_with_viewport: tuple[MainWindow, _StubViewport]) -> None:
         window, _ = window_with_viewport
         _load(window)
 
@@ -703,7 +702,7 @@ class TestUmiestnenie:
         assert "gantry" in dialog.windowTitle()
         dialog.close()
 
-    def test_druhe_vyvolanie_nevytvori_dalsi_dialog(
+    def test_a_second_call_creates_no_second_dialog(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, _ = window_with_viewport
@@ -716,7 +715,7 @@ class TestUmiestnenie:
         assert first is not None
         first.close()
 
-    def test_dialog_ukaze_aktualne_umiestnenie(
+    def test_the_dialog_shows_the_current_placement(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, _ = window_with_viewport
@@ -729,7 +728,7 @@ class TestUmiestnenie:
         assert dialog.x_spin.value() == pytest.approx(250.0)
         dialog.close()
 
-    def test_zmena_v_dialogu_dorazi_do_sceny(
+    def test_a_change_in_the_dialog_reaches_the_scene(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
@@ -742,7 +741,7 @@ class TestUmiestnenie:
         assert viewport.placements[entry.model_id].xyz[0] == pytest.approx(0.5)
         dialog.close()
 
-    def test_otocenie_dorazi_do_sceny_v_radianoch(
+    def test_rotation_reaches_the_scene_in_radians(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, viewport = window_with_viewport
@@ -755,7 +754,7 @@ class TestUmiestnenie:
         assert viewport.placements[entry.model_id].rpy[2] == pytest.approx(math.pi / 2)
         dialog.close()
 
-    def test_umiestnenie_je_per_model(
+    def test_placement_is_per_model(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         # Moving one model must leave the other where it was.
@@ -785,7 +784,7 @@ class TestUmiestnenie:
         assert dialog is not None
         assert not dialog.isVisible()
 
-    def test_stavovy_riadok_hlasi_umiestnenie_v_milimetroch(
+    def test_the_status_bar_reports_the_placement_in_mm(
         self, window_with_viewport: tuple[MainWindow, _StubViewport]
     ) -> None:
         window, _ = window_with_viewport
@@ -795,27 +794,27 @@ class TestUmiestnenie:
 
         assert "100" in window.statusBar().currentMessage()
 
-    def test_viewport_bez_podpory_nespadne(self, window: MainWindow) -> None:
+    def test_a_viewport_without_support_does_not_crash(self, window: MainWindow) -> None:
         window.apply_placement(Transform(xyz=(1.0, 0.0, 0.0)))
 
         assert window.centralWidget() is not None
 
 
-class TestNacitanie:
-    def test_na_zaciatku_nic_nebezi(self, window: MainWindow) -> None:
+class TestLoading:
+    def test_nothing_runs_at_the_start(self, window: MainWindow) -> None:
         assert window.is_loading is False
 
-    def test_pocas_nacitania_je_open_zakazane(
+    def test_open_is_disabled_while_loading(
         self, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Súbeh dvoch importov by si prepísal cache aj scénu.
+        # Two imports at once would overwrite both the cache and the scene.
         monkeypatch.setattr("pssim.ui.main_window.StepImportThread", _StubThread)
 
         window.load_file(tmp_path / "stroj.step")
 
         assert window.open_action.isEnabled() is False
 
-    def test_druhy_pokus_pocas_nacitania_sa_ignoruje(
+    def test_a_second_attempt_while_loading_is_ignored(
         self, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr("pssim.ui.main_window.StepImportThread", _StubThread)
@@ -826,13 +825,13 @@ class TestNacitanie:
 
         assert _StubThread.started_count == started
 
-    def test_po_dokonceni_je_open_znovu_povolene(
+    def test_open_is_enabled_again_when_finished(
         self, window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr("pssim.ui.main_window.StepImportThread", _StubThread)
         window.load_file(tmp_path / "stroj.step")
 
-        window.on_import_finished()  # simuluje signál z vlákna
+        window.on_import_finished()  # stands in for the signal from the thread
 
         assert window.open_action.isEnabled() is True
         assert window.is_loading is False

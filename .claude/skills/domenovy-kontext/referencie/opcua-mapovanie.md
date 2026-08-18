@@ -6,11 +6,11 @@ A reference document. Load it when working on `config/schema.py`, `config/loader
 ## The complete `machines/*.yaml` schema
 
 ```yaml
-machine: priklad                  # required, a unique identifier
+machine: example                  # required, a unique identifier
 description: "Gantry palletiser"
 
 # --- geometry -----------------------------------------------------------
-step_file: models/priklad.step    # required, path relative to the repository root
+step_file: models/example.step    # required, path relative to the repository root
 units: mm                         # mm | m | in — the units of the STEP file
 tessellation:
   linear_deflection_mm: 0.5       # smaller = finer = more triangles
@@ -27,7 +27,7 @@ source:
 
 # --- kinematics ---------------------------------------------------------
 joints:
-  - name: os_x
+  - name: axis_x
     parent: base                  # the stable node path in the assembly tree
     child: portal
     type: prismatic               # prismatic | revolute | fixed

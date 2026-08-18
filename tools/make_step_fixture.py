@@ -14,8 +14,8 @@ with real files:
       portal                 assembly, translated by 100 mm in X
         Part1                two siblings of the same name -> indexing [1]/[2]
         Part1
-        hlava                a rotated part -> verifies the rotation from gp_Trsf
-      kryt                   a simple part with a colour
+        head                a rotated part -> verifies the rotation from gp_Trsf
+      cover                   a simple part with a colour
 
 The dimensions are in millimetres, so the conversion to metres can be tested.
 
@@ -81,8 +81,8 @@ def build() -> None:
 
     # The part definitions (each can be instantiated several times).
     part_def = named_solid("Part1", 20.0, 20.0, 20.0)
-    head_def = named_solid("hlava", 30.0, 10.0, 10.0)
-    cover_def = named_solid("kryt", 200.0, 5.0, 80.0)
+    head_def = named_solid("head", 30.0, 10.0, 10.0)
+    cover_def = named_solid("cover", 200.0, 5.0, 80.0)
 
     # The assembly.
     root = assembly("base")

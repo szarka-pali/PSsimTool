@@ -227,7 +227,7 @@ def screenshot(
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = DEFAULT_CACHE_DIR,
     values: Annotated[
         str | None,
-        typer.Option("--values", help='Joint positions, e.g. "os_x=1.2,os_c=1.57"'),
+        typer.Option("--values", help='Joint positions, e.g. "axis_x=1.2,axis_c=1.57"'),
     ] = None,
     view: Annotated[
         str, typer.Option("--view", help="iso | front | back | left | right | top")
@@ -261,7 +261,7 @@ def screenshot(
 
 
 def _parse_values(raw: str | None) -> dict[str, float]:
-    """Parse `os_x=1.2,os_c=1.57` into joint values."""
+    """Parse `axis_x=1.2,axis_c=1.57` into joint values."""
     if not raw:
         return {}
     values: dict[str, float] = {}

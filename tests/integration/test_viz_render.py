@@ -1,12 +1,12 @@
-"""Renderovacie testy — overujú, že stroj je naozaj VIDIEŤ.
+"""Rendering tests — they verify that the machine can actually BE SEEN.
 
-Toto je jediná trieda testov, ktorá by zachytila „otvorí sa prázdne okno".
-Testy polôh uzlov prejdú aj vtedy, keď kamera mieri mimo, je v počiatku,
-alebo je celá scéna za near rovinou.
+This is the one class of tests that would catch "an empty window opens". Tests of node
+positions pass even when the camera points elsewhere, sits at the origin, or the whole
+scene is behind the near plane.
 
-Render ide do súboru cez offscreen buffer, okno sa neotvára.
+The render goes to a file through an offscreen buffer; no window opens.
 
-Vyžaduje `uv sync --extra viz --extra cad`. Spustenie: ``uv run pytest -m viz``
+Requires `uv sync --extra viz --extra cad`. Run with: ``uv run pytest -m viz``
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ RENDER_SIZE = (320, 240)
 
 
 class StubSource:
-    """Zdroj bez dát — render nepotrebuje PLC."""
+    """A source with no data — rendering needs no PLC."""
 
     def __init__(self) -> None:
         self._store = StateStore()
@@ -51,7 +51,7 @@ class StubSource:
 
 
 def render(tmp_path: Path, *, view: str = "back", values: dict[str, float] | None = None) -> Path:
-    """Naimportuje fixture, postaví scénu a vyrenderuje ju do PNG."""
+    """Import the fixture, build the scene and render it into a PNG."""
     cache_root = tmp_path / "cache"
     loaded = load_machine(DEMO_MACHINE, project_root=PROJECT_ROOT)
     settings = ImportSettings(
@@ -76,14 +76,14 @@ def render(tmp_path: Path, *, view: str = "back", values: dict[str, float] | Non
 
 
 def pixel_stats(path: Path) -> tuple[int, int]:
-    """Vráti `(počet nepozadových pixelov, celkový počet)`.
+    """Return `(the number of non-background pixels, the total)`.
 
-    Pozadie je čierne, takže „nepozadový" znamená akýkoľvek svetlejší pixel.
+    The background is black, so "non-background" means any lighter pixel.
     """
     from panda3d.core import Filename, PNMImage
 
     image = PNMImage()
-    assert image.read(Filename.fromOsSpecific(str(path))), f"PNG sa nedá načítať: {path}"
+    assert image.read(Filename.fromOsSpecific(str(path))), f"the PNG cannot be read: {path}"
 
     lit = 0
     total = image.getXSize() * image.getYSize()
@@ -94,13 +94,13 @@ def pixel_stats(path: Path) -> tuple[int, int]:
     return lit, total
 
 
-class TestRenderNieJePrazdny:
-    def test_subor_vznikne(self, tmp_path: Path) -> None:
+class TestRenderIsNotEmpty:
+    def test_the_file_is_created(self, tmp_path: Path) -> None:
         assert render(tmp_path).is_file()
 
     def test_obrazok_ma_rozmery(self, tmp_path: Path) -> None:
-        # Presné rozmery sa neoverujú: Panda3D dovolí jedinú ShowBase na proces,
-        # takže veľkosť bufferu určí prvý render v celej testovacej sade.
+        # The exact dimensions are not checked: Panda3D allows one ShowBase per process,
+        # so the buffer size is decided by the first render in the whole test run.
         from panda3d.core import Filename, PNMImage
 
         image = PNMImage()
@@ -109,31 +109,33 @@ class TestRenderNieJePrazdny:
         assert image.getXSize() > 0
         assert image.getYSize() > 0
 
-    def test_stroj_je_vidiet(self, tmp_path: Path) -> None:
-        # TOTO je ten test. Prázdne okno = 0 nepozadových pixelov.
+    def test_the_machine_is_visible(self, tmp_path: Path) -> None:
+        # THIS is the test. An empty window = 0 non-background pixels.
         lit, total = pixel_stats(render(tmp_path))
 
-        assert lit > 0, "render je prázdny — kamera mieri mimo alebo je scéna za near rovinou"
-        assert lit > total * 0.01, f"vidieť len {lit}/{total} pixelov, stroj je mimo záberu"
+        assert lit > 0, (
+            "the render is empty - the camera points elsewhere or the scene is behind the near plane"
+        )
+        assert lit > total * 0.01, f"only {lit}/{total} pixels are lit, the machine is out of frame"
 
-    def test_stroj_nevyplna_cely_zaber(self, tmp_path: Path) -> None:
-        # Ak by near rovina bola príliš blízko a kamera vnútri modelu,
-        # vyplnil by obraz celý a nič by nebolo poznať.
+    def test_the_machine_does_not_fill_the_whole_frame(self, tmp_path: Path) -> None:
+        # If the near plane were too close and the camera inside the model, it would
+        # fill the whole image and nothing would be recognisable.
         lit, total = pixel_stats(render(tmp_path))
 
-        assert lit < total * 0.95, "stroj vyplňuje celý záber — kamera je príliš blízko"
+        assert lit < total * 0.95, "the machine fills the whole frame - the camera is too close"
 
     @pytest.mark.parametrize("view", ["iso", "front", "back", "left", "right", "top"])
-    def test_kazdy_pohlad_nieco_ukaze(self, tmp_path: Path, view: str) -> None:
+    def test_every_view_shows_something(self, tmp_path: Path, view: str) -> None:
         lit, _ = pixel_stats(render(tmp_path, view=view))
 
-        assert lit > 0, f"pohľad {view!r} je prázdny"
+        assert lit > 0, f"the {view!r} view is empty"
 
 
-class TestPohybJeVidiet:
+class TestMovementIsVisible:
     def test_iny_stav_osi_da_iny_obrazok(self, tmp_path: Path) -> None:
-        # Ak by sa hodnoty kĺbov na scénu nepremietali, obrázky by boli zhodné.
+        # If joint values did not reach the scene, the images would be identical.
         rest = pixel_stats(render(tmp_path / "a"))
-        moved = pixel_stats(render(tmp_path / "b", values={"os_x": 1.5, "os_z": 0.5}))
+        moved = pixel_stats(render(tmp_path / "b", values={"axis_x": 1.5, "axis_z": 0.5}))
 
         assert rest[0] != moved[0]

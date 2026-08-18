@@ -106,9 +106,7 @@ def validate(machine: MachineArg) -> None:
     typer.echo(f"signals:    {len(loaded.bindings)}")
     typer.echo(f"STEP:       {loaded.step_file}")
     typer.echo(f"units:      {loaded.units} (scale {loaded.scale_to_m})")
-    typer.echo(
-        f"cache:      {'present' if _cache_exists(loaded) else 'MISSING - run import-step'}"
-    )
+    typer.echo(f"cache:      {'present' if _cache_exists(loaded) else 'MISSING - run import-step'}")
     typer.echo("the definition is in order")
 
 

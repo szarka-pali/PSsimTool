@@ -132,6 +132,24 @@ def _record_imports(recorded: list[Path]) -> Callable[..., None]:
     return fake_load
 
 
+class _Metadata:
+    """What `StepImportThread.succeeded` carries: an assembly and nothing else."""
+
+    def __init__(self, cad_assembly: CadAssembly) -> None:
+        self.assembly = cad_assembly
+
+
+def finish_import(window: MainWindow) -> None:
+    """Let the import that is currently queued succeed, then step the queue.
+
+    The loading tests stub `load_file`, so nothing would otherwise reach
+    `on_import_succeeded` — which is where a project's saved name and placement are
+    put back onto the freshly added model.
+    """
+    window.on_import_succeeded(_Metadata(assembly()), Path("cache"))
+    window.on_import_finished()
+
+
 def load(window: MainWindow, name: str, step_dir: Path) -> ModelEntry:
     """Add a model as if an import had finished, with a real file on disk."""
     step = step_dir / f"{name}.step"
@@ -256,6 +274,113 @@ class TestLoading:
         written = instance.save_project_to(tmp_path / "line.pssim")
         assert written is not None
         return written
+
+    def _project_with_renamed_models(self, instance: MainWindow, tmp_path: Path) -> Path:
+        """Two models from one file, both given names of their own, then saved."""
+        for name in ("main frame", "carriage"):
+            entry = load(instance, "fixture", tmp_path)
+            instance.select_model(entry.model_id)
+            renamed = instance.models.rename(entry.model_id, name)
+            assert renamed is not None
+        written = instance.save_project_to(tmp_path / "line.pssim")
+        assert written is not None
+        return written
+
+    def test_renamed_models_are_saved_under_their_new_names(
+        self, window: tuple[MainWindow, _StubViewport], tmp_path: Path
+    ) -> None:
+        instance, _ = window
+
+        project = self._project_with_renamed_models(instance, tmp_path)
+
+        assert [model.name for model in read_project(project).models] == [
+            "main frame",
+            "carriage",
+        ]
+
+    def test_renamed_models_come_back_under_their_new_names(
+        self, window: tuple[MainWindow, _StubViewport], tmp_path: Path
+    ) -> None:
+        # The bug: the tree showed the file stem plus a counter, not the saved name.
+        instance, _ = window
+        project = self._project_with_renamed_models(instance, tmp_path)
+
+        instance.load_project(project)
+        finish_import(instance)
+        finish_import(instance)
+
+        assert instance.models.names == ("main frame", "carriage")
+
+    def test_a_renamed_selection_is_restored(
+        self, window: tuple[MainWindow, _StubViewport], tmp_path: Path
+    ) -> None:
+        # A project records its selection by name (R13), so losing the names lost
+        # the selection with them.
+        instance, _ = window
+        project = self._project_with_renamed_models(instance, tmp_path)
+
+        instance.load_project(project)
+        finish_import(instance)
+        finish_import(instance)
+
+        selected = instance.selected_model
+        assert selected is not None
+        assert selected.name == "carriage"
+
+    def test_reloaded_names_stay_unique(
+        self, window: tuple[MainWindow, _StubViewport], tmp_path: Path
+    ) -> None:
+        instance, _ = window
+        project = self._project_with_renamed_models(instance, tmp_path)
+
+        instance.load_project(project)
+        finish_import(instance)
+        finish_import(instance)
+
+        assert len(set(instance.models.names)) == 2
+
+    def test_reloaded_names_show_in_the_tree(
+        self, window: tuple[MainWindow, _StubViewport], tmp_path: Path
+    ) -> None:
+        instance, _ = window
+        project = self._project_with_renamed_models(instance, tmp_path)
+
+        instance.load_project(project)
+        finish_import(instance)
+        finish_import(instance)
+
+        item = instance.model_tree.topLevelItem(0)
+        assert item is not None
+        assert item.text(0) == "main frame"
+
+    def test_saved_placement_still_survives_the_load(
+        self, window: tuple[MainWindow, _StubViewport], tmp_path: Path
+    ) -> None:
+        # The name is restored next to the placement, so this guards the pair.
+        instance, viewport = window
+        project = self._saved_project(instance, tmp_path)
+
+        instance.load_project(project)
+        finish_import(instance)
+        finish_import(instance)
+
+        entries = instance.models.entries
+        assert entries[0].placement.xyz[0] == pytest.approx(0.1)
+        assert viewport.placements[entries[1].model_id].xyz[0] == pytest.approx(0.2)
+
+    def test_names_from_a_project_of_one_model_survive(
+        self, window: tuple[MainWindow, _StubViewport], tmp_path: Path
+    ) -> None:
+        instance, _ = window
+        entry = load(instance, "fixture", tmp_path)
+        instance.models.rename(entry.model_id, "gantry")
+        written = instance.save_project_to(tmp_path / "one.pssim")
+        assert written is not None
+
+        instance.load_project(written)
+        finish_import(instance)
+
+        assert instance.models.names == ("gantry",)
 
     def test_loading_clears_the_previous_scene(
         self, window: tuple[MainWindow, _StubViewport], tmp_path: Path

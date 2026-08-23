@@ -192,6 +192,26 @@ class TestPanning:
 
         assert moved.target[0] < 0.0
 
+    def test_dragging_up_moves_the_model_up(self) -> None:
+        # Panda3D's mouse Y is +1 at the **top** of the window, so dragging up
+        # arrives here as a positive delta. The target therefore has to go down
+        # for the model to follow the cursor, exactly as X goes left above.
+        moved = camera().pan_pixels(0.0, 50.0, viewport_height_px=600)
+
+        assert moved.target[2] < 0.0
+
+    def test_dragging_down_moves_the_model_down(self) -> None:
+        moved = camera().pan_pixels(0.0, -50.0, viewport_height_px=600)
+
+        assert moved.target[2] > 0.0
+
+    def test_both_axes_use_the_same_convention(self) -> None:
+        # The bug was one axis negated and the other not, in the same call. This
+        # pins them together so they cannot drift apart again.
+        moved = camera().pan_pixels(50.0, 50.0, viewport_height_px=600)
+
+        assert moved.target[0] == pytest.approx(moved.target[2], abs=1e-9)
+
     def test_nulova_vyska_viewportu_nespadne(self) -> None:
         # Happens when the window is minimised.
         moved = camera().pan_pixels(10.0, 10.0, viewport_height_px=0)

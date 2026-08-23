@@ -212,8 +212,13 @@ class OrbitCamera:
         world_per_pixel = (
             2.0 * self.distance_m * math.tan(math.radians(fov_deg) / 2.0) / viewport_height_px
         )
-        # Dragging right moves the model right, which means moving the target left.
-        return self.pan(-delta_x_px * world_per_pixel, delta_y_px * world_per_pixel)
+        # "Grab the model and drag it": the model follows the cursor, so the
+        # target moves the opposite way. **Both** axes are negated. The deltas
+        # arrive from `orbit_control._mouse_pixel`, which reads Panda3D's mouse
+        # — and its Y is +1 at the *top* of the window, not the bottom. Negating
+        # only X (as this did) left the vertical axis inverted: dragging up sent
+        # the model down.
+        return self.pan(-delta_x_px * world_per_pixel, -delta_y_px * world_per_pixel)
 
     def with_view(self, name: str) -> OrbitCamera:
         """Switch to a standard view.

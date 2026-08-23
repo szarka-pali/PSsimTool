@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from pssim.domain.machine import Transform
+from pssim.domain.model_joints import Anchor
 from pssim.ui.model_registry import ModelRegistry
 
 
@@ -262,120 +263,243 @@ def test_many_copies_all_get_distinct_names(count: int) -> None:
     assert len(set(registry.names)) == count
 
 
-class TestRenaming:
-    def test_name_changes(self) -> None:
-        registry = registry_with("gantry")
+class TestBinding:
+    def test_a_new_model_is_bound_to_nothing(self) -> None:
+        assert ModelRegistry().add(Path("a.step")).bound_to_joint_id is None
+
+    def test_binding_stores_the_joint_id(self) -> None:
+        registry = registry_with("a")
         model_id = registry.entries[0].model_id
 
-        assert registry.rename(model_id, "conveyor") is not None
-        assert registry.names == ("conveyor",)
+        assert registry.bind(model_id, "joint-1") is True
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.bound_to_joint_id == "joint-1"
 
-    def test_updated_entry_is_returned(self) -> None:
-        registry = registry_with("gantry")
-
-        updated = registry.rename(registry.entries[0].model_id, "conveyor")
-
-        assert updated is not None
-        assert updated.name == "conveyor"
-
-    def test_surrounding_whitespace_is_dropped(self) -> None:
-        registry = registry_with("gantry")
-
-        updated = registry.rename(registry.entries[0].model_id, "  conveyor  ")
-
-        assert updated is not None
-        assert updated.name == "conveyor"
-
-    def test_blank_name_is_refused(self) -> None:
-        # An unnamed model would be a row in the tree with nothing to click on.
-        registry = registry_with("gantry")
-
-        assert registry.rename(registry.entries[0].model_id, "   ") is None
-
-    def test_refused_rename_leaves_the_name_alone(self) -> None:
-        registry = registry_with("gantry")
-
-        registry.rename(registry.entries[0].model_id, "")
-
-        assert registry.names == ("gantry",)
-
-    def test_unknown_id_is_refused(self) -> None:
-        assert registry_with("gantry").rename("model-99", "conveyor") is None
-
-    def test_renaming_to_the_same_name_is_allowed(self) -> None:
-        # Reopening the dialog and pressing OK must not add a counter suffix.
-        registry = registry_with("gantry")
-
-        updated = registry.rename(registry.entries[0].model_id, "gantry")
-
-        assert updated is not None
-        assert updated.name == "gantry"
-
-    def test_a_taken_name_gets_a_counter(self) -> None:
-        registry = registry_with("gantry", "conveyor")
-
-        updated = registry.rename(registry.entries[1].model_id, "gantry")
-
-        assert updated is not None
-        assert updated.name == "gantry (2)"
-
-    def test_counter_skips_names_already_in_use(self) -> None:
-        registry = registry_with("gantry", "gantry", "conveyor")
-
-        updated = registry.rename(registry.entries[2].model_id, "gantry")
-
-        assert updated is not None
-        assert updated.name == "gantry (3)"
-
-    def test_placement_survives_a_rename(self) -> None:
-        registry = registry_with("gantry")
+    def test_binding_the_same_joint_again_reports_no_change(self) -> None:
+        registry = registry_with("a")
         model_id = registry.entries[0].model_id
-        registry.set_placement(model_id, Transform(xyz=(0.3, 0.0, 0.0)))
+        registry.bind(model_id, "joint-1")
 
-        updated = registry.rename(model_id, "conveyor")
+        assert registry.bind(model_id, "joint-1") is False
 
-        assert updated is not None
-        assert updated.placement.xyz[0] == pytest.approx(0.3)
-
-    def test_id_survives_a_rename(self) -> None:
-        # The renderer refers to models by id; a rename must not disturb it.
-        registry = registry_with("gantry")
+    def test_releasing_with_none_clears_it(self) -> None:
+        registry = registry_with("a")
         model_id = registry.entries[0].model_id
+        registry.bind(model_id, "joint-1")
 
-        registry.rename(model_id, "conveyor")
+        registry.bind(model_id, None)
 
-        assert registry.entries[0].model_id == model_id
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.bound_to_joint_id is None
 
-    def test_selection_survives_a_rename(self) -> None:
-        registry = registry_with("gantry", "conveyor")
-        model_id = registry.selected_id
-        assert model_id is not None
+    def test_binding_an_unknown_model_is_harmless(self) -> None:
+        assert ModelRegistry().bind("nonsense", "joint-1") is False
 
-        registry.rename(model_id, "head")
-
-        assert registry.selected_id == model_id
-
-    def test_selected_name_follows_the_rename(self) -> None:
-        # What a project file stores, so it has to be the new name.
-        registry = registry_with("gantry")
+    def test_binding_does_not_disturb_the_placement(self) -> None:
+        registry = registry_with("a")
         model_id = registry.entries[0].model_id
+        registry.set_placement(model_id, Transform(xyz=(1.0, 0.0, 0.0)))
 
-        registry.rename(model_id, "conveyor")
+        registry.bind(model_id, "joint-1")
 
-        assert registry.selected_name == "conveyor"
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.placement.xyz == (1.0, 0.0, 0.0)
 
-    def test_order_survives_a_rename(self) -> None:
-        registry = registry_with("first", "second")
 
-        registry.rename(registry.entries[0].model_id, "renamed")
+class TestAnchor:
+    def test_a_new_model_anchors_at_its_own_origin(self) -> None:
+        entry = ModelRegistry().add(Path("a.step"))
 
-        assert registry.names == ("renamed", "second")
+        assert entry.anchor == Anchor()
 
-    def test_a_freed_name_can_be_reused(self) -> None:
-        registry = registry_with("gantry", "conveyor")
-        registry.rename(registry.entries[0].model_id, "head")
+    def test_setting_an_anchor_stores_it(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        anchor = Anchor(point=(0.1, 0.0, 0.0), direction=(1.0, 0.0, 0.0))
 
-        updated = registry.rename(registry.entries[1].model_id, "gantry")
+        assert registry.set_anchor(model_id, anchor) is True
 
-        assert updated is not None
-        assert updated.name == "gantry"
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.anchor == anchor
+
+    def test_setting_the_same_anchor_reports_no_change(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        anchor = Anchor(point=(0.1, 0.0, 0.0))
+        registry.set_anchor(model_id, anchor)
+
+        assert registry.set_anchor(model_id, anchor) is False
+
+    def test_setting_an_anchor_on_an_unknown_model_is_harmless(self) -> None:
+        assert ModelRegistry().set_anchor("nonsense", Anchor()) is False
+
+    def test_the_anchor_survives_a_rename(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        registry.set_anchor(model_id, Anchor(point=(0.1, 0.0, 0.0)))
+
+        registry.rename(model_id, "renamed")
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.anchor.point == (0.1, 0.0, 0.0)
+
+
+class TestVisibility:
+    def test_a_model_starts_visible(self) -> None:
+        registry = ModelRegistry()
+
+        assert registry.add(Path("a.step")).is_visible is True
+
+    def test_hiding_a_model_is_remembered(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+
+        registry.set_visible(model_id, False)
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.is_visible is False
+
+    def test_hiding_reports_the_change(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+
+        assert registry.set_visible(model_id, False) is True
+
+    def test_hiding_twice_reports_no_change(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        registry.set_visible(model_id, False)
+
+        assert registry.set_visible(model_id, False) is False
+
+    def test_hiding_an_unknown_model_is_harmless(self) -> None:
+        assert ModelRegistry().set_visible("nonsense", False) is False
+
+    def test_visibility_survives_a_rename(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        registry.set_visible(model_id, False)
+
+        registry.rename(model_id, "renamed")
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.is_visible is False
+
+
+class TestAxesVisibility:
+    def test_the_cross_starts_shown(self) -> None:
+        registry = ModelRegistry()
+
+        assert registry.add(Path("a.step")).show_axes is True
+
+    def test_hiding_the_cross_is_remembered(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+
+        registry.set_axes_visible(model_id, False)
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.show_axes is False
+
+    def test_hiding_the_cross_twice_reports_no_change(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        registry.set_axes_visible(model_id, False)
+
+        assert registry.set_axes_visible(model_id, False) is False
+
+    def test_hiding_the_cross_on_an_unknown_model_is_harmless(self) -> None:
+        assert ModelRegistry().set_axes_visible("nonsense", False) is False
+
+    def test_the_cross_and_the_model_are_independent(self) -> None:
+        # Hiding a cross must not hide the model it belongs to.
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+
+        registry.set_axes_visible(model_id, False)
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.is_visible is True
+
+
+class TestColor:
+    def test_a_model_starts_with_no_override(self) -> None:
+        registry = ModelRegistry()
+
+        assert registry.add(Path("a.step")).color is None
+
+    def test_a_colour_is_remembered(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+
+        registry.set_color(model_id, (1.0, 0.0, 0.0, 1.0))
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.color == (1.0, 0.0, 0.0, 1.0)
+
+    def test_setting_a_colour_reports_the_change(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+
+        assert registry.set_color(model_id, (1.0, 0.0, 0.0, 1.0)) is True
+
+    def test_setting_the_same_colour_reports_no_change(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        registry.set_color(model_id, (1.0, 0.0, 0.0, 1.0))
+
+        assert registry.set_color(model_id, (1.0, 0.0, 0.0, 1.0)) is False
+
+    def test_clearing_it_goes_back_to_no_override(self) -> None:
+        # `None` has to be reachable: it is the only way back to the colours the
+        # STEP file carries.
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        registry.set_color(model_id, (1.0, 0.0, 0.0, 1.0))
+
+        registry.set_color(model_id, None)
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.color is None
+
+    def test_clearing_an_absent_override_reports_no_change(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+
+        assert registry.set_color(model_id, None) is False
+
+    def test_colouring_an_unknown_model_is_harmless(self) -> None:
+        assert ModelRegistry().set_color("nonsense", (1.0, 0.0, 0.0, 1.0)) is False
+
+    def test_a_colour_survives_a_rename(self) -> None:
+        registry = ModelRegistry()
+        model_id = registry.add(Path("a.step")).model_id
+        registry.set_color(model_id, (0.0, 1.0, 0.0, 1.0))
+
+        registry.rename(model_id, "renamed")
+
+        entry = registry.get(model_id)
+        assert entry is not None
+        assert entry.color == (0.0, 1.0, 0.0, 1.0)
+
+    def test_each_model_has_its_own_colour(self) -> None:
+        registry = ModelRegistry()
+        first = registry.add(Path("a.step")).model_id
+        second = registry.add(Path("b.step")).model_id
+
+        registry.set_color(first, (1.0, 0.0, 0.0, 1.0))
+
+        entry = registry.get(second)
+        assert entry is not None
+        assert entry.color is None

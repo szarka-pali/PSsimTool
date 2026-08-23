@@ -15,7 +15,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
-from pssim.domain.machine import Transform
+from pssim.domain.machine import Rgba, Transform
+from pssim.domain.model_joints import Anchor
 from pssim.domain.placement import IDENTITY_PLACEMENT
 
 #: Separator used when the same file is loaded more than once: `gantry (2)`.
@@ -37,6 +38,36 @@ class ModelEntry:
     placement: Transform = IDENTITY_PLACEMENT
     node_count: int = 0
     triangle_count: int = 0
+    bound_to_joint_id: str | None = None
+    """The joint whose motion carries this model, or `None` when it sits
+    directly in the scene. A model is a leaf: it is bound to a joint, it never
+    owns one."""
+
+    anchor: Anchor = Anchor()
+    """The point and direction, in the model's own local frame, that couple it
+    to that joint — the contact point. Without it a model could only ever be
+    attached by its CAD origin, wherever the designer left that."""
+
+    is_visible: bool = True
+    """Whether the model is drawn. Purely visual: a hidden model still blocks
+    sensors and still collides, because hiding is how you look *inside* an
+    assembly, not how you take a part out of it."""
+
+    show_axes: bool = True
+    """Whether its coordinate cross is drawn while it is selected. Off is for a
+    small part inside a chain, where the cross is more clutter than help."""
+
+    color: Rgba | None = None
+    """An override for the whole model, or `None` for the per-part colours the
+    STEP file carries. `None` rather than a default colour on purpose: the CAD
+    colours cannot be reconstructed once overwritten, so "no override" has to be
+    a state of its own for `Reset Colour` to be possible."""
+
+    highlight_color: Rgba | None = None
+    """The colour this model is outlined in when selected, or `None` for the
+    default. Separate from `color`: one is the part, the other is the marker
+    drawn around it, and a model whose body is red still needs an outline that
+    can be told apart from the collision warning."""
 
     @property
     def is_placed(self) -> bool:
@@ -202,6 +233,64 @@ class ModelRegistry:
         updated = replace(entry, placement=placement)
         self._entries[model_id] = updated
         return updated
+
+    def bind(self, model_id: str, joint_id: str | None) -> bool:
+        """Bind `model_id` to a joint so its motion carries the model, or
+        release it back into the scene with `None`. Returns `True` if it changed.
+
+        No cycle check is needed here at all, unlike the version this replaces:
+        a model cannot carry a joint, so binding one can never close a loop.
+        Cycles are a joint→joint concern (`ui.joint_registry.would_cycle`).
+        """
+        entry = self._entries.get(model_id)
+        if entry is None or entry.bound_to_joint_id == joint_id:
+            return False
+        self._entries[model_id] = replace(entry, bound_to_joint_id=joint_id)
+        return True
+
+    def set_anchor(self, model_id: str, anchor: Anchor) -> bool:
+        """Set the model's contact point and direction. Returns `True` if it
+        changed. Mirrors `set_placement`'s shape."""
+        entry = self._entries.get(model_id)
+        if entry is None or entry.anchor == anchor:
+            return False
+        self._entries[model_id] = replace(entry, anchor=anchor)
+        return True
+
+    def set_visible(self, model_id: str, is_visible: bool) -> bool:
+        """Show or hide the model. Returns `True` if it changed."""
+        entry = self._entries.get(model_id)
+        if entry is None or entry.is_visible == is_visible:
+            return False
+        self._entries[model_id] = replace(entry, is_visible=is_visible)
+        return True
+
+    def set_color(self, model_id: str, color: Rgba | None) -> bool:
+        """Override the model's colour, or clear the override with `None`.
+        Returns `True` if it changed."""
+        entry = self._entries.get(model_id)
+        if entry is None or entry.color == color:
+            return False
+        self._entries[model_id] = replace(entry, color=color)
+        return True
+
+    def set_highlight_color(self, model_id: str, color: Rgba | None) -> bool:
+        """Set the colour the model is outlined in when selected, or clear the
+        override with `None`. Returns `True` if it changed."""
+        entry = self._entries.get(model_id)
+        if entry is None or entry.highlight_color == color:
+            return False
+        self._entries[model_id] = replace(entry, highlight_color=color)
+        return True
+
+    def set_axes_visible(self, model_id: str, show_axes: bool) -> bool:
+        """Show or hide the model's own coordinate cross. Returns `True` if it
+        changed."""
+        entry = self._entries.get(model_id)
+        if entry is None or entry.show_axes == show_axes:
+            return False
+        self._entries[model_id] = replace(entry, show_axes=show_axes)
+        return True
 
     # -- helpers ------------------------------------------------------------
 

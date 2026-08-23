@@ -17,9 +17,16 @@ from PySide6.QtCore import QCoreApplication
 from pssim.cad.model import CadAssembly
 from pssim.domain.machine import Transform
 from pssim.domain.placement import from_transform, is_identity
+from pssim.domain.sensors import DISTANCE_KINDS, ENCODER_KINDS, SensorKind
+from pssim.domain.units import MM_TO_M
+from pssim.ui.sensor_registry import SensorEntry
 
 #: The context for `lupdate`. It must be constant, or the translations fall apart.
 CONTEXT: Final = "labels"
+
+#: Shown wherever a field has nothing to report. One spelling, so a dash in the
+#: tree and a dash in the properties panel are recognisably the same statement.
+NOT_APPLICABLE: Final = "\u2014"
 
 
 def _tr(text: str) -> str:
@@ -57,3 +64,65 @@ def describe_assembly(assembly: CadAssembly | None) -> str:
 def missing_geometry_suffix(missing: int) -> str:
     """The addition to the message when part of the model has no geometry in the cache."""
     return _tr(" — geometry missing for {0} part(s)").format(missing)
+
+
+def has_detection_state(kind: SensorKind) -> bool:
+    """Whether "is something there" is a question this kind of sensor answers.
+
+    False for the encoders alone. They are bolted to an axis and report its
+    angle; they look for nothing, so `is_active` is `False` for them forever and
+    any word put in a State column would be describing a failure to detect that
+    was never attempted. See docs/architecture.md R16.
+    """
+    return kind not in ENCODER_KINDS
+
+
+def describe_state(entry: SensorEntry) -> str:
+    """The State column: what the sensor is currently saying, in one word.
+
+    Three phrasings rather than one pair, because the three families are
+    answering different questions. "Clear" fits a beam with nothing crossing it;
+    a rangefinder in the same condition is **out of range**, which is a statement
+    about the sensor's reach rather than about an empty space in front of it.
+    """
+    kind = entry.sensor.kind
+    if not has_detection_state(kind):
+        return NOT_APPLICABLE
+    if kind in DISTANCE_KINDS:
+        return _tr("In range") if entry.reading.is_valid else _tr("Out of range")
+    return _tr("Detected") if entry.is_active else _tr("Clear")
+
+
+def describe_state_tooltip(entry: SensorEntry) -> str:
+    """The sentence behind the one word, for the cell's tooltip.
+
+    The word alone cannot say what the sensor was looking for, and that is
+    exactly what a reader wants when a row says something unexpected.
+    """
+    kind = entry.sensor.kind
+    if not has_detection_state(kind):
+        return _tr("An encoder detects nothing — it reports the angle of its axis")
+    if kind in DISTANCE_KINDS:
+        if entry.reading.is_valid:
+            return _tr("Measuring {0} mm").format(f"{entry.reading.value / MM_TO_M:g}")
+        return _tr("Nothing within the {0} mm range").format(f"{entry.sensor.range_m / MM_TO_M:g}")
+    if kind is SensorKind.PROXIMITY:
+        return _tr("Something is inside the zone") if entry.is_active else _tr("The zone is empty")
+    if entry.is_active:
+        return _tr("Something is crossing the beam")
+    return _tr("Nothing is crossing the beam")
+
+
+def describe_reading(entry: SensorEntry) -> str:
+    """The number the sensor reports, in the units the user thinks in.
+
+    Millimetres for a distance, counts for an encoder, 0/1 for the rest — the
+    same boundary rule as everywhere: the display converts, the domain does not.
+    An invalid distance reads as a dash rather than a number, because the number
+    would be the range and would look like a measurement.
+    """
+    if entry.sensor.kind in DISTANCE_KINDS:
+        if not entry.reading.is_valid:
+            return NOT_APPLICABLE
+        return f"{entry.reading.value / MM_TO_M:.1f} mm"
+    return f"{entry.reading.value:.0f}"

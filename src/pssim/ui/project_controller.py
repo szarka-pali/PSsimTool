@@ -19,15 +19,22 @@ from pathlib import Path
 from typing import Final
 
 from pssim.config.project import (
+    AnchorSpec,
     CameraSpec,
+    FloorSpec,
+    JointSpec,
+    ModelSave,
     ProjectSpec,
+    SceneSpec,
+    SensorSpec,
     build_project,
     read_project,
     resolve_path,
     write_project,
 )
-from pssim.domain.machine import Transform
+from pssim.domain.machine import Rgba, Transform
 from pssim.observability import get_logger
+from pssim.viz.floor import FloorState
 from pssim.viz.orbit import MAX_DISTANCE_FACTOR, MIN_DISTANCE_FACTOR, OrbitCamera
 
 logger = get_logger(__name__)
@@ -45,6 +52,13 @@ class PendingModel:
     name: str
     path: Path
     placement: Transform
+    is_visible: bool = True
+    show_axes: bool = True
+    color: Rgba | None = None
+    highlight_color: Rgba | None = None
+    """The model's own display settings. Here rather than beside `bindings`
+    because they need nothing but the model itself — they go back on as its
+    import finishes, exactly like its placement."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +71,23 @@ class LoadPlan:
 
     selected_name: str | None = None
     camera: CameraSpec | None = None
+    floor: FloorSpec = FloorSpec()
+    sensors: tuple[SensorSpec, ...] = ()
+    joints: tuple[JointSpec, ...] = ()
+    """Unconverted, like `sensors`: the joints are rebuilt once every model is
+    in, since a binding needs both to exist."""
+
+    show_joint_names: bool = True
+    cross_size_mm: float = 200.0
+    text_size_mm: float = 50.0
+    origin_cross_size_mm: float = 200.0
+    show_origin_cross: bool = True
+
+    bindings: tuple[tuple[str, str, AnchorSpec], ...] = ()
+    """`(model name, joint name, anchor)` for every model the file binds. Kept
+    beside the models rather than inside `PendingModel`, because a binding can
+    only be applied after the joints exist — which is long after the model's own
+    import finished."""
 
     @property
     def has_work(self) -> bool:
@@ -77,7 +108,17 @@ def plan_load(project: ProjectSpec, project_path: Path) -> LoadPlan:
         path = resolve_path(spec.file, project_path)
         if path.is_file():
             pending.append(
-                PendingModel(name=spec.name, path=path, placement=spec.placement.to_transform())
+                PendingModel(
+                    name=spec.name,
+                    path=path,
+                    placement=spec.placement.to_transform(),
+                    is_visible=spec.visible,
+                    show_axes=spec.show_axes,
+                    color=None if spec.color is None else spec.color.to_color(),
+                    highlight_color=(
+                        None if spec.highlight_color is None else spec.highlight_color.to_color()
+                    ),
+                )
             )
         else:
             missing.append(path)
@@ -87,6 +128,19 @@ def plan_load(project: ProjectSpec, project_path: Path) -> LoadPlan:
         missing=tuple(missing),
         selected_name=project.selected,
         camera=project.camera,
+        floor=project.floor,
+        sensors=project.sensors,
+        joints=project.joints,
+        show_joint_names=project.show_joint_names,
+        cross_size_mm=project.cross_size_mm,
+        text_size_mm=project.text_size_mm,
+        origin_cross_size_mm=project.origin_cross_size_mm,
+        show_origin_cross=project.show_origin_cross,
+        bindings=tuple(
+            (spec.name, spec.bound_to, spec.anchor)
+            for spec in project.models
+            if spec.bound_to is not None
+        ),
     )
 
 
@@ -129,6 +183,16 @@ def spec_to_camera(spec: CameraSpec, radius_hint_m: float = 1.0) -> OrbitCamera:
         min_distance_m=safe_radius * MIN_DISTANCE_FACTOR,
         max_distance_m=safe_radius * MAX_DISTANCE_FACTOR,
     )
+
+
+def floor_to_spec(floor: FloorState) -> FloorSpec:
+    """Convert the floor into file units: millimetres."""
+    return FloorSpec(visible=floor.visible, z_mm=floor.z_m * _MM_PER_M)
+
+
+def spec_to_floor(spec: FloorSpec) -> FloorState:
+    """Rebuild the floor from file units."""
+    return FloorState(visible=spec.visible, z_m=spec.z_mm / _MM_PER_M)
 
 
 class ProjectLoader:
@@ -186,29 +250,67 @@ class ProjectLoader:
         return plan
 
 
+@dataclass(frozen=True, slots=True)
+class SceneState:
+    """Everything about the scene besides its models, in the types the viewport
+    and registries hand around. The ui-layer counterpart of `config.project.SceneSpec`,
+    which holds the same information already converted to file units.
+
+    Bundled for the same reason as `SceneSpec`: `camera` alone already left
+    `project_from_models`/`save_project` at the code-style.md 4-argument limit.
+    """
+
+    selected_name: str | None = None
+    camera: OrbitCamera | None = None
+    floor: FloorState = FloorState()
+    sensors: tuple[SensorSpec, ...] = ()
+    joints: tuple[JointSpec, ...] = ()
+    """Already file-shaped, unlike `sensors`: a joint's parent has to be named
+    rather than identified, and only this layer holds the id-to-name map."""
+
+    show_joint_names: bool = True
+    cross_size_mm: float = 200.0
+    text_size_mm: float = 50.0
+    origin_cross_size_mm: float = 200.0
+    show_origin_cross: bool = True
+
+
+#: A frozen, side-effect-free default, shared across every call with no `scene`
+#: argument — nothing about it is ever mutated.
+_EMPTY_SCENE: Final = SceneState()
+
+
 def project_from_models(
-    models: tuple[tuple[str, Path, Transform], ...],
+    models: tuple[ModelSave, ...],
     project_path: Path,
-    selected_name: str | None,
-    camera: OrbitCamera | None,
+    scene: SceneState = _EMPTY_SCENE,
 ) -> ProjectSpec:
     """Assemble a project file from the current scene."""
     return build_project(
         models=models,
         project_path=project_path,
-        selected=selected_name,
-        camera=camera_to_spec(camera),
+        scene=SceneSpec(
+            selected=scene.selected_name,
+            camera=camera_to_spec(scene.camera),
+            floor=floor_to_spec(scene.floor),
+            sensors=scene.sensors,
+            joints=scene.joints,
+            show_joint_names=scene.show_joint_names,
+            cross_size_mm=scene.cross_size_mm,
+            text_size_mm=scene.text_size_mm,
+            origin_cross_size_mm=scene.origin_cross_size_mm,
+            show_origin_cross=scene.show_origin_cross,
+        ),
     )
 
 
 def save_project(
     path: Path,
-    models: tuple[tuple[str, Path, Transform], ...],
-    selected_name: str | None,
-    camera: OrbitCamera | None,
+    models: tuple[ModelSave, ...],
+    scene: SceneState = _EMPTY_SCENE,
 ) -> Path:
     """Write the current scene to a project file. Returns the path written."""
-    project = project_from_models(models, path, selected_name, camera)
+    project = project_from_models(models, path, scene)
     written = write_project(path, project)
     logger.info("project saved", file=str(written), models=len(project.models))
     return written
@@ -223,5 +325,6 @@ def load_plan_from_file(path: Path) -> LoadPlan:
         file=str(path),
         models=len(plan.pending),
         missing=len(plan.missing),
+        joints=len(plan.joints),
     )
     return plan

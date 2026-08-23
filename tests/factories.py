@@ -11,7 +11,9 @@ import math
 
 from pssim.cad.model import CadAssembly, CadNode
 from pssim.domain.interpolation import Sample, SignalBuffer
-from pssim.domain.machine import Joint, JointType, Machine, Transform
+from pssim.domain.machine import Joint, JointType, Machine, Transform, Vec3
+from pssim.domain.model_joints import ModelJoint, ModelJointKind
+from pssim.domain.sensors import Sensor, SensorKind
 
 
 def prismatic_joint(
@@ -52,6 +54,101 @@ def revolute_joint(
 
 def fixed_joint(name: str = "cover", parent: str = "base", child: str = "cover") -> Joint:
     return Joint(name=name, parent=parent, child=child, type=JointType.FIXED)
+
+
+def beam_sensor(
+    name: str = "beam-1",
+    origin: Vec3 = (0.0, 0.0, 0.0),
+    target: Vec3 | None = None,
+    direction: Vec3 | None = None,
+    range_m: float | None = None,
+    kind: SensorKind = SensorKind.BEAM,
+    variable: str = "",
+) -> Sensor:
+    """A ray sensor, from a direction and a range or from a second point.
+
+    A ray is a point plus a direction plus a range now, but "a beam from here to
+    there" is still how most tests read most naturally, so `target` is accepted
+    and turned into the direction *and* the reach it implies — both, so a test
+    that placed something just beyond the far end still finds it out of range.
+    """
+    if target is not None:
+        offset = (target[0] - origin[0], target[1] - origin[1], target[2] - origin[2])
+        if direction is None:
+            direction = offset
+        if range_m is None:
+            range_m = math.sqrt(sum(component**2 for component in offset))
+    # `is None` rather than `or`: a test asking for a zero direction or a zero
+    # range wants exactly that, and `or` would quietly hand back the default.
+    return Sensor(
+        name=name,
+        kind=kind,
+        variable=variable,
+        origin=origin,
+        direction=(1.0, 0.0, 0.0) if direction is None else direction,
+        range_m=1.0 if range_m is None else range_m,
+    )
+
+
+def proximity_sensor(
+    name: str = "zone-1",
+    origin: Vec3 = (0.0, 0.0, 0.0),
+    half_extent_m: float = 0.1,
+) -> Sensor:
+    return Sensor(name=name, kind=SensorKind.PROXIMITY, origin=origin, half_extent_m=half_extent_m)
+
+
+def axis_joint(
+    name: str = "axis-1",
+    variable: str = "axis-1",
+    origin: Vec3 = (0.0, 0.0, 0.0),
+    target: Vec3 | None = None,
+    direction: Vec3 | None = None,
+    initial_angle_rad: float = 0.0,
+    limits: tuple[float, float] | None = None,
+    alignment: Transform | None = None,
+) -> ModelJoint:
+    """An axis, from a direction or from a second point on it.
+
+    An axis is a centre plus a direction now, but "the axis through these two
+    points" is still how most tests read most naturally, so `target` is accepted
+    and turned into the direction it implies. Passing neither gives `+Z`.
+    """
+    if direction is None:
+        direction = (
+            (0.0, 0.0, 1.0)
+            if target is None
+            else (target[0] - origin[0], target[1] - origin[1], target[2] - origin[2])
+        )
+    return ModelJoint(
+        name=name,
+        kind=ModelJointKind.AXIS,
+        variable=variable,
+        origin=origin,
+        direction=direction,
+        initial_angle_rad=initial_angle_rad,
+        limits=limits,
+        alignment=alignment or Transform(),
+    )
+
+
+def trajectory_joint(
+    name: str = "trajectory-1",
+    variable: str = "trajectory-1",
+    origin: Vec3 = (0.0, 0.0, 0.0),
+    target: Vec3 = (1.0, 0.0, 0.0),
+    limits: tuple[float, float] | None = None,
+    alignment: Transform | None = None,
+) -> ModelJoint:
+    return ModelJoint(
+        name=name,
+        kind=ModelJointKind.TRAJECTORY,
+        variable=variable,
+        origin=origin,
+        target=target,
+        limits=limits,
+        alignment=alignment or Transform(),
+    )
 
 
 def machine(*joints: Joint, name: str = "test") -> Machine:

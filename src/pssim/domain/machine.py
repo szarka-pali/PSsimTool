@@ -16,6 +16,12 @@ from pssim.domain.errors import ConfigError
 #: A triple (x, y, z) in metres, or (roll, pitch, yaw) in radians.
 Vec3 = tuple[float, float, float]
 
+#: Red, green, blue, alpha, each 0.0–1.0. Here rather than in `viz/` because it
+#: is a tuple of numbers with no behaviour, and the registries, the project file
+#: and the drawing code all need to name it — `viz/axes.py` and
+#: `viz/joint_markers.py` alias this one.
+Rgba = tuple[float, float, float, float]
+
 _AXIS_NORM_TOLERANCE: Final = 1e-6
 
 

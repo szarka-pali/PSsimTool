@@ -205,3 +205,50 @@ class TestEdgeCases:
         box = attach_highlight(block_node(scene_root()))
 
         assert box.hasLightOff()
+
+
+class TestHidingTakesTheMarkersWithIt:
+    """`EmbeddedRenderer.set_model_visible` is a plain `hide()` on the model
+    root, and both the selection box and any collision outline hang off that
+    root. This pins the consequence the renderer's docstring claims: a marker is
+    never left floating where an invisible model used to be."""
+
+    def test_the_model_is_visible_to_start_with(self) -> None:
+        assert not block_node(scene_root()).isHidden()
+
+    def test_hiding_the_model_hides_its_outline(self) -> None:
+        model = block_node(scene_root())
+        box = attach_highlight(model)
+
+        model.hide()
+
+        assert box.isHidden()
+
+    def test_showing_the_model_brings_the_outline_back(self) -> None:
+        model = block_node(scene_root())
+        box = attach_highlight(model)
+        model.hide()
+
+        model.show()
+
+        assert not box.isHidden()
+
+    def test_hiding_one_model_leaves_another_alone(self) -> None:
+        scene = scene_root()
+        hidden = block_node(scene, name="hidden")
+        other = block_node(scene, name="other")
+
+        hidden.hide()
+
+        assert not other.isHidden()
+
+    def test_a_hidden_model_keeps_its_world_bounds(self) -> None:
+        # Why hiding stays purely visual: the geometry is still there, so the
+        # model still blocks sensors and still collides.
+        scene = scene_root()
+        model = block_node(scene)
+        before = bounds_in(model, scene)
+
+        model.hide()
+
+        assert bounds_in(model, scene) == before

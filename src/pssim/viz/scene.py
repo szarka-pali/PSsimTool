@@ -34,7 +34,7 @@ class BuiltScene:
     """The mapping from a node's stable path to its `NodePath`."""
 
     base_transforms: dict[str, tuple[Vec3, Quaternion]] = field(default_factory=dict)
-    """The node's placement from CAD. Joint movement is added on top of it, see R2c."""
+    """The node's placement from CAD. Joint movement is added on top of it, see R9."""
 
     missing_meshes: int = 0
     """How many nodes had geometry missing from the cache."""

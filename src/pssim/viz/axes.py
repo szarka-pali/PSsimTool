@@ -15,9 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Final
 
-from pssim.domain.machine import Vec3
-
-Rgba = tuple[float, float, float, float]
+from pssim.domain.machine import Rgba, Vec3
 
 AXIS_COLORS: Final[dict[str, Rgba]] = {
     "X": (0.90, 0.25, 0.25, 1.0),
@@ -37,6 +35,13 @@ DEFAULT_SCALE: Final = 0.25
 
 #: Even in an empty scene the cross has to be visible.
 MIN_LENGTH_M: Final = 0.01
+
+#: The height of the X/Y/Z glyphs when the caller does not say. Only a fallback:
+#: the renderer passes the scene's own text size.
+DEFAULT_TEXT_HEIGHT_M: Final = 0.05
+
+#: A glyph scaled to zero is an invisible node rather than an obvious mistake.
+MIN_TEXT_HEIGHT_M: Final = 0.001
 
 #: How far past the end of an axis its label sits, as a fraction of the axis length.
 LABEL_OFFSET: Final = 1.12
@@ -142,21 +147,44 @@ def make_highlight_box(node_path: Any) -> Any | None:
     apply that transform a second time and the outline would sit at double the
     placement. (Measured: a model at x=0.4 got an outline at x=0.8.)
     """
-    from panda3d.core import LineSegs, NodePath
+    return make_outline_box(node_path, HIGHLIGHT_COLOR, HIGHLIGHT_THICKNESS_PX)
 
+
+def make_outline_box(node_path: Any, color: Rgba, thickness_px: float) -> Any | None:
+    """A wireframe box around a subtree, in a given colour.
+
+    The shared body of every outline marker: the selection highlight and the
+    collision warning differ only in colour and thickness. Kept in one place
+    because the two things that are easy to get wrong here are not obvious —
+    bounds in the node's **own** coordinates (see `make_highlight_box` for what
+    goes wrong otherwise) and clearing the collide mask so a marker can never be
+    what a pick ray hits instead of the model underneath it.
+    """
     bounds = node_path.getTightBounds(node_path)
     if bounds is None:
         return None
 
     low, high = bounds
-    corners = box_corners(
-        (low[0], low[1], low[2]),
-        (high[0], high[1], high[2]),
+    return make_box_outline(
+        (low[0], low[1], low[2]), (high[0], high[1], high[2]), color, thickness_px
     )
 
-    lines = LineSegs("highlight")
-    lines.setThickness(HIGHLIGHT_THICKNESS_PX)
-    lines.setColor(*HIGHLIGHT_COLOR)
+
+def make_box_outline(low: Vec3, high: Vec3, color: Rgba, thickness_px: float) -> Any:
+    """The drawing half, for a box whose corners are already known.
+
+    Split out because the caller often **already** has the box and measuring it
+    again is not free: `getTightBounds` walks the whole subtree, which on a
+    1052-node STEP assembly measured ~154 ms. The collision outline goes through
+    here for that reason; see `viz.embed._world_box`.
+    """
+    from panda3d.core import BitMask32, LineSegs, NodePath
+
+    corners = box_corners(low, high)
+
+    lines = LineSegs("outline")
+    lines.setThickness(thickness_px)
+    lines.setColor(*color)
     for start, end in BOX_EDGES:
         lines.moveTo(*corners[start])
         lines.drawTo(*corners[end])
@@ -165,12 +193,25 @@ def make_highlight_box(node_path: Any) -> Any | None:
     box.setName("selection-highlight")
     # An outline is a marker, not geometry — lighting would dim it from behind.
     box.setLightOff()
+    # A marker must never be what a pick ray hits instead of the model underneath it.
+    box.node().setIntoCollideMask(BitMask32.allOff())
     return box
 
 
-def make_axes_node(length_m: float, with_labels: bool = True) -> Any:
-    """Build a `NodePath` with the cross. The caller attaches it wherever it is needed."""
-    from panda3d.core import LineSegs, NodePath, TextNode
+def make_axes_node(
+    length_m: float,
+    text_height_m: float = DEFAULT_TEXT_HEIGHT_M,
+    with_labels: bool = True,
+) -> Any:
+    """Build a `NodePath` with the cross. The caller attaches it wherever it is needed.
+
+    `text_height_m` sizes the X/Y/Z glyphs and is **independent of the arm
+    length**. It used to be `length_m * 0.25`, which tied the two together: the
+    origin cross ended up with 100 mm letters while a joint's cross had 3.1 mm
+    ones — a 32x spread that made them look like different things. The scene sets
+    one height for all of them.
+    """
+    from panda3d.core import BitMask32, LineSegs, NodePath, TextNode
 
     segments = axis_segments(length_m)
 
@@ -186,6 +227,7 @@ def make_axes_node(length_m: float, with_labels: bool = True) -> Any:
     # The cross is an orientation aid, not geometry — lighting would change its colour
     # with the viewing angle and the red axis would be red one moment and brown the next.
     root.setLightOff()
+    root.node().setIntoCollideMask(BitMask32.allOff())
 
     if not with_labels:
         return root
@@ -197,7 +239,7 @@ def make_axes_node(length_m: float, with_labels: bool = True) -> Any:
         text.setAlign(TextNode.ACenter)
         label = root.attachNewNode(text)
         label.setPos(*segment.label_position)
-        label.setScale(max(length_m, MIN_LENGTH_M) * 0.25)
+        label.setScale(max(text_height_m, MIN_TEXT_HEIGHT_M))
         # The label always turns to face the viewer, otherwise it would be illegible
         # from the side.
         label.setBillboardPointEye()

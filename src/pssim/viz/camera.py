@@ -64,12 +64,23 @@ def clip_planes(radius_m: float) -> tuple[float, float]:
 
 
 def scene_radius(root: Any) -> tuple[Any, float]:
-    """The centre and radius of the scene. An empty scene gives the origin and the fallback radius."""
+    """The centre and radius of the scene. An empty scene gives the origin and the fallback radius.
+
+    An **infinite** bounding volume gets the same fallback. Panda3D's
+    `getRadius()` raises an assertion on one rather than returning a number, and
+    anything infinite anywhere under `root` makes the whole tree's bounds
+    infinite — an unbounded `CollisionSolid` does exactly that. Left to raise,
+    that assertion propagates out of `EmbeddedRenderer.__init__` and the entire
+    viewport dies with nothing on screen, which is a punishing way to find out
+    (measured: it happened, see `viz/picking.py`). `viz/` is required to survive
+    bad geometry rather than take the window down with it, so this is handled
+    the same way an empty scene already is.
+    """
     from panda3d.core import LPoint3
 
     bounds = root.getBounds()
-    if bounds.isEmpty() or bounds.getRadius() <= 0.0:
-        logger.warning("the scene has no dimensions - is the geometry missing?")
+    if bounds.isEmpty() or bounds.isInfinite() or bounds.getRadius() <= 0.0:
+        logger.warning("the scene has no usable dimensions - is the geometry missing?")
         return LPoint3(0.0, 0.0, 0.0), FALLBACK_RADIUS_M
     return bounds.getCenter(), float(bounds.getRadius())
 

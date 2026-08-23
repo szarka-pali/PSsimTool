@@ -1,7 +1,7 @@
 """Interpolation of signal samples.
 
 OPC UA delivers data every 20–100 ms and we render at 60 fps. Without interpolation
-the motion is jerky. See docs/architecture.md R5.
+the motion is jerky. See docs/architecture.md R11.
 
 The key decision: **time is always an argument**, never read from a clock. That is
 what makes the whole of the interpolation deterministically testable.

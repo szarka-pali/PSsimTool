@@ -2,7 +2,7 @@
 
 Implements the same `DataSource` contract as `OpcUaSource`, so the scene cannot tell
 the difference. This is the main tool for reproducing faults from the field and for
-developing without a PLC. See docs/architecture.md R7.
+developing without a PLC. See docs/architecture.md R13.
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ The project's reference module for defining boundaries: a `Protocol`, not an abs
 base class. The consumer (`viz/`) does not have to import any concrete implementation.
 
 Every data source — OPC UA, replay, mock — implements `DataSource` and nothing more.
-A new transport (ADS, S7) can be added without touching `viz/` or `domain/`. See R6.
+A new transport (ADS, S7) can be added without touching `viz/` or `domain/`. See R12.
 """
 
 from __future__ import annotations

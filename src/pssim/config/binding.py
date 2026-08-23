@@ -41,7 +41,7 @@ class SourceSettings:
     publishing_interval_ms: int = 50
     stale_after_s: float = 1.0
     render_delay_ms: int | None = None
-    """If `None`, computed as 2× the revised publishing interval. See R5."""
+    """If `None`, computed as 2× the revised publishing interval. See R11."""
 
     def effective_render_delay_s(self, revised_interval_ms: int | None = None) -> float:
         """The sampling delay in seconds.

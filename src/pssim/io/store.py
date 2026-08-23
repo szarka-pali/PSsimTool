@@ -1,7 +1,7 @@
 """The thread-safe holder of the latest samples of all signals.
 
 This is the **only** place where state is shared between threads. Do not add a second
-one — if something else needs sharing, extend the store. See docs/architecture.md R4.
+one — if something else needs sharing, extend the store. See docs/architecture.md R10.
 
 The threading model:
 

@@ -71,7 +71,7 @@ or brackets. These are the rules the linter does not catch.
 
 - A comment explains **why**, never **what**. `# increment i by 1` is noise.
 - A non-trivial decision → one sentence on why, ideally with a reference to
-  `docs/architecture.md` (e.g. `# see R4: asyncua cannot run in the Panda3D task manager`).
+  `docs/architecture.md` (e.g. `# see R10: asyncua cannot run in the Panda3D task manager`).
 - No `TODO` without a name attached. No commented-out dead code — delete it, git remembers.
 
 ## Dependencies

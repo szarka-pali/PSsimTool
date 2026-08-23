@@ -2,7 +2,7 @@
 
 Runs in **its own thread with its own asyncio loop**. The Panda3D task manager
 supports `async def` tasks, but it awaits Panda3D futures, not asyncio ones — asyncua
-cannot run in it. See docs/architecture.md R4.
+cannot run in it. See docs/architecture.md R10.
 
 The rules for this layer are in `.claude/rules/io-opcua.md`.
 

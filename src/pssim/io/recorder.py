@@ -2,7 +2,7 @@
 
 Without recording and replay there is no developing without hardware and no
 reproducing a fault that happened once, at a customer's machine. See
-docs/architecture.md R7.
+docs/architecture.md R13.
 
 The format is one JSON object per line, so a recording can be read with `head` and so
 that an interrupted write does not destroy the whole file:

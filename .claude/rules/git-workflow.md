@@ -15,7 +15,7 @@
   feat(io): add OPC UA subscription with source timestamps
 
   Why: polling in the render loop caused fps drops with more than 20 signals.
-  See docs/architecture.md R4.
+  See docs/architecture.md R10.
   ```
 - First line at most 72 characters, imperative mood, no full stop at the end.
 - The body explains **why**, not what — the diff already says what.

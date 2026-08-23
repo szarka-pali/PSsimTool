@@ -14,6 +14,7 @@ Two things that surprise:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
@@ -21,8 +22,10 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QWidget
 
 from pssim.cad.model import CadAssembly
-from pssim.domain.machine import Transform
+from pssim.domain.machine import Rgba, Transform, Vec3
+from pssim.domain.model_joints import Anchor, ModelJoint
 from pssim.domain.placement import IDENTITY_PLACEMENT
+from pssim.domain.sensors import Sensor, SensorReading
 from pssim.observability import get_logger
 
 logger = get_logger(__name__)
@@ -169,3 +172,166 @@ class Panda3DViewport(QWidget):
     def clear(self) -> None:
         if self._renderer is not None:
             self._renderer.clear()
+
+    # -- floor ----------------------------------------------------------------
+
+    @property
+    def floor_visible(self) -> bool:
+        return True if self._renderer is None else bool(self._renderer.floor_visible)
+
+    @property
+    def floor_z_m(self) -> float:
+        return 0.0 if self._renderer is None else float(self._renderer.floor_z_m)
+
+    def set_floor_visible(self, visible: bool) -> None:
+        if self._renderer is not None:
+            self._renderer.set_floor_visible(visible)
+
+    def set_floor_z(self, z_m: float) -> None:
+        if self._renderer is not None:
+            self._renderer.set_floor_z(z_m)
+
+    # -- sensors ----------------------------------------------------------------
+
+    def add_sensor(self, sensor_id: str, sensor: Sensor, mounted_on: str | None = None) -> None:
+        if self._renderer is not None:
+            self._renderer.add_sensor(sensor_id, sensor, mounted_on)
+
+    def set_sensor_mount(self, sensor_id: str, mounted_on: str | None) -> None:
+        if self._renderer is not None:
+            self._renderer.set_sensor_mount(sensor_id, mounted_on)
+
+    def sensor_reading(self, sensor_id: str) -> SensorReading | None:
+        if self._renderer is None:
+            return None
+        return self._renderer.sensor_reading(sensor_id)
+
+    def remove_sensor(self, sensor_id: str) -> None:
+        if self._renderer is not None:
+            self._renderer.remove_sensor(sensor_id)
+
+    def update_sensor(self, sensor_id: str, sensor: Sensor) -> None:
+        if self._renderer is not None:
+            self._renderer.update_sensor(sensor_id, sensor)
+
+    def set_sensor_active(self, sensor_id: str, is_active: bool) -> None:
+        if self._renderer is not None:
+            self._renderer.set_sensor_active(sensor_id, is_active)
+
+    # -- joints ----------------------------------------------------------------
+
+    def add_joint(
+        self, joint_id: str, joint: ModelJoint, parent_joint_id: str | None = None
+    ) -> None:
+        if self._renderer is not None:
+            self._renderer.add_joint(joint_id, joint, parent_joint_id)
+
+    def set_joint_highlight(self, joint_id: str | None) -> None:
+        if self._renderer is not None:
+            self._renderer.set_joint_highlight(joint_id)
+
+    def set_model_visible(self, model_id: str, is_visible: bool) -> None:
+        if self._renderer is not None:
+            self._renderer.set_model_visible(model_id, is_visible)
+
+    def set_axes_visible(self, item_id: str, show_axes: bool) -> None:
+        if self._renderer is not None:
+            self._renderer.set_axes_visible(item_id, show_axes)
+
+    def set_model_color(self, model_id: str, color: Rgba | None) -> None:
+        if self._renderer is not None:
+            self._renderer.set_model_color(model_id, color)
+
+    def set_highlight_color(self, model_id: str, color: Rgba | None) -> None:
+        if self._renderer is not None:
+            self._renderer.set_highlight_color(model_id, color)
+
+    def check_collisions(self) -> frozenset[tuple[str, str]]:
+        if self._renderer is None:
+            return frozenset()
+        return self._renderer.check_collisions()
+
+    def set_cross_size(self, size_m: float) -> None:
+        if self._renderer is not None:
+            self._renderer.set_cross_size(size_m)
+
+    def set_text_size(self, size_m: float) -> None:
+        if self._renderer is not None:
+            self._renderer.set_text_size(size_m)
+
+    def set_origin_cross_size(self, size_m: float) -> None:
+        if self._renderer is not None:
+            self._renderer.set_origin_cross_size(size_m)
+
+    def set_origin_cross_visible(self, visible: bool) -> None:
+        if self._renderer is not None:
+            self._renderer.set_origin_cross_visible(visible)
+
+    def set_joint_color(self, joint_id: str, color: Rgba | None) -> None:
+        if self._renderer is not None:
+            self._renderer.set_joint_color(joint_id, color)
+
+    def set_joint_name_visible(self, joint_id: str, show_name: bool) -> None:
+        if self._renderer is not None:
+            self._renderer.set_joint_name_visible(joint_id, show_name)
+
+    def set_names_visible(self, show_names: bool) -> None:
+        if self._renderer is not None:
+            self._renderer.set_names_visible(show_names)
+
+    def set_joint_parent(self, joint_id: str, parent_joint_id: str | None) -> None:
+        if self._renderer is not None:
+            self._renderer.set_joint_parent(joint_id, parent_joint_id)
+
+    def remove_joint(self, joint_id: str) -> None:
+        if self._renderer is not None:
+            self._renderer.remove_joint(joint_id)
+
+    def update_joint(self, joint_id: str, joint: ModelJoint) -> None:
+        if self._renderer is not None:
+            self._renderer.update_joint(joint_id, joint)
+
+    def set_joint_value(self, joint_id: str, value: float) -> None:
+        if self._renderer is not None:
+            self._renderer.set_joint_value(joint_id, value)
+
+    def bind_model(self, model_id: str, joint_id: str | None) -> None:
+        if self._renderer is not None:
+            self._renderer.bind_model(model_id, joint_id)
+
+    def anchor(self, model_id: str) -> Anchor:
+        if self._renderer is None:
+            return Anchor()
+        result: Anchor = self._renderer.anchor(model_id)
+        return result
+
+    def set_anchor(self, model_id: str, anchor: Anchor) -> None:
+        if self._renderer is not None:
+            self._renderer.set_anchor(model_id, anchor)
+
+    def preview_joint(self, joint: ModelJoint, parent_joint_id: str | None = None) -> None:
+        if self._renderer is not None:
+            self._renderer.preview_joint(joint, parent_joint_id)
+
+    def clear_joint_preview(self) -> None:
+        if self._renderer is not None:
+            self._renderer.clear_joint_preview()
+
+    # -- picking ----------------------------------------------------------------
+
+    def begin_pick_in_joint_frame(
+        self,
+        model_id: str,
+        parent_joint_id: str | None,
+        on_point_picked: Callable[[Vec3], None],
+    ) -> None:
+        if self._renderer is not None:
+            self._renderer.begin_pick_in_joint_frame(model_id, parent_joint_id, on_point_picked)
+
+    def begin_pick(self, model_id: str, on_point_picked: Callable[[Vec3], None]) -> None:
+        if self._renderer is not None:
+            self._renderer.begin_pick(model_id, on_point_picked)
+
+    def cancel_pick(self) -> None:
+        if self._renderer is not None:
+            self._renderer.cancel_pick()

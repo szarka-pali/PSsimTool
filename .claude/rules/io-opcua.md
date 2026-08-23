@@ -12,7 +12,7 @@ thread A: Panda3D task  → StateStore.sample_all(at_time) → reading
 ```
 
 - The Panda3D task manager is **not** an asyncio loop. It awaits Panda3D futures.
-  That is why asyncua cannot run inside it. See `docs/architecture.md` R4.
+  That is why asyncua cannot run inside it. See `docs/architecture.md` R10.
 - Thread B **never** touches Panda3D or the scene. It writes exclusively into `StateStore`.
 - Thread A **never** calls asyncua or anything blocking.
 - A new data source implements `DataSource` from `base.py` and nothing more.

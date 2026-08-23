@@ -135,7 +135,7 @@ class PlacementDialog(QDialog):
         spin.valueChanged.connect(self._on_value_changed)
         return spin
 
-    # -- hodnoty ------------------------------------------------------------
+    # -- values --------------------------------------------------------------
 
     @property
     def display(self) -> PlacementDisplay:
@@ -177,7 +177,7 @@ class PlacementDialog(QDialog):
         """Return the model to the origin with no rotation."""
         self.set_placement(IDENTITY_PLACEMENT)
 
-    # -- udalosti -----------------------------------------------------------
+    # -- events --------------------------------------------------------------
 
     def _on_value_changed(self, _value: float) -> None:
         if self._emitting:

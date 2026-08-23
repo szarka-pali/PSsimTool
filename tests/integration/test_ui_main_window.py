@@ -174,7 +174,7 @@ class TestWindow:
 class TestMenu:
     def test_the_main_menus_are_in_order(self, window: MainWindow) -> None:
         # Split by subject: what you are working on, not what you are doing to it.
-        assert menu_titles(window) == ["File", "Models", "Sensors", "Scene"]
+        assert menu_titles(window) == ["File", "Models", "Geometry", "Sensors", "Scene"]
 
     def test_file_obsahuje_projektove_polozky(self, window: MainWindow) -> None:
         # Separators come through as empty strings; only the real entries matter.
@@ -189,20 +189,33 @@ class TestMenu:
             "Exit",
         ]
 
-    def test_inserting_a_3d_model_lives_in_the_models_menu(self, window: MainWindow) -> None:
+    def test_adding_a_3d_model_lives_in_the_models_menu(self, window: MainWindow) -> None:
         # It adds a model rather than replacing the scene, so it belongs with the
         # other model actions and not in a menu of its own.
-        assert menu_items(window, "Models")[0] == "Insert 3D Model…"
+        assert menu_items(window, "Models")[0] == "Add 3D Model…"
+
+    def test_every_creation_entry_starts_with_add(self, window: MainWindow) -> None:
+        created = [
+            menu_items(window, "Models")[0],
+            *menu_items(window, "Geometry")[:2],
+            menu_items(window, "Sensors")[0],
+        ]
+
+        assert [text.split()[0] for text in created] == ["Add"] * 4
+
+    def test_the_geometry_menu_holds_the_axes_and_trajectories(self, window: MainWindow) -> None:
+        # They are neither a model nor a sensor, which is why they had nowhere to
+        # go and ended up reachable only from the tree.
+        entries = [text for text in menu_items(window, "Geometry") if text]
+
+        assert entries == ["Add Axis…", "Add Trajectory…", "Edit…", "Carried By…", "Remove"]
 
     def test_the_sensors_have_their_own_menu(self, window: MainWindow) -> None:
+        # Below the separator the menu title already says what the subject is,
+        # so the leaves drop the noun.
         entries = [text for text in menu_items(window, "Sensors") if text]
 
-        assert entries == [
-            "Add Sensor…",
-            "Edit Sensor…",
-            "Mount Sensor On…",
-            "Remove Sensor",
-        ]
+        assert entries == ["Add Sensor…", "Edit…", "Mount On…", "Remove"]
 
     def test_the_scene_menu_groups_what_it_offers(self, window: MainWindow) -> None:
         # A leaf should say what it does from its path alone — `Sizes…` on its
@@ -889,7 +902,20 @@ class TestPlacing:
     def test_the_models_menu_lists_the_model_actions(self, window: MainWindow) -> None:
         entries = [text for text in menu_items(window, "Models") if text]
 
-        assert entries == ["Insert 3D Model…", "Placement…", "Rename…", "Remove"]
+        assert entries == [
+            "Add 3D Model…",
+            "Placement…",
+            "Rename…",
+            "Bind To…",
+            "Variables…",
+            "Remove",
+        ]
+
+    def test_only_one_remove_carries_the_delete_shortcut(self, window: MainWindow) -> None:
+        # Three of them bound to Delete would be ambiguous and Qt would fire none.
+        assert not window.remove_action.shortcut().isEmpty()
+        assert window.remove_joint_action.shortcut().isEmpty()
+        assert window.remove_sensor_action.shortcut().isEmpty()
 
     def test_polozka_ma_skratku(self, window: MainWindow) -> None:
         assert not window.placement_action.shortcut().isEmpty()
@@ -1095,7 +1121,7 @@ class TestContextMenu:
         assert _menu_labels(menu) == [
             "Add Model…",
             "Edit…",
-            "Set Parent…",
+            "Carried By…",
             "Show Coordinate Cross",
             "Show Name",
             "Colour…",
@@ -3139,7 +3165,7 @@ class TestSensorMounting:
         assert joint.joint_id in offered
 
     def test_the_menu_offers_mounting(self, window: MainWindow) -> None:
-        assert "Mount Sensor On…" in menu_items(window, "Sensors")
+        assert "Mount On…" in menu_items(window, "Sensors")
 
 
 class TestSensorReadings:
@@ -3399,3 +3425,69 @@ class TestReadingsReachThePanel:
         updated = window.sensors.get(entry.sensor_id)
         assert updated is not None
         assert updated.reading.value == pytest.approx(1.0)
+
+
+class TestGeometryMenuEnablement:
+    """Greyed out rather than left to fail: an entry that reports "select
+    something first" after the click has told the user too late.
+    """
+
+    def test_the_joint_actions_start_disabled(self, window: MainWindow) -> None:
+        assert window.edit_joint_action.isEnabled() is False
+        assert window.joint_parent_action.isEnabled() is False
+        assert window.remove_joint_action.isEnabled() is False
+
+    def test_adding_is_always_available(self, window: MainWindow) -> None:
+        # A first axis has to be addable with nothing selected at all.
+        assert window.add_axis_action.isEnabled() is True
+        assert window.add_trajectory_action.isEnabled() is True
+
+    def test_selecting_a_joint_enables_them(self, window: MainWindow) -> None:
+        entry = window.joints.add(axis_joint(name="tilt"), select=False)
+
+        window.select_joint(entry.joint_id)
+
+        assert window.edit_joint_action.isEnabled() is True
+        assert window.remove_joint_action.isEnabled() is True
+
+    def test_binding_needs_something_to_bind_to(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        model = _load(window)
+        window.select_model(model.model_id)
+
+        assert window.bind_action.isEnabled() is False
+
+    def test_binding_is_offered_once_a_joint_exists(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        model = _load(window)
+        joint = window.joints.add(axis_joint(name="tilt"), select=False)
+        # Through the selection, the way a click would: adding to the registry
+        # by hand skips the refresh that re-evaluates what is possible.
+        window.select_joint(joint.joint_id)
+        window.select_model(model.model_id)
+
+        assert window.bind_action.isEnabled() is True
+
+    def test_variables_needs_the_model_to_be_driven(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        model = _load(window)
+        window.select_model(model.model_id)
+
+        assert window.values_action.isEnabled() is False
+
+    def test_variables_is_offered_once_it_is_bound(
+        self, window_with_viewport: tuple[MainWindow, _StubViewport]
+    ) -> None:
+        window, _ = window_with_viewport
+        model = _load(window)
+        joint = window.joints.add(axis_joint(name="tilt"), select=False)
+        window.apply_binding(model.model_id, joint.joint_id)
+        window.select_model(model.model_id)
+
+        assert window.values_action.isEnabled() is True

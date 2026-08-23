@@ -271,7 +271,7 @@ class ModelTree(QTreeWidget):
             menu.addSeparator()
             edit_action = menu.addAction(self.tr("&Edit…"))
             edit_action.triggered.connect(self.edit_joint_requested.emit)
-            parent_action = menu.addAction(self.tr("Set &Parent…"))
+            parent_action = menu.addAction(self.tr("Carried &By…"))
             parent_action.setStatusTip(self.tr("Choose which joint carries this one"))
             parent_action.triggered.connect(self.set_joint_parent_requested.emit)
             menu.addSeparator()

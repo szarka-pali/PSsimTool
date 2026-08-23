@@ -566,6 +566,43 @@ The decisions worth the words:
 The `variable` each sensor carries is recorded and nothing publishes it yet: the point of it
 is that a PLC binding has somewhere to go when writing arrives (R12), not that one exists.
 
+### R17 — The menu bar is split by subject, and the icons are drawn
+
+`File`, `Models`, `Geometry`, `Sensors`, `Scene`. Split by **what you are working on**, not by
+verb: an `Edit` menu would hold fifteen unrelated entries with no way to tell which of them
+applied to whatever is selected, because almost every action in this application is
+per-item-type.
+
+`Geometry` is the axes and trajectories. They are neither a model nor a sensor, which is
+exactly why they had nowhere to go and were reachable only from the model tree's context menu.
+`Bind To…` and `Variables…` stay under `Models` even though both name a joint: you attach *a
+model* to an axis, and the values window belongs to the model whose chain is being driven.
+
+Three rules the labels follow:
+
+- **Everything that creates something starts `Add`**, and keeps its noun so it reads from the
+  menu bar: `Add 3D Model…`, `Add Axis…`, `Add Trajectory…`, `Add Sensor…`. `Insert 3D Model…`
+  was the one entry using a different verb from the rest of the application.
+- **Below the separator the leaves drop the noun.** The menu title already says what the
+  subject is, so `Sensors → Edit…` beats `Sensors → Edit Sensor…`.
+- **A leaf says what it does from its path alone.** That is what the two `Scene` submenus are
+  for: `Sizes…` on its own does not say what it sizes, `Scene → Crosses and Labels → Sizes…`
+  does.
+
+Only `Models → Remove` carries `Delete`. Three Remove entries bound to the same key would be
+an ambiguous shortcut and Qt would fire none of them.
+
+**Icons are drawn at run time** (`ui/icons.py`), never shipped as files. There is nothing to
+license and nothing to keep in step with the code, the result adapts to the display's DPI, and
+the pen colour comes from the running palette — a fixed grey cannot be legible on a light theme
+and on a dark one both. Every sensor kind gets its own drawing, the identical-maths pairs
+included, because the kind is how the machine is documented (R16) and a picture is the shortest
+way to read which part it is. They are cached per kind and size: a tree row asks on every
+refresh.
+
+What a test can hold is that an icon is not blank and not a copy of its neighbour. How it
+*looks* is for a real run.
+
 ## Performance
 
 A STEP assembly typically has hundreds to thousands of parts, which is an unaffordable number  

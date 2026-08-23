@@ -3,14 +3,19 @@
 A shell for now: the menus, the status bar and the place the 3D viewport from `viz/` goes
 later. No OPC UA, no machine definition.
 
-The menu bar is split by **what you are working on**: `Models`, `Sensors`, `Scene`. `File`
-is the project as a document — the one place something gets opened in place of the current
-scene; `Scene → Insert 3D Model` adds to what is already loaded, which is why it is not
-there.
+The menu bar is split by **what you are working on**: `Models`, `Geometry` (the axes and
+trajectories), `Sensors`, `Scene`. `File` is the project as a document — the one place
+something gets opened in place of the current scene; `Models → Add 3D Model` adds to what is
+already loaded, which is why it is not there.
 
-`Scene` groups into submenus rather than listing everything flat. A leaf should say what it
-does from its path alone: `Sizes…` on its own does not say what it sizes, while
-`Scene → Crosses and Labels → Sizes…` does.
+Every entry that creates something starts **Add**, and keeps its noun so it reads from the
+menu bar: `Add 3D Model…`, `Add Axis…`, `Add Trajectory…`, `Add Sensor…`. Below the separator
+the menu title already says what the subject is, so `Sensors → Edit…` beats
+`Sensors → Edit Sensor…`.
+
+`Scene` groups into submenus rather than listing everything flat, for the same reason: a leaf
+should say what it does from its path alone. `Sizes…` on its own does not say what it sizes,
+while `Scene → Crosses and Labels → Sizes…` does.
 """
 
 from __future__ import annotations
@@ -50,12 +55,12 @@ from pssim.domain.errors import PSsimError
 from pssim.domain.machine import Rgba, Transform, Vec3
 from pssim.domain.model_joints import ModelJoint, ModelJointKind
 from pssim.domain.placement import IDENTITY_PLACEMENT
-from pssim.domain.sensors import Sensor
+from pssim.domain.sensors import Sensor, SensorKind
 from pssim.domain.units import MM_TO_M
 from pssim.observability import get_logger
 from pssim.ui.floor_dialog import FloorDialog
 from pssim.ui.i18n import SOURCE_LANGUAGE, install_translator
-from pssim.ui.icons import fit_icon, view_icon
+from pssim.ui.icons import fit_icon, joint_icon, model_icon, sensor_icon, view_icon
 from pssim.ui.joint_dialog import BindDialog, JointChoices, JointDialog, PickTarget
 from pssim.ui.joint_registry import JointEntry, JointRegistry, descendants_of, would_cycle
 from pssim.ui.labels import describe_assembly, describe_placement, missing_geometry_suffix
@@ -200,13 +205,15 @@ class MainWindow(QMainWindow):
         """The menu bar, one helper per menu.
 
         Split by subject rather than by verb: everything you can do to a model is
-        under `Models`, to a sensor under `Sensors`, to the scene as a whole under
-        `Scene`. Axes and trajectories are the exception and stay in the model
-        tree's context menu — they belong to the tree they are drawn in.
+        under `Models`, to an axis or a trajectory under `Geometry`, to a sensor
+        under `Sensors`, and to the scene as a whole under `Scene`. An `Edit`
+        menu holding all of it would be fifteen unrelated entries with no way to
+        tell which applied to what is selected.
         """
         menu_bar = self.menuBar()
         self._build_file_menu(menu_bar.addMenu("&File"))
         self._build_models_menu(menu_bar.addMenu(self.tr("&Models")))
+        self._build_geometry_menu(menu_bar.addMenu(self.tr("&Geometry")))
         self._build_sensors_menu(menu_bar.addMenu(self.tr("Se&nsors")))
         self._build_scene_menu(menu_bar.addMenu(self.tr("&Scene")))
 
@@ -250,10 +257,10 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.exit_action)
 
     def _build_models_menu(self, model_menu: QMenu) -> None:
-        # Inserting geometry is a model operation, not a document one: it adds
-        # to whatever is already loaded rather than opening a file in place of
-        # it (`File → Open Project` is the one that replaces the scene).
-        self.insert_model_action = QAction(self.tr("&Insert 3D Model…"), self)
+        # Adding geometry is a model operation, not a document one: it adds to
+        # whatever is already loaded rather than opening a file in place of it
+        # (`File → Open Project` is the one that replaces the scene).
+        self.insert_model_action = QAction(model_icon(), self.tr("&Add 3D Model…"), self)
         self.insert_model_action.setShortcut(QKeySequence.StandardKey.Open)
         self.insert_model_action.setStatusTip(self.tr("Add a CAD file (STEP) to the scene"))
         self.insert_model_action.triggered.connect(self.open_file_dialog)
@@ -275,26 +282,98 @@ class MainWindow(QMainWindow):
         self.rename_action.triggered.connect(self.rename_selected_model)
         model_menu.addAction(self.rename_action)
 
+        # Binding and driving are model operations even though what they name is
+        # a joint: you attach *this model* to an axis, and the values window
+        # belongs to the model whose chain is being driven.
+        self.bind_action = QAction(self.tr("&Bind To…"), self)
+        self.bind_action.setStatusTip(self.tr("Attach the model to an axis or a trajectory"))
+        self.bind_action.triggered.connect(self.open_bind_dialog)
+        model_menu.addAction(self.bind_action)
+
+        self.values_action = QAction(self.tr("&Variables…"), self)
+        self.values_action.setStatusTip(self.tr("Drive the joints that move this model"))
+        self.values_action.triggered.connect(self.open_values_panel)
+        model_menu.addAction(self.values_action)
+
+        model_menu.addSeparator()
+
+        # The only Remove with a shortcut. Three of them all bound to Delete
+        # would be ambiguous and Qt would fire none of them.
         self.remove_action = QAction(self.tr("&Remove"), self)
         self.remove_action.setShortcut(QKeySequence.StandardKey.Delete)
         self.remove_action.setStatusTip(self.tr("Remove the selected model"))
         self.remove_action.triggered.connect(self.remove_selected_model)
         model_menu.addAction(self.remove_action)
 
+    def _build_geometry_menu(self, geometry_menu: QMenu) -> None:
+        """The axes and trajectories — the kinematic skeleton models hang off.
+
+        They were reachable only from the model tree's context menu, because
+        they are neither a model nor a sensor and there was nowhere to put them.
+        """
+        self.add_axis_action = QAction(joint_icon(ModelJointKind.AXIS), self.tr("Add &Axis…"), self)
+        self.add_axis_action.setStatusTip(
+            self.tr("Add a rotation axis, under the selected one if there is one")
+        )
+        self.add_axis_action.triggered.connect(
+            partial(self.open_add_joint_dialog, ModelJointKind.AXIS)
+        )
+        geometry_menu.addAction(self.add_axis_action)
+
+        self.add_trajectory_action = QAction(
+            joint_icon(ModelJointKind.TRAJECTORY), self.tr("Add &Trajectory…"), self
+        )
+        self.add_trajectory_action.setStatusTip(
+            self.tr("Add a travel path, under the selected joint if there is one")
+        )
+        self.add_trajectory_action.triggered.connect(
+            partial(self.open_add_joint_dialog, ModelJointKind.TRAJECTORY)
+        )
+        geometry_menu.addAction(self.add_trajectory_action)
+
+        geometry_menu.addSeparator()
+
+        self.edit_joint_action = QAction(self.tr("&Edit…"), self)
+        self.edit_joint_action.setStatusTip(
+            self.tr("Change the selected axis or trajectory's own geometry")
+        )
+        self.edit_joint_action.triggered.connect(self.open_edit_joint_dialog)
+        geometry_menu.addAction(self.edit_joint_action)
+
+        self.joint_parent_action = QAction(self.tr("&Carried By…"), self)
+        self.joint_parent_action.setStatusTip(self.tr("Choose which joint carries this one"))
+        self.joint_parent_action.triggered.connect(self.open_joint_parent_dialog)
+        geometry_menu.addAction(self.joint_parent_action)
+
+        geometry_menu.addSeparator()
+
+        self.remove_joint_action = QAction(self.tr("&Remove"), self)
+        self.remove_joint_action.setStatusTip(
+            self.tr("Remove the selected axis or trajectory; anything bound to it is released")
+        )
+        self.remove_joint_action.triggered.connect(self.remove_selected_joint)
+        geometry_menu.addAction(self.remove_joint_action)
+
     def _build_sensors_menu(self, sensor_menu: QMenu) -> None:
-        self.add_sensor_action = QAction(self.tr("&Add Sensor…"), self)
+        # The beam icon rather than a generic one: it is the kind the dialog
+        # opens on, so the picture matches what appears.
+        self.add_sensor_action = QAction(
+            sensor_icon(SensorKind.BEAM), self.tr("&Add Sensor…"), self
+        )
         self.add_sensor_action.setStatusTip(
             self.tr("Place a laser, inductive, distance or encoder sensor")
         )
         self.add_sensor_action.triggered.connect(self.open_sensor_dialog)
         sensor_menu.addAction(self.add_sensor_action)
 
-        self.edit_sensor_action = QAction(self.tr("&Edit Sensor…"), self)
+        sensor_menu.addSeparator()
+
+        self.edit_sensor_action = QAction(self.tr("&Edit…"), self)
         self.edit_sensor_action.setStatusTip(self.tr("Edit the selected sensor"))
         self.edit_sensor_action.triggered.connect(self.edit_selected_sensor)
         sensor_menu.addAction(self.edit_sensor_action)
 
-        self.mount_sensor_action = QAction(self.tr("&Mount Sensor On…"), self)
+        self.mount_sensor_action = QAction(self.tr("&Mount On…"), self)
         self.mount_sensor_action.setStatusTip(
             self.tr("Choose the model or axis that carries the selected sensor")
         )
@@ -303,7 +382,7 @@ class MainWindow(QMainWindow):
 
         sensor_menu.addSeparator()
 
-        self.remove_sensor_action = QAction(self.tr("&Remove Sensor"), self)
+        self.remove_sensor_action = QAction(self.tr("&Remove"), self)
         self.remove_sensor_action.setStatusTip(self.tr("Remove the selected sensor"))
         self.remove_sensor_action.triggered.connect(self.remove_selected_sensor)
         sensor_menu.addAction(self.remove_sensor_action)
@@ -1114,15 +1193,31 @@ class MainWindow(QMainWindow):
             mark(joint_id)
 
     def _update_actions(self) -> None:
-        """Enable only what the current selection makes possible."""
-        has_selection = self._models.selected is not None
+        """Enable only what the current selection makes possible.
+
+        Greyed out rather than left to fail: an entry that reports "select a
+        model first" after the click has already told the user too late.
+        """
+        model = self._models.selected
+        has_selection = model is not None
         self.placement_action.setEnabled(has_selection)
         self.rename_action.setEnabled(has_selection)
         self.remove_action.setEnabled(has_selection)
         self.fit_action.setEnabled(not self._models.is_empty)
 
+        # Binding needs something to bind *to*; driving needs the model to
+        # already have something moving it.
+        self.bind_action.setEnabled(has_selection and not self._joints.is_empty)
+        self.values_action.setEnabled(model is not None and bool(self._driving_joints(model)))
+
+        has_joint_selection = self._joints.selected is not None
+        self.edit_joint_action.setEnabled(has_joint_selection)
+        self.joint_parent_action.setEnabled(has_joint_selection)
+        self.remove_joint_action.setEnabled(has_joint_selection)
+
         has_sensor_selection = self._sensors.selected is not None
         self.edit_sensor_action.setEnabled(has_sensor_selection)
+        self.mount_sensor_action.setEnabled(has_sensor_selection)
         self.remove_sensor_action.setEnabled(has_sensor_selection)
 
     # -- sensors --------------------------------------------------------------

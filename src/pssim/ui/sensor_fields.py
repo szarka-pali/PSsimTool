@@ -40,6 +40,7 @@ from pssim.domain.sensors import (
     to_sensor,
 )
 from pssim.observability import get_logger
+from pssim.ui.icons import sensor_icon
 from pssim.ui.placement_dialog import (
     TRANSLATION_DECIMALS,
     TRANSLATION_LIMIT_MM,
@@ -138,8 +139,10 @@ class SensorFields(QWidget):
         form.addRow(self.tr("Variable:"), self.variable_edit)
 
         self.kind_combo = QComboBox(self)
-        for _kind, label in KINDS:
-            self.kind_combo.addItem(self.tr(label))
+        for kind, label in KINDS:
+            # The same drawing the dock puts on the row, so what is picked here
+            # and what appears there are recognisably one thing.
+            self.kind_combo.addItem(sensor_icon(kind), self.tr(label))
         self.kind_combo.currentIndexChanged.connect(self._report_index)
         form.addRow(self.tr("Kind:"), self.kind_combo)
         return form

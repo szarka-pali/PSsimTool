@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QTreeWidget, QTreeWidgetItem,
 
 from pssim.domain.model_joints import ModelJointKind
 from pssim.observability import get_logger
+from pssim.ui.icons import joint_icon, model_icon
 from pssim.ui.joint_registry import JointEntry, JointRegistry
 from pssim.ui.model_registry import ModelEntry, ModelRegistry
 
@@ -537,6 +538,7 @@ class ModelTree(QTreeWidget):
 def _make_item(entry: ModelEntry) -> QTreeWidgetItem:
     """One model row. The id travels in item data, never in the visible text."""
     item = QTreeWidgetItem([entry.name, str(entry.node_count)])
+    item.setIcon(COLUMN_NAME, model_icon())
     item.setData(COLUMN_NAME, MODEL_ID_ROLE, entry.model_id)
     item.setData(COLUMN_NAME, VISIBLE_ROLE, entry.is_visible)
     item.setData(COLUMN_NAME, SHOW_AXES_ROLE, entry.show_axes)
@@ -573,6 +575,9 @@ def _make_joint_item(entry: JointEntry) -> QTreeWidgetItem:
     """One joint row. The id travels in item data, never in the visible text."""
     label = f"{entry.joint.name} ({_KIND_LABELS[entry.joint.kind]})"
     item = QTreeWidgetItem([label, ""])
+    # The icon says axis or trajectory at a glance; the text still spells it out,
+    # because a 24 px drawing is a hint and not a label.
+    item.setIcon(COLUMN_NAME, joint_icon(entry.joint.kind))
     item.setData(COLUMN_NAME, JOINT_ID_ROLE, entry.joint_id)
     item.setData(COLUMN_NAME, SHOW_AXES_ROLE, entry.show_axes)
     item.setData(COLUMN_NAME, SHOW_NAME_ROLE, entry.show_name)

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem, QWidget
 
 from pssim.domain.sensors import SensorKind
 from pssim.observability import get_logger
+from pssim.ui.icons import sensor_icon
 from pssim.ui.labels import (
     describe_reading,
     describe_state,
@@ -198,6 +199,7 @@ def _make_item(entry: SensorEntry) -> QTreeWidgetItem:
             describe_reading(entry),
         ]
     )
+    item.setIcon(COLUMN_NAME, sensor_icon(entry.sensor.kind))
     item.setData(COLUMN_NAME, SENSOR_ID_ROLE, entry.sensor_id)
     # The colour goes behind the **number**, not behind the word: the word
     # already says what the state is, while a number on its own does not say

@@ -232,3 +232,19 @@ class TestReading:
         )
 
         assert tree.topLevelItem(0).text(COLUMN_READING) == "512"
+
+
+class TestIcons:
+    def test_a_row_carries_its_kind_icon(self, tree: SensorTree) -> None:
+        tree.refresh(registry_with(beam_sensor(kind=SensorKind.PROXIMITY)))
+
+        assert tree.topLevelItem(0).icon(COLUMN_NAME).isNull() is False
+
+    def test_two_kinds_carry_different_icons(self, tree: SensorTree) -> None:
+        tree.refresh(registry_with(beam_sensor(kind=SensorKind.BEAM)))
+        beam = tree.topLevelItem(0).icon(COLUMN_NAME).pixmap(24, 24).toImage()
+
+        tree.refresh(registry_with(Sensor(name="turns", kind=SensorKind.ENCODER_ABS)))
+        encoder = tree.topLevelItem(0).icon(COLUMN_NAME).pixmap(24, 24).toImage()
+
+        assert beam != encoder

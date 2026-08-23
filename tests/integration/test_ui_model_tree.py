@@ -21,7 +21,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pssim.ui.joint_registry import JointRegistry  # noqa: E402
 from pssim.ui.model_registry import ModelRegistry  # noqa: E402
-from pssim.ui.model_tree import ModelTree  # noqa: E402
+from pssim.ui.model_tree import COLUMN_NAME, ModelTree  # noqa: E402
 from tests.factories import axis_joint, trajectory_joint  # noqa: E402
 
 pytestmark = pytest.mark.ui
@@ -183,3 +183,24 @@ class TestDoubleClick:
         tree.itemDoubleClicked.emit(joint_item, 0)
 
         assert received == []
+
+
+class TestIcons:
+    def test_a_model_row_carries_an_icon(self, tree: ModelTree) -> None:
+        models = ModelRegistry()
+        models.add(Path("C:/models/gantry.step"))
+
+        tree.refresh(models, JointRegistry())
+
+        assert tree.topLevelItem(0).icon(COLUMN_NAME).isNull() is False
+
+    def test_an_axis_and_a_trajectory_carry_different_icons(self, tree: ModelTree) -> None:
+        joints = JointRegistry()
+        joints.add(axis_joint(name="tilt"))
+        joints.add(trajectory_joint(name="slide"))
+
+        tree.refresh(ModelRegistry(), joints)
+
+        first = tree.topLevelItem(0).icon(COLUMN_NAME).pixmap(24, 24).toImage()
+        second = tree.topLevelItem(1).icon(COLUMN_NAME).pixmap(24, 24).toImage()
+        assert first != second

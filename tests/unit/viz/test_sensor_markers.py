@@ -18,3 +18,22 @@ class TestSensorColor:
 
     def test_the_two_colors_differ(self) -> None:
         assert ACTIVE_COLOR != CLEAR_COLOR
+
+
+class TestWhichColorIsGreen:
+    """Pinned by channel, not symbolically.
+
+    The tests above compare `sensor_color(True)` against `ACTIVE_COLOR` and pass
+    whichever hue that constant holds — which is exactly how the convention
+    ended up inverted without a test noticing.
+    """
+
+    def test_a_sensor_that_sees_something_is_green(self) -> None:
+        red, green, blue, _alpha = sensor_color(True)
+
+        assert green > red and green > blue
+
+    def test_a_sensor_that_sees_nothing_is_red(self) -> None:
+        red, green, blue, _alpha = sensor_color(False)
+
+        assert red > green and red > blue

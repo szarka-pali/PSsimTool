@@ -1,8 +1,14 @@
 """Visual markers for sensors — a line for a beam, a wireframe box for a zone.
 
-Colour is the only reaction this version has: green when clear, red when active.
-No status-bar or logged readout yet — see the accompanying plan for why that is
-deliberately future work, not missing.
+Colour is the only reaction this version has: **green when the sensor sees
+something**, red when it does not. That way round because green is what a reader
+takes for "working": a beam that turns red the moment it catches a part reads as
+a fault rather than as the detection it is.
+
+The pair is also what the sensor dock draws with, so the table and the scene
+cannot disagree about what a colour means — though the dock only ever uses the
+green: a red table cell reads as an error, and the scene is where "not seeing
+anything" is worth showing.
 """
 
 from __future__ import annotations
@@ -15,15 +21,23 @@ from pssim.viz.axes import BOX_EDGES, box_corners
 
 Rgba = tuple[float, float, float, float]
 
-CLEAR_COLOR: Final[Rgba] = (0.30, 0.80, 0.35, 1.0)
-ACTIVE_COLOR: Final[Rgba] = (0.90, 0.25, 0.25, 1.0)
+#: Detecting, or measuring something within range.
+ACTIVE_COLOR: Final[Rgba] = (0.30, 0.80, 0.35, 1.0)
+
+#: Nothing in the beam, or nothing within range. Close to
+#: `collision_markers.COLLISION_COLOR` on purpose only in hue, not in meaning —
+#: if the two ever read as one thing in a real scene, this is the one to dull.
+CLEAR_COLOR: Final[Rgba] = (0.90, 0.25, 0.25, 1.0)
 
 LINE_THICKNESS_PX: Final = 2.0
 
 
 def sensor_color(is_active: bool) -> Rgba:
-    """Green when clear, red when active — the one source of truth for the
-    colour convention, shared by the 3D marker and (later) any dock cell."""
+    """Green when the sensor sees something, red when it does not.
+
+    The one source of truth for the convention, shared by the 3D marker and the
+    sensor dock's own cell colouring.
+    """
     return ACTIVE_COLOR if is_active else CLEAR_COLOR
 
 

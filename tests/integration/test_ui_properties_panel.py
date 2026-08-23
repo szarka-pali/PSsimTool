@@ -15,6 +15,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from pssim.domain.machine import Transform  # noqa: E402
@@ -24,6 +25,7 @@ from pssim.ui.joint_registry import JointRegistry  # noqa: E402
 from pssim.ui.model_registry import ModelEntry  # noqa: E402
 from pssim.ui.properties_panel import PropertiesPanel  # noqa: E402
 from pssim.ui.sensor_registry import SensorEntry  # noqa: E402
+from pssim.viz.sensor_markers import ACTIVE_COLOR  # noqa: E402
 from tests.factories import axis_joint, beam_sensor, trajectory_joint  # noqa: E402
 
 pytestmark = pytest.mark.ui
@@ -780,3 +782,32 @@ class TestSensorReading:
         )
 
         assert panel.sensor_state_label.text() == "Clear"
+
+    def test_a_live_reading_gets_the_green_background(self, panel: PropertiesPanel) -> None:
+        panel.show_sensor(
+            sensor_entry(beam_sensor(name="gate"), is_active=True, reading=SensorReading(value=1.0))
+        )
+
+        background = panel.sensor_reading_label.palette().color(QPalette.ColorRole.Window)
+        assert background.getRgbF()[:3] == pytest.approx(ACTIVE_COLOR[:3], abs=1.0 / 255.0)
+
+    def test_an_idle_reading_is_not_coloured(self, panel: PropertiesPanel) -> None:
+        panel.show_sensor(
+            sensor_entry(beam_sensor(name="gate"), is_active=True, reading=SensorReading(value=1.0))
+        )
+
+        panel.set_sensor_reading_silently(sensor_entry(beam_sensor(name="gate")))
+
+        background = panel.sensor_reading_label.palette().color(QPalette.ColorRole.Window)
+        assert background.getRgbF()[:3] != pytest.approx(ACTIVE_COLOR[:3], abs=1.0 / 255.0)
+
+    def test_an_encoder_is_never_coloured(self, panel: PropertiesPanel) -> None:
+        panel.show_sensor(
+            sensor_entry(
+                Sensor(name="turns", kind=SensorKind.ENCODER_ABS),
+                reading=SensorReading(value=512.0),
+            )
+        )
+
+        background = panel.sensor_reading_label.palette().color(QPalette.ColorRole.Window)
+        assert background.getRgbF()[:3] != pytest.approx(ACTIVE_COLOR[:3], abs=1.0 / 255.0)

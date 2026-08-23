@@ -25,7 +25,9 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -53,7 +55,13 @@ from pssim.observability import get_logger
 from pssim.ui.joint_dialog import DIRECTION_DECIMALS, DIRECTION_LIMIT
 from pssim.ui.joint_registry import JointEntry
 from pssim.ui.joint_value_row import JointValueRow
-from pssim.ui.labels import describe_reading, describe_state, describe_state_tooltip
+from pssim.ui.labels import (
+    describe_reading,
+    describe_state,
+    describe_state_tooltip,
+    is_reading_live,
+    live_reading_color,
+)
 from pssim.ui.model_registry import ModelEntry
 from pssim.ui.placement_dialog import (
     ROTATION_DECIMALS,
@@ -319,6 +327,9 @@ class PropertiesPanel(QWidget):
         form.addRow(self.tr("State:"), self.sensor_state_label)
 
         self.sensor_reading_label = QLabel(group)
+        # Filled so a background can be painted at all; the colour itself is set
+        # per reading, and cleared again when the sensor stops measuring.
+        self.sensor_reading_label.setAutoFillBackground(True)
         form.addRow(self.tr("Reading:"), self.sensor_reading_label)
         outer.addLayout(form)
         return group
@@ -629,10 +640,26 @@ class PropertiesPanel(QWidget):
 
     def _apply_sensor_reading(self, entry: SensorEntry) -> None:
         """The two read-only rows. Split out because a reading changes far more
-        often than the definition above it, and only these two follow it."""
+        often than the definition above it, and only these two follow it.
+
+        The green goes behind the number, from the same helper the dock uses, so
+        the panel and the tree cannot disagree about what it means.
+        """
         self.sensor_state_label.setText(describe_state(entry))
         self.sensor_state_label.setToolTip(describe_state_tooltip(entry))
         self.sensor_reading_label.setText(describe_reading(entry))
+
+        palette = self.sensor_reading_label.palette()
+        if is_reading_live(entry):
+            palette.setColor(QPalette.ColorRole.Window, live_reading_color())
+        else:
+            # Back to the widget's own colour rather than a guessed grey — a
+            # hardcoded one would be wrong in a light theme or in a dark one.
+            palette.setColor(
+                QPalette.ColorRole.Window,
+                QApplication.palette().color(QPalette.ColorRole.Window),
+            )
+        self.sensor_reading_label.setPalette(palette)
 
     def set_sensor_reading_silently(self, entry: SensorEntry) -> None:
         """Reflect a reading measured by the scene, without touching the fields.

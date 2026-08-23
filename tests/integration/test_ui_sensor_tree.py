@@ -1,7 +1,9 @@
-"""Tests of `SensorTree`: the rows it renders and what the State cell claims.
+"""Tests of `SensorTree`: the rows it renders and what its cells claim.
 
-The State cell is the interesting one. It is the only place in the application
-that colours a cell by meaning, and an encoder has no meaning to colour it by.
+The colouring is the interesting part. Green sits behind the **Reading**, not
+behind the State: the word already says what the state is, whereas a number on
+its own does not say whether it is a live measurement or the sensor idling. An
+encoder never gets it — it has no in-range notion to report.
 
 Runs headless. Requires `uv sync --extra ui`. Run with ``uv run pytest -m ui``.
 """
@@ -134,26 +136,80 @@ class TestState:
 _CHANNEL_STEP = 1.0 / 255.0
 
 
-class TestStateColour:
-    def test_a_detecting_sensor_is_coloured(self, tree: SensorTree) -> None:
+class TestStateIsNotColoured:
+    """The State cell carries no background at all any more. The word is the
+    statement; a colour behind it added nothing and competed with the reading."""
+
+    def test_a_detecting_sensor_has_no_state_background(self, tree: SensorTree) -> None:
         tree.refresh(registry_with(beam_sensor(), is_active=True))
 
-        background = tree.topLevelItem(0).background(COLUMN_STATE)
+        assert tree.topLevelItem(0).background(COLUMN_STATE) == QBrush()
+
+    def test_a_clear_sensor_has_no_state_background(self, tree: SensorTree) -> None:
+        tree.refresh(registry_with(beam_sensor()))
+
+        assert tree.topLevelItem(0).background(COLUMN_STATE) == QBrush()
+
+
+class TestReadingColour:
+    def test_a_detecting_sensor_has_a_green_reading(self, tree: SensorTree) -> None:
+        tree.refresh(registry_with(beam_sensor(), is_active=True))
+
+        background = tree.topLevelItem(0).background(COLUMN_READING)
         assert background.color().getRgbF()[:3] == pytest.approx(
             ACTIVE_COLOR[:3], abs=_CHANNEL_STEP
         )
 
-    def test_a_clear_sensor_takes_the_other_colour(self, tree: SensorTree) -> None:
+    def test_a_measurement_in_range_is_green(self, tree: SensorTree) -> None:
+        tree.refresh(
+            registry_with(
+                beam_sensor(kind=SensorKind.TOF, range_m=2.5),
+                is_active=True,
+                reading=SensorReading(value=0.3),
+            )
+        )
+
+        background = tree.topLevelItem(0).background(COLUMN_READING)
+        assert background.color().getRgbF()[:3] == pytest.approx(
+            ACTIVE_COLOR[:3], abs=_CHANNEL_STEP
+        )
+
+    def test_a_clear_sensor_has_no_reading_background(self, tree: SensorTree) -> None:
+        # No red in a table: a red cell reads as an error, and the scene already
+        # shows "not seeing anything" with a whole marker.
         tree.refresh(registry_with(beam_sensor()))
 
-        background = tree.topLevelItem(0).background(COLUMN_STATE)
-        assert background.color().getRgbF()[:3] == pytest.approx(CLEAR_COLOR[:3], abs=_CHANNEL_STEP)
+        assert tree.topLevelItem(0).background(COLUMN_READING) == QBrush()
 
-    def test_an_encoder_is_left_uncoloured(self, tree: SensorTree) -> None:
-        # Either colour would be asserting a detection state it has not got.
-        tree.refresh(registry_with(Sensor(name="turns", kind=SensorKind.ENCODER_ABS)))
+    def test_nothing_in_range_has_no_reading_background(self, tree: SensorTree) -> None:
+        tree.refresh(
+            registry_with(
+                beam_sensor(kind=SensorKind.TOF, range_m=2.5),
+                reading=SensorReading(value=2.5, is_valid=False),
+            )
+        )
 
-        assert tree.topLevelItem(0).background(COLUMN_STATE) == QBrush()
+        assert tree.topLevelItem(0).background(COLUMN_READING) == QBrush()
+
+    def test_an_encoder_is_never_coloured(self, tree: SensorTree) -> None:
+        # It has no in-range notion, so green would be claiming one.
+        tree.refresh(
+            registry_with(
+                Sensor(name="turns", kind=SensorKind.ENCODER_ABS),
+                reading=SensorReading(value=512.0),
+            )
+        )
+
+        assert tree.topLevelItem(0).background(COLUMN_READING) == QBrush()
+
+    def test_the_red_never_reaches_the_table(self, tree: SensorTree) -> None:
+        tree.refresh(registry_with(beam_sensor()))
+
+        item = tree.topLevelItem(0)
+        for column in (COLUMN_STATE, COLUMN_READING):
+            assert item.background(column).color().getRgbF()[:3] != pytest.approx(
+                CLEAR_COLOR[:3], abs=_CHANNEL_STEP
+            )
 
 
 class TestReading:

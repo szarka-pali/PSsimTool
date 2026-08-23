@@ -1,8 +1,8 @@
 """Tree of placed sensors, docked below the model tree.
 
 A separate dock rather than folding into the Models dock: a sensor's columns
-(Name / Kind / State / Reading) are not a model's (Name / Parts), and the State
-cell needs a coloured background a model row never has.
+(Name / Kind / State / Reading) are not a model's (Name / Parts), and the
+Reading cell needs a coloured background a model row never has.
 
 The wording of the State and Reading cells lives in `ui/labels.py`, not here —
 the properties panel says the same two things about the selected sensor, and one
@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import QModelIndex, QPoint, Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem, QWidget
 
 from pssim.domain.sensors import SensorKind
@@ -26,10 +25,10 @@ from pssim.ui.labels import (
     describe_reading,
     describe_state,
     describe_state_tooltip,
-    has_detection_state,
+    is_reading_live,
+    live_reading_color,
 )
 from pssim.ui.sensor_registry import SensorEntry, SensorRegistry
-from pssim.viz.sensor_markers import ACTIVE_COLOR, CLEAR_COLOR
 
 logger = get_logger(__name__)
 
@@ -55,13 +54,6 @@ _KIND_LABELS: Final[dict[SensorKind, str]] = {
     SensorKind.ENCODER_ABS: "Encoder ABS",
     SensorKind.PROXIMITY: "Proximity",
 }
-
-
-def _state_color(is_active: bool) -> QColor:
-    """The State cell's background. Reuses the exact RGBA the 3D marker is drawn
-    with, so the dock and the scene never disagree about what a colour means."""
-    red, green, blue, _alpha = ACTIVE_COLOR if is_active else CLEAR_COLOR
-    return QColor.fromRgbF(red, green, blue)
 
 
 class SensorTree(QTreeWidget):
@@ -207,11 +199,12 @@ def _make_item(entry: SensorEntry) -> QTreeWidgetItem:
         ]
     )
     item.setData(COLUMN_NAME, SENSOR_ID_ROLE, entry.sensor_id)
-    # An encoder is left uncoloured: the two colours mean detected and not
-    # detected, and an encoder does neither. Painting it either one would be
-    # asserting a state it has not got.
-    if has_detection_state(entry.sensor.kind):
-        item.setBackground(COLUMN_STATE, _state_color(entry.is_active))
+    # The colour goes behind the **number**, not behind the word: the word
+    # already says what the state is, while a number on its own does not say
+    # whether it is a live measurement or the sensor idling. An encoder never
+    # gets it — it has no in-range notion to report.
+    if is_reading_live(entry):
+        item.setBackground(COLUMN_READING, live_reading_color())
     item.setToolTip(COLUMN_STATE, describe_state_tooltip(entry))
     if entry.mounted_on is not None:
         item.setToolTip(COLUMN_NAME, f"{entry.sensor.name} (mounted)")

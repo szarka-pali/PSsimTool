@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import QCoreApplication
+from PySide6.QtGui import QColor
 
 from pssim.cad.model import CadAssembly
 from pssim.domain.machine import Transform
@@ -20,6 +21,7 @@ from pssim.domain.placement import from_transform, is_identity
 from pssim.domain.sensors import DISTANCE_KINDS, ENCODER_KINDS, SensorKind
 from pssim.domain.units import MM_TO_M
 from pssim.ui.sensor_registry import SensorEntry
+from pssim.viz.sensor_markers import ACTIVE_COLOR
 
 #: The context for `lupdate`. It must be constant, or the translations fall apart.
 CONTEXT: Final = "labels"
@@ -75,6 +77,33 @@ def has_detection_state(kind: SensorKind) -> bool:
     was never attempted. See docs/architecture.md R16.
     """
     return kind not in ENCODER_KINDS
+
+
+def live_reading_color() -> QColor:
+    """The background a live reading gets, in the dock and in the panel alike.
+
+    Exactly the RGBA `viz/sensor_markers` draws a sensor that sees something in,
+    so a green cell and a green marker cannot come to mean different things.
+    Only the green half of that pair is used: the red one is for the scene, and
+    in a table a red cell reads as an error, which "not seeing anything" is not.
+    """
+    red, green, blue, _alpha = ACTIVE_COLOR
+    return QColor.fromRgbF(red, green, blue)
+
+
+def is_reading_live(entry: SensorEntry) -> bool:
+    """Whether the sensor's number is something it is actually measuring now.
+
+    True for a 0/1 kind that is detecting and for a rangefinder within range;
+    false for either idling, and false for an encoder always — an encoder reports
+    an angle rather than a detection, so there is no "live" for it to be.
+
+    This is what earns the green background in the dock and in the properties
+    panel. `is_active` already means exactly this per family (`value != 0` for
+    the 0/1 kinds, `reading.is_valid` for the distance ones), so the two cannot
+    disagree with the word in the State column.
+    """
+    return has_detection_state(entry.sensor.kind) and entry.is_active
 
 
 def describe_state(entry: SensorEntry) -> str:

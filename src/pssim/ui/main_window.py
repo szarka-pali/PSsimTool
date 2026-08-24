@@ -60,7 +60,14 @@ from pssim.domain.units import MM_TO_M
 from pssim.observability import get_logger
 from pssim.ui.floor_dialog import FloorDialog
 from pssim.ui.i18n import SOURCE_LANGUAGE, install_translator
-from pssim.ui.icons import fit_icon, joint_icon, model_icon, sensor_icon, view_icon
+from pssim.ui.icons import (
+    app_icon,
+    fit_icon,
+    joint_icon,
+    model_icon,
+    sensor_icon,
+    view_icon,
+)
 from pssim.ui.joint_dialog import BindDialog, JointChoices, JointDialog, PickTarget
 from pssim.ui.joint_registry import JointEntry, JointRegistry, descendants_of, would_cycle
 from pssim.ui.labels import describe_assembly, describe_placement, missing_geometry_suffix
@@ -2384,6 +2391,9 @@ def run(argv: list[str] | None = None, language: str = SOURCE_LANGUAGE) -> int:
     # column widths would be saved into a location that changes between runs.
     application.setOrganizationName(APP_TITLE)
     application.setOrganizationDomain(APP_DOMAIN)
+    # Set on the application, not per window: it is what the taskbar and the
+    # alt-tab list show, and every dialog inherits it.
+    application.setWindowIcon(app_icon())
     install_translator(application, language)
 
     window = MainWindow()

@@ -297,6 +297,28 @@ class _StaticSource:
     def stop(self) -> None: ...
 
 
+@app.command("write-icon")
+def write_icon(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Where to write the icon, e.g. build/pssim.ico"),
+    ],
+) -> None:
+    """Render the application icon to a file.
+
+    The icon is drawn in code and nothing binary is committed (see
+    docs/architecture.md R17). A packaging step needs a real file, so this is how
+    it gets one that cannot drift from the drawing.
+    """
+    from PySide6.QtWidgets import QApplication  # a pixmap needs an application
+
+    from pssim.ui.icons import write_app_icon
+
+    _ = QApplication.instance() or QApplication([])
+    written = write_app_icon(path)
+    typer.echo(f"icon written: {written}")
+
+
 @app.command("mock-server")
 def mock_server(
     endpoint: Annotated[str, typer.Option("--endpoint", "-e")] = "opc.tcp://0.0.0.0:4840/pssim/",

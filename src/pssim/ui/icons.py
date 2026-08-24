@@ -30,12 +30,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from functools import cache
+from pathlib import Path
 from typing import Any, Final
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import QApplication
 
+from pssim.domain.errors import ConfigError
 from pssim.domain.model_joints import ModelJointKind
 from pssim.domain.sensors import SensorKind
 from pssim.viz.axes import AXIS_COLORS, AXIS_DIRECTIONS
@@ -223,6 +225,101 @@ def fit_icon(size_px: int = DEFAULT_ICON_PX) -> Any:
             )
 
     return _drawn_icon(size_px, draw)
+
+
+# -- the application ---------------------------------------------------------
+
+#: The sizes Windows and Qt actually ask an application icon for. Each is drawn
+#: at its own size rather than scaled from one bitmap: a 16 px icon downsampled
+#: from 256 is mud, and 16 px is the size a taskbar uses most.
+APP_ICON_SIZES: Final[tuple[int, ...]] = (16, 24, 32, 48, 64, 128, 256)
+
+
+def app_icon() -> QIcon:
+    """The application's own icon: the model cube inside a rounded frame.
+
+    The same cube the model rows carry, because what this application is *for*
+    is looking at machine geometry. Built once per size so every size is a real
+    drawing.
+    """
+    icon = QIcon()
+    for size_px in APP_ICON_SIZES:
+        icon.addPixmap(_app_pixmap(size_px))
+    return icon
+
+
+def _app_pixmap(size_px: int) -> QPixmap:
+    """One size of the application icon, drawn rather than scaled.
+
+    Not routed through `_drawn_icon`, for two reasons: this one is opaque and
+    owns its own background, where every other icon here is a transparent line
+    drawing; and it is scaled **down** to real pixels rather than carrying a
+    device pixel ratio. An application icon is picked by the window manager from
+    the sizes it is offered, and a 32 px bitmap labelled "16 at 2×" is not one of
+    the sizes it asked for.
+    """
+    scale = SUPERSAMPLE
+    span = size_px * scale
+    pixmap = QPixmap(span, span)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        # A fixed dark ground, not the palette: an application icon is seen on a
+        # taskbar and in a file listing, neither of which is this app's theme.
+        painter.setBrush(QBrush(QColor(38, 44, 54)))
+        inset = span * 0.04
+        painter.drawRoundedRect(
+            QRectF(inset, inset, span - inset * 2, span - inset * 2), span * 0.2, span * 0.2
+        )
+        _draw_app_cube(painter, span)
+    finally:
+        painter.end()
+
+    # Down to real pixels, smoothly: drawing at 2× and shrinking is what keeps
+    # the diagonals of the cube clean at 16 px.
+    return pixmap.scaled(
+        size_px,
+        size_px,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
+def _draw_app_cube(painter: QPainter, span: float) -> None:
+    """The cube, with one face per axis colour so it reads as three dimensions."""
+    center = QPointF(span / 2, span / 2)
+    radius = span * 0.30
+    corners = [
+        QPointF(
+            center.x() + radius * math.cos(math.radians(30 + 60 * step)),
+            center.y() + radius * math.sin(math.radians(30 + 60 * step)),
+        )
+        for step in range(6)
+    ]
+    faces = (
+        ((5, 0, 1), _axis_color("X")),
+        ((1, 2, 3), _axis_color("Y")),
+        ((3, 4, 5), _axis_color("Z")),
+    )
+    painter.setPen(Qt.PenStyle.NoPen)
+    for indices, color in faces:
+        painter.setBrush(QBrush(color))
+        painter.drawPolygon([center, *(corners[index] for index in indices)])
+
+
+def write_app_icon(path: Path) -> Path:
+    """Render the application icon to a real file, for a packaging step.
+
+    Nothing in the repository is a binary (R17), and no build script exists yet
+    to consume one — this is how a future one gets a `.ico` without a checked-in
+    asset drifting away from the code that draws it.
+    """
+    if not _app_pixmap(max(APP_ICON_SIZES)).save(str(path)):
+        raise ConfigError(f"could not write an icon to {path}")
+    return path
 
 
 # -- the items ---------------------------------------------------------------

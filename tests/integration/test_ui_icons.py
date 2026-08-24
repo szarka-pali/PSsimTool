@@ -10,22 +10,28 @@ Runs headless. Requires `uv sync --extra ui`. Run with ``uv run pytest -m ui``.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from pssim.domain.errors import ConfigError  # noqa: E402
 from pssim.domain.model_joints import ModelJointKind  # noqa: E402
 from pssim.domain.sensors import SensorKind  # noqa: E402
 from pssim.ui.icons import (  # noqa: E402
+    APP_ICON_SIZES,
     DEFAULT_ICON_PX,
+    app_icon,
     fit_icon,
     joint_icon,
     model_icon,
     sensor_icon,
     view_icon,
+    write_app_icon,
 )
 
 pytestmark = pytest.mark.ui
@@ -142,3 +148,47 @@ class TestColour:
         # `fit_icon` is a control, not an item: it has no identity to signal, and
         # a coloured one would compete with the rows beside it.
         assert saturation(fit_icon()) < 40
+
+
+class TestApplicationIcon:
+    def test_it_offers_every_size(self, qt_app: QApplication) -> None:
+        # Each is drawn at its own size rather than scaled from one bitmap: a
+        # 16 px icon downsampled from 256 is mud, and 16 px is what a taskbar
+        # uses most.
+        available = {size.width() for size in app_icon().availableSizes()}
+
+        assert available == set(APP_ICON_SIZES)
+
+    def test_the_small_size_is_not_blank(self, qt_app: QApplication) -> None:
+        assert painted_pixels(app_icon(), 16) > 0
+
+    def test_it_is_coloured(self, qt_app: QApplication) -> None:
+        assert saturation(app_icon(), 64) > 40
+
+    def test_it_is_opaque(self, qt_app: QApplication) -> None:
+        # Unlike the item icons, which are transparent line drawings: an
+        # application icon owns its own ground, because it is seen on a taskbar
+        # rather than on this application's own background.
+        image = app_icon().pixmap(64, 64).toImage()
+
+        assert image.pixelColor(32, 32).alpha() == 255
+
+    def test_it_can_be_written_to_a_file(self, qt_app: QApplication, tmp_path: Path) -> None:
+        # No binary is committed (R17); this is how a packaging step gets one
+        # that cannot drift from the drawing.
+        written = write_app_icon(tmp_path / "pssim.ico")
+
+        assert written.exists() and written.stat().st_size > 0
+
+    def test_the_written_icon_is_the_largest_size(
+        self, qt_app: QApplication, tmp_path: Path
+    ) -> None:
+        write_app_icon(tmp_path / "pssim.png")
+
+        assert QImage(str(tmp_path / "pssim.png")).width() == max(APP_ICON_SIZES)
+
+    def test_an_unwritable_path_is_a_typed_error(
+        self, qt_app: QApplication, tmp_path: Path
+    ) -> None:
+        with pytest.raises(ConfigError):
+            write_app_icon(tmp_path / "missing" / "pssim.ico")

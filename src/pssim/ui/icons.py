@@ -9,6 +9,13 @@ The item icons — a model, an axis, a trajectory, one per sensor kind — are l
 the same kind. They are what the menus and both trees put beside a name, so a row can be
 recognised without reading it.
 
+They are drawn to one rule: **structure in the palette's ink, identity in colour.** The outline
+of a shape takes `WindowText`, so it is legible on a light theme and on a dark one alike; the
+one part that says *which* kind it is takes an accent from `_ACCENTS`, mid-toned so it reads
+against white and against near-black without a second palette. Colour alone would fail on one
+of the two themes; ink alone is what iteration 1 was, and seven sensor kinds in grey are hard
+to tell apart at 24 px.
+
 Drawing at run time rather than shipping files has three advantages: there are no binaries in
 the repository to license or to keep in step with the code, the icons adapt to the display's
 DPI, and the pen colour comes from the running palette — a fixed grey is invisible on one
@@ -47,6 +54,22 @@ INTO_SCREEN_THRESHOLD: Final = 0.2
 
 LINE_WIDTH_PX: Final = 2.0
 DOT_RADIUS_PX: Final = 2.0
+
+#: The accents. Mid-toned on purpose: a colour light enough to glow on a dark theme washes out
+#: on a light one, and the reverse. These sit near the middle and read on both.
+MODEL_BLUE: Final = QColor(70, 130, 200)
+LASER_RED: Final = QColor(214, 64, 64)
+COIL_COPPER: Final = QColor(198, 124, 48)
+PULSE_CYAN: Final = QColor(38, 166, 178)
+ENCODER_VIOLET: Final = QColor(146, 96, 200)
+ZONE_GREEN: Final = QColor(72, 160, 88)
+
+
+def _axis_color(name: str) -> QColor:
+    """One of the scene's own axis colours, so an icon and the cross it stands
+    for are recognisably the same thing."""
+    red, green, blue, _alpha = AXIS_COLORS[name]
+    return QColor.fromRgbF(red, green, blue)
 
 
 def view_icon(view: str, size_px: int = DEFAULT_ICON_PX) -> QIcon:
@@ -145,12 +168,22 @@ def _drawn_icon(size_px: int, draw: Callable[[QPainter, float], None]) -> QIcon:
     return QIcon(pixmap)
 
 
-def _dot(painter: QPainter, center: QPointF, radius: float) -> None:
-    """A filled dot in the current pen colour."""
+def _dot(painter: QPainter, center: QPointF, radius: float, color: QColor | None = None) -> None:
+    """A filled dot, in the current pen colour unless another is given."""
     painter.save()
-    painter.setBrush(QBrush(painter.pen().color()))
+    filled = color if color is not None else painter.pen().color()
+    painter.setPen(QPen(filled, painter.pen().widthF()))
+    painter.setBrush(QBrush(filled))
     painter.drawEllipse(center, radius, radius)
     painter.restore()
+
+
+def _accent(painter: QPainter, color: QColor) -> QPen:
+    """The current pen recoloured. Width, cap and dash are kept, so an accented
+    stroke sits at the same weight as the ink around it."""
+    pen = QPen(painter.pen())
+    pen.setColor(color)
+    return pen
 
 
 def _dashed(painter: QPainter) -> QPen:
@@ -213,6 +246,14 @@ def model_icon(size_px: int = DEFAULT_ICON_PX) -> QIcon:
             )
             for step in range(6)
         ]
+        # One face filled, so the cube reads as a solid at 16 px where three
+        # inner lines alone are just a busy hexagon.
+        painter.save()
+        painter.setBrush(QBrush(MODEL_BLUE))
+        painter.setPen(_accent(painter, MODEL_BLUE))
+        painter.drawPolygon([center, corners[5], corners[0], corners[1]])
+        painter.restore()
+
         for index, corner in enumerate(corners):
             painter.drawLine(corner, corners[(index + 1) % 6])
         # The three edges meeting at the middle are what makes it read as solid
@@ -232,11 +273,22 @@ def joint_icon(kind: ModelJointKind, size_px: int = DEFAULT_ICON_PX) -> QIcon:
 
 
 def _axis_icon(size_px: int) -> QIcon:
-    """Rotation: a shaft with a turn around it."""
+    """Rotation: a shaft with a turn around it.
+
+    The shaft takes the scene's Z colour and the turn takes X's, because that is
+    what an axis marker looks like in the viewport — the icon and the thing it
+    stands for should be recognisably each other.
+    """
 
     def draw(painter: QPainter, span: float) -> None:
         center = span / 2
+        painter.save()
+        painter.setPen(_accent(painter, _axis_color("Z")))
         painter.drawLine(QPointF(center, span * 0.12), QPointF(center, span * 0.88))
+        painter.restore()
+
+        painter.save()
+        painter.setPen(_accent(painter, _axis_color("X")))
         # A flattened ellipse is a circle seen at an angle — the turn the shaft makes.
         radius_x = span * 0.32
         radius_y = span * 0.14
@@ -248,21 +300,30 @@ def _axis_icon(size_px: int) -> QIcon:
         _arrow_head(
             painter, QPointF(center + radius_x * 0.86, center - radius_y * 0.5), 1.9, span * 0.16
         )
+        painter.restore()
 
     return _drawn_icon(size_px, draw)
 
 
 def _trajectory_icon(size_px: int) -> QIcon:
-    """Travel: a path from a start to a far end, with both ends marked."""
+    """Travel: a path from a start to a far end, with both ends marked.
+
+    The path takes the scene's X colour — the direction of travel — and the end
+    stops stay ink, because they are structure rather than identity.
+    """
 
     def draw(painter: QPainter, span: float) -> None:
         center = span / 2
         start = span * 0.16
         end = span * 0.84
-        painter.drawLine(QPointF(start, center), QPointF(end, center))
         for x in (start, end):
             painter.drawLine(QPointF(x, center - span * 0.18), QPointF(x, center + span * 0.18))
+
+        painter.save()
+        painter.setPen(_accent(painter, _axis_color("X")))
+        painter.drawLine(QPointF(start, center), QPointF(end, center))
         _arrow_head(painter, QPointF(end, center), 0.0, span * 0.18)
+        painter.restore()
 
     return _drawn_icon(size_px, draw)
 
@@ -285,7 +346,10 @@ def _beam_icon(size_px: int) -> QIcon:
         center = span / 2
         _dot(painter, QPointF(span * 0.18, center), span * 0.09)
         painter.drawLine(QPointF(span * 0.82, span * 0.22), QPointF(span * 0.82, span * 0.78))
+        # The emitter and the receiver are hardware and stay ink; the light
+        # between them is the part that is red.
         painter.save()
+        painter.setPen(_accent(painter, LASER_RED))
         painter.setPen(_dashed(painter))
         painter.drawLine(QPointF(span * 0.30, center), QPointF(span * 0.78, center))
         painter.restore()
@@ -300,7 +364,10 @@ def _inductive_icon(size_px: int) -> QIcon:
         center = span / 2
         body = QRectF(span * 0.16, span * 0.28, span * 0.34, span * 0.44)
         painter.drawRect(body)
-        # The windings, which is what makes it a coil rather than a box.
+        painter.save()
+        painter.setPen(_accent(painter, COIL_COPPER))
+        # The windings, which is what makes it a coil rather than a box — and
+        # copper, which is what makes it inductive rather than photoelectric.
         for fraction in (0.35, 0.5, 0.65):
             y = span * fraction
             painter.drawLine(QPointF(body.left(), y), QPointF(body.right(), y))
@@ -310,6 +377,7 @@ def _inductive_icon(size_px: int) -> QIcon:
                 -55 * 16,
                 110 * 16,
             )
+        painter.restore()
 
     return _drawn_icon(size_px, draw)
 
@@ -320,13 +388,16 @@ def _tof_icon(size_px: int) -> QIcon:
     def draw(painter: QPainter, span: float) -> None:
         center = span / 2
         _dot(painter, QPointF(span * 0.16, center), span * 0.09)
+        painter.drawLine(QPointF(span * 0.86, span * 0.20), QPointF(span * 0.86, span * 0.80))
+        painter.save()
+        painter.setPen(_accent(painter, PULSE_CYAN))
         for radius in (span * 0.20, span * 0.32, span * 0.44):
             painter.drawArc(
                 QRectF(span * 0.16 - radius, center - radius, radius * 2, radius * 2),
                 -50 * 16,
                 100 * 16,
             )
-        painter.drawLine(QPointF(span * 0.86, span * 0.20), QPointF(span * 0.86, span * 0.80))
+        painter.restore()
 
     return _drawn_icon(size_px, draw)
 
@@ -336,9 +407,12 @@ def _laser_distance_icon(size_px: int) -> QIcon:
 
     def draw(painter: QPainter, span: float) -> None:
         ray_y = span * 0.36
-        _dot(painter, QPointF(span * 0.16, ray_y), span * 0.08)
-        painter.drawLine(QPointF(span * 0.22, ray_y), QPointF(span * 0.84, ray_y))
+        _dot(painter, QPointF(span * 0.16, ray_y), span * 0.08, LASER_RED)
         painter.drawLine(QPointF(span * 0.86, span * 0.18), QPointF(span * 0.86, span * 0.82))
+        painter.save()
+        painter.setPen(_accent(painter, LASER_RED))
+        painter.drawLine(QPointF(span * 0.22, ray_y), QPointF(span * 0.84, ray_y))
+        painter.restore()
 
         # The dimension line underneath is what says "it reports how far", rather
         # than only "there is a beam".
@@ -361,7 +435,10 @@ def _encoder_icon(size_px: int, has_index: bool) -> QIcon:
     def draw(painter: QPainter, span: float) -> None:
         center = QPointF(span / 2, span / 2)
         radius = span * 0.30
+        painter.save()
+        painter.setPen(_accent(painter, ENCODER_VIOLET))
         painter.drawEllipse(center, radius, radius)
+        painter.restore()
         for step in range(8):
             angle = math.radians(45 * step)
             painter.drawLine(
@@ -375,7 +452,12 @@ def _encoder_icon(size_px: int, has_index: bool) -> QIcon:
                 ),
             )
         if has_index:
-            _dot(painter, QPointF(center.x(), center.y() - radius * 0.55), span * 0.07)
+            _dot(
+                painter,
+                QPointF(center.x(), center.y() - radius * 0.55),
+                span * 0.07,
+                ENCODER_VIOLET,
+            )
 
     return _drawn_icon(size_px, draw)
 
@@ -385,9 +467,12 @@ def _proximity_icon(size_px: int) -> QIcon:
 
     def draw(painter: QPainter, span: float) -> None:
         painter.save()
+        painter.setPen(_accent(painter, ZONE_GREEN))
         painter.setPen(_dashed(painter))
         painter.drawRect(QRectF(span * 0.18, span * 0.18, span * 0.64, span * 0.64))
         painter.restore()
+        # The dot is what is *in* the zone, so it stays ink — the zone is the
+        # part that is green.
         _dot(painter, QPointF(span / 2, span / 2), span * 0.10)
 
     return _drawn_icon(size_px, draw)

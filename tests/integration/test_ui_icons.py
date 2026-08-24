@@ -103,3 +103,42 @@ class TestCaching:
         pixmap = sensor_icon(SensorKind.BEAM, 32).pixmap(32, 32)
 
         assert pixmap.width() == 32
+
+
+def saturation(icon: object, size_px: int = DEFAULT_ICON_PX) -> int:
+    """The strongest colour cast among the painted pixels.
+
+    Zero for a drawing made only of the palette's ink, because ink is grey and
+    grey has equal channels. Anything above a few counts is a real accent rather
+    than an anti-aliasing artefact.
+    """
+    image = icon.pixmap(size_px, size_px).toImage()  # type: ignore[attr-defined]
+    strongest = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            pixel = image.pixelColor(x, y)
+            if pixel.alpha() == 0:
+                continue
+            channels = (pixel.red(), pixel.green(), pixel.blue())
+            strongest = max(strongest, max(channels) - min(channels))
+    return strongest
+
+
+class TestColour:
+    """Iteration 2: structure in the palette's ink, identity in colour."""
+
+    def test_the_model_icon_is_coloured(self, qt_app: QApplication) -> None:
+        assert saturation(model_icon()) > 40
+
+    @pytest.mark.parametrize("kind", list(SensorKind))
+    def test_every_sensor_kind_is_coloured(self, qt_app: QApplication, kind: SensorKind) -> None:
+        assert saturation(sensor_icon(kind)) > 40
+
+    @pytest.mark.parametrize("kind", list(ModelJointKind))
+    def test_every_joint_kind_is_coloured(self, qt_app: QApplication, kind: ModelJointKind) -> None:
+        assert saturation(joint_icon(kind)) > 40
+
+    def test_the_toolbar_icons_stay_in_ink(self, qt_app: QApplication) -> None:
+        # `fit_icon` is a control, not an item: it has no identity to signal, and
+        # a coloured one would compete with the rows beside it.
+        assert saturation(fit_icon()) < 40

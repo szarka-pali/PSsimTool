@@ -16,11 +16,14 @@ from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QColor
 
 from pssim.cad.model import CadAssembly
+from pssim.config.binding import BindingDirection
+from pssim.domain.errors import ConfigError
 from pssim.domain.machine import Transform
 from pssim.domain.placement import from_transform, is_identity
 from pssim.domain.sensors import DISTANCE_KINDS, ENCODER_KINDS, SensorKind
 from pssim.domain.units import MM_TO_M
 from pssim.ui.sensor_registry import SensorEntry
+from pssim.ui.variable_registry import VariableEntry, VariableState
 from pssim.viz.sensor_markers import ACTIVE_COLOR
 
 #: The context for `lupdate`. It must be constant, or the translations fall apart.
@@ -155,3 +158,85 @@ def describe_reading(entry: SensorEntry) -> str:
             return NOT_APPLICABLE
         return f"{entry.reading.value / MM_TO_M:.1f} mm"
     return f"{entry.reading.value:.0f}"
+
+
+#: What each variable state is called in the Variables tab. Every state is
+#: listed: a missing one would raise on a row rather than degrade, and a table
+#: with one unlabelled variable is not worth crashing over.
+_VARIABLE_STATES: Final[dict[VariableState, str]] = {
+    VariableState.UNBOUND: "No tag",
+    VariableState.OFFLINE: "Disconnected",
+    VariableState.WAITING: "Waiting",
+    VariableState.LIVE: "Online",
+    VariableState.STALE: "Stale",
+}
+
+
+def describe_variable_state(entry: VariableEntry) -> str:
+    """The Status column: where this variable stands with the server."""
+    return _tr(_VARIABLE_STATES.get(entry.state, entry.state.value))
+
+
+def describe_variable_state_tooltip(entry: VariableEntry) -> str:
+    """The sentence behind the word.
+
+    "Stale" in particular needs one: the scene is still drawing the last value
+    it had (R10), which is deliberate and looks like nothing being wrong.
+    """
+    if entry.state is VariableState.UNBOUND:
+        return _tr("No OPC UA tag assigned - this variable reads from nothing")
+    if entry.state is VariableState.OFFLINE:
+        return _tr("Not connected to the server")
+    if entry.state is VariableState.WAITING:
+        return _tr("Subscribed, but the server has not sent a value yet")
+    if entry.state is VariableState.STALE:
+        return _tr("The last value is old - the scene is still showing it")
+    return _tr("Receiving values")
+
+
+def describe_direction(direction: BindingDirection) -> str:
+    """Which way a variable travels, as the tab shows it."""
+    if direction is BindingDirection.WRITE:
+        return _tr("Write")
+    return _tr("Read")
+
+
+def describe_direction_tooltip(direction: BindingDirection) -> str:
+    """Why the direction matters, since one of the two can leave this process."""
+    if direction is BindingDirection.WRITE:
+        return _tr("Published to the server, not read from it - and only when writing is allowed")
+    return _tr("Read from the server; the PLC decides the value")
+
+
+def describe_variable_value(entry: VariableEntry) -> str:
+    """The value the **tag** holds, which is what this table is about.
+
+    Converted back out of the scene's units, because a row saying `1.25` for a
+    tag holding `1250` invites a hunt for a bug that is not there. `to_plc` is
+    the exact inverse of the conversion on the way in (R8), so the number shown
+    is the number on the server.
+    """
+    if entry.value is None:
+        return NOT_APPLICABLE
+    return f"{_plc_value(entry):.6g}"
+
+
+def describe_variable_value_tooltip(entry: VariableEntry) -> str:
+    """Both numbers, so the conversion is visible rather than mysterious."""
+    if entry.value is None:
+        return _tr("No value yet")
+    return _tr("{0} on the server, {1} in the scene (metres / radians)").format(
+        f"{_plc_value(entry):.6g}", f"{entry.value:.6g}"
+    )
+
+
+def _plc_value(entry: VariableEntry) -> float:
+    """The value in the PLC's own units, or the internal one when there is no
+    way back — a binding with scale 0 has no inverse (see `config.binding`)."""
+    binding = entry.binding()
+    if binding is None:
+        return entry.value if entry.value is not None else 0.0
+    try:
+        return binding.to_plc(entry.value if entry.value is not None else 0.0)
+    except ConfigError:
+        return entry.value if entry.value is not None else 0.0

@@ -12,9 +12,10 @@ the control program is actually doing. This is not a game and not a physics simu
 **the data comes from the PLC, the application only displays it.** It computes no dynamics
 of its own.
 
-System boundary: the application is an **OPC UA client**. It contains no PLC logic, does not
-edit CAD, and does not write to the PLC (except for explicitly marked controls, which do not
-exist yet).
+System boundary: the application is an **OPC UA client**. It contains no PLC logic and does
+not edit CAD. It writes to the PLC in exactly one case — a sensor's own reading, and only when
+*Allow writing* has been deliberately turned on (see `docs/architecture.md` R19). That switch
+is off by default and the write path is tested **exclusively** against `pssim mock-server`.
 
 ## Commands
 

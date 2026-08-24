@@ -186,7 +186,14 @@ class TestWindow:
 class TestMenu:
     def test_the_main_menus_are_in_order(self, window: MainWindow) -> None:
         # Split by subject: what you are working on, not what you are doing to it.
-        assert menu_titles(window) == ["File", "Models", "Geometry", "Sensors", "Scene"]
+        assert menu_titles(window) == [
+            "File",
+            "Models",
+            "Geometry",
+            "Sensors",
+            "Scene",
+            "Communication",
+        ]
 
     def test_file_obsahuje_projektove_polozky(self, window: MainWindow) -> None:
         # Separators come through as empty strings; only the real entries matter.

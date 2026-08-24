@@ -603,6 +603,77 @@ refresh.
 What a test can hold is that an icon is not blank and not a copy of its neighbour. How it
 *looks* is for a real run.
 
+### R18 — Settings that outlive a session live outside the project
+
+A `*.pssim` says what the scene *is*. Two other kinds of state outlive a session and are not
+that, and both go in the application's settings (`ui/settings.py`, `QSettings`):
+
+- **How wide each table's columns are.** R7 already decided window geometry is not scene
+  content, and a column width is the same kind of thing — it is about this user's screen.
+- **The OPC UA endpoint and the variable-to-tag mapping.** A project then carries no
+  addresses and can be handed to anyone. The price is real and was chosen deliberately: the
+  mapping does not travel with the scene, so opening a colleague's project means assigning
+  the tags again.
+
+Three properties of the implementation:
+
+- **The dataclasses are pure and Qt is imported inside `SettingsStore`.** `tests/unit/` must
+  stay free of a window and run in seconds; importing PySide6 there costs more than the whole
+  suite does.
+- **A settings file is outside data.** Every read validates and falls back to a default —
+  anything at all can be in there, including a hand edit. A zero column width is dropped (a
+  collapsed column has no handle left to drag back), and only a stored `True` turns writing
+  on: a corrupted setting must never be what enables it.
+- **The store is injected**, as `RecentProjects` takes its `QSettings`. The default one is the
+  user's own, and closing a window writes to it, so every test points at a temp file.
+
+Columns are `Interactive`, not `Stretch` or `ResizeToContents`: both of those compute the
+width themselves and take the drag handle away with it. The saved layout is applied only when
+its length matches the table's column count — a layout from a build with different columns
+would otherwise put every width against the wrong column.
+
+### R19 — A project's variables are bound to OPC UA tags, and writing is a switch
+
+Every joint and sensor carries a `variable` (R16), and until now the name went nowhere. The
+Variables tab is the list of them, each with the tag it reads from, its value and its state.
+
+The variables are **derived, not stored**: they are whatever the scene currently mentions.
+Renaming an axis's variable leaves the old tag behind, which is the honest outcome — the tag
+was assigned to a name and that name is gone. A joint's variable can never be empty (the
+domain refuses it), a sensor's can.
+
+**A joint reads and a sensor writes.** The PLC decides where the machine is; a sensor's
+reading is something this application produces. `config/binding.SignalBinding` is the Protocol
+that lets `OpcUaSource` take either without a branch — `JointBinding` keeps `joint_name` and
+gains `signal` as a property, because renaming the field would change a versioned format for
+nothing.
+
+**Writing is off by default and the switch is checked in the source**, not only in the dialog.
+With it off the write pump is never created, so a value reaching the outbox by mistake has
+nothing that could carry it out. It is exercised **exclusively** against `pssim mock-server`,
+which grew two writable nodes for the purpose — see `.claude/rules/io-opcua.md`.
+
+The outbox itself lives in `StateStore` because R10 says that is the only mutable state shared
+between threads and anything else that needs sharing extends it. A dict keyed by signal, not a
+queue, for the reason the inbox is not one: a value offered on every frame is written once.
+
+Three more decisions:
+
+- **Browsing is a separate module** (`io/opcua_browser.py`). A browse is a one-off question
+  with an answer — connect, walk, disconnect — where a source is a long-lived subscription
+  that reconnects for ever, and folding request/response into that loop would complicate the
+  one piece here that must never get stuck. Namespace 0 is skipped: it is the OPC UA standard
+  address space, and including it buries the three nodes somebody wants under a hundred they
+  do not.
+- **`ui/connection_controller.py` is the thread boundary.** A `QTimer` on the UI thread takes
+  a snapshot of the store; nothing there ever calls asyncua, exactly as the renderer works
+  (R10). `poll` takes the time as an argument rather than reading the clock, so staleness is
+  testable without sleeping. It holds a `DataSource`, not an `OpcUaSource` — R12 exists so a
+  replay can take its place, and `use_source` is that seam.
+- **A disconnected variable keeps its last value and says `Disconnected`.** The scene goes on
+  drawing that value (R10); a row that blanked would contradict the viewport, and one that
+  still said `Online` would contradict itself.
+
 ## Performance
 
 A STEP assembly typically has hundreds to thousands of parts, which is an unaffordable number  
@@ -619,10 +690,10 @@ of draw calls if approached naively. So when building the scene:
 
 | Thing                          | State                                                              |
 | ------------------------------ | ------------------------------------------------------------------ |
-| Writing to the PLC             | out of scope, reading only                                         |
+| Writing to the PLC             | sensor values only, behind a switch that is off by default (R19)   |
 | IK / trajectory planning       | out of scope, the PLC supplies finished positions                  |
 | Collisions                     | bounding-box **warning** only (R14); real contact geometry deferred |
 | CAD formats other than STEP    | STEP is the minimum; IGES/JT/glTF can be added in `cad/`           |
 | Several machines in one scene  | the data model allows it, the scene builder does not yet           |
 | OPC UA security (certificates) | the interface is ready, the configuration is not implemented       |
-| Sensor values reaching the PLC | each sensor names a variable (R16); nothing publishes it yet       |
+| Packaging                      | `setup_dist.py` does not exist; `pssim write-icon` is what it needs |

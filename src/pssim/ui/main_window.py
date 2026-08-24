@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 )
 
 from pssim.cad.model import CadAssembly
+from pssim.config.binding import BindingDirection
 from pssim.config.project import (
     PROJECT_FILE_FILTER,
     PROJECT_SUFFIX,
@@ -58,6 +59,7 @@ from pssim.domain.placement import IDENTITY_PLACEMENT
 from pssim.domain.sensors import Sensor, SensorKind
 from pssim.domain.units import MM_TO_M
 from pssim.observability import get_logger
+from pssim.ui.connection_controller import ConnectionController
 from pssim.ui.floor_dialog import FloorDialog
 from pssim.ui.i18n import SOURCE_LANGUAGE, install_translator
 from pssim.ui.icons import (
@@ -76,6 +78,7 @@ from pssim.ui.model_registry import ModelEntry, ModelRegistry
 from pssim.ui.model_tree import TABLE_NAME as MODEL_TABLE
 from pssim.ui.model_tree import ModelTree
 from pssim.ui.model_values_panel import ModelValuesPanel
+from pssim.ui.opcua_dialog import AssignTagDialog, ConnectionDialog
 from pssim.ui.placement_dialog import PlacementDialog
 from pssim.ui.project_controller import (
     LoadPlan,
@@ -93,8 +96,11 @@ from pssim.ui.sensor_dialog import SensorDialog
 from pssim.ui.sensor_registry import SensorEntry, SensorRegistry
 from pssim.ui.sensor_tree import TABLE_NAME as SENSOR_TABLE
 from pssim.ui.sensor_tree import SensorTree
-from pssim.ui.settings import SettingsStore, ViewSettings
+from pssim.ui.settings import ConnectionSettings, SettingsStore, ViewSettings
 from pssim.ui.sizes_dialog import Sizes, SizesDialog
+from pssim.ui.variable_registry import VariableRegistry, VariableSource
+from pssim.ui.variable_tree import TABLE_NAME as VARIABLE_TABLE
+from pssim.ui.variable_tree import VariableTree
 from pssim.viz.axes import HIGHLIGHT_COLOR
 from pssim.viz.embed import (
     DEFAULT_CROSS_SIZE_M,
@@ -191,9 +197,13 @@ class MainWindow(QMainWindow):
         self._joint_dialog_joint_id: str | None = None
         self._joint_dialog_parent_id: str | None = None
         self._values_panel: ModelValuesPanel | None = None
+        self._selected_variable: str | None = None
         self._models = ModelRegistry()
         self._sensors = SensorRegistry()
         self._joints = JointRegistry()
+        self._variables = VariableRegistry()
+        self._connection_settings = self._settings.load_connection()
+        self._connection = ConnectionController(self._variables, self)
         self._cross_size_m = DEFAULT_CROSS_SIZE_M
         self._text_size_m = DEFAULT_TEXT_SIZE_M
         self._origin_cross_size_m = DEFAULT_ORIGIN_CROSS_SIZE_M
@@ -212,10 +222,14 @@ class MainWindow(QMainWindow):
 
         self._build_model_dock()
         self._build_sensor_dock()
+        self._build_variable_dock()
         self._build_properties_dock()
         self._build_menu()
         self._build_toolbar()
+        self._connection.status_changed.connect(self._on_connection_status)
+        self._connection.values_changed.connect(self._refresh_variables_view)
         self._update_actions()
+        self.refresh_variables()
         self.restore_view_settings()
         self.statusBar().showMessage(self.tr("Ready"))
 
@@ -250,12 +264,34 @@ class MainWindow(QMainWindow):
             view = view.with_widths(table, tree.column_widths())
         self._settings.save_view(view)
 
-    def _tables(self) -> dict[str, ModelTree | SensorTree]:
+    def _tables(self) -> dict[str, ModelTree | SensorTree | VariableTree]:
         """Every table whose layout is saved, by the name it is saved under."""
-        return {MODEL_TABLE: self.model_tree, SENSOR_TABLE: self.sensor_tree}
+        return {
+            MODEL_TABLE: self.model_tree,
+            SENSOR_TABLE: self.sensor_tree,
+            VARIABLE_TABLE: self.variable_tree,
+        }
+
+    @property
+    def connection_settings(self) -> ConnectionSettings:
+        """Where the server is and what each variable is bound to."""
+        return self._connection_settings
+
+    def save_connection_settings(self, settings: ConnectionSettings) -> None:
+        """Store the connection and push the tag mapping into the registry."""
+        self._connection_settings = settings
+        self._settings.save_connection(settings)
+        self._variables.set_tags(dict(settings.tags))
+        self._refresh_variables_view()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt's own name
-        """Qt calls this as the window goes away; the layout is saved there."""
+        """Qt calls this as the window goes away.
+
+        The source is stopped **first**: it owns a thread, and a window that
+        vanished while it was still publishing would be writing to a server
+        nobody is watching.
+        """
+        self._connection.disconnect_from_server()
         self.save_view_settings()
         super().closeEvent(event)
 
@@ -276,6 +312,7 @@ class MainWindow(QMainWindow):
         self._build_geometry_menu(menu_bar.addMenu(self.tr("&Geometry")))
         self._build_sensors_menu(menu_bar.addMenu(self.tr("Se&nsors")))
         self._build_scene_menu(menu_bar.addMenu(self.tr("&Scene")))
+        self._build_communication_menu(menu_bar.addMenu(self.tr("Co&mmunication")))
 
     def _build_file_menu(self, file_menu: QMenu) -> None:
         self.open_project_action = QAction(self.tr("&Open Project…"), self)
@@ -446,6 +483,44 @@ class MainWindow(QMainWindow):
         self.remove_sensor_action.setStatusTip(self.tr("Remove the selected sensor"))
         self.remove_sensor_action.triggered.connect(self.remove_selected_sensor)
         sensor_menu.addAction(self.remove_sensor_action)
+
+    def _build_communication_menu(self, menu: QMenu) -> None:
+        """Talking to the PLC. Its own menu because it is its own subject (R17)
+        — it is about neither the models nor the scene, but about what drives
+        them."""
+        self.connect_action = QAction(self.tr("&Connect"), self)
+        self.connect_action.setShortcut(QKeySequence(Qt.Key.Key_F5))
+        self.connect_action.setStatusTip(self.tr("Subscribe to every variable that has a tag"))
+        self.connect_action.triggered.connect(self.connect_to_server)
+        menu.addAction(self.connect_action)
+
+        self.disconnect_action = QAction(self.tr("&Disconnect"), self)
+        self.disconnect_action.setStatusTip(self.tr("Stop reading from the server"))
+        self.disconnect_action.triggered.connect(self.disconnect_from_server)
+        menu.addAction(self.disconnect_action)
+
+        menu.addSeparator()
+
+        self.connection_action = QAction(self.tr("Connection &Settings…"), self)
+        self.connection_action.setStatusTip(
+            self.tr("Where the server is, and whether writing is allowed")
+        )
+        self.connection_action.triggered.connect(self.open_connection_dialog)
+        menu.addAction(self.connection_action)
+
+        menu.addSeparator()
+
+        self.assign_tag_action = QAction(self.tr("&Assign Tag…"), self)
+        self.assign_tag_action.setStatusTip(
+            self.tr("Pick the node the selected variable reads from")
+        )
+        self.assign_tag_action.triggered.connect(self.open_assign_tag_dialog)
+        menu.addAction(self.assign_tag_action)
+
+        self.clear_tag_action = QAction(self.tr("C&lear Tag"), self)
+        self.clear_tag_action.setStatusTip(self.tr("Leave the selected variable bound to nothing"))
+        self.clear_tag_action.triggered.connect(self.clear_variable_tag)
+        menu.addAction(self.clear_tag_action)
 
     def _build_scene_menu(self, scene_menu: QMenu) -> None:
         """Everything that applies to the scene rather than to one item in it.
@@ -835,6 +910,17 @@ class MainWindow(QMainWindow):
         if shown is not None:
             self.properties_panel.set_sensor_reading_silently(shown)
 
+        # Offered to the connection, not sent: whether anything leaves this
+        # process is the source's decision, and only when writing was allowed.
+        published = False
+        for entry in self._sensors:
+            if entry.sensor.variable and self._connection.publish(
+                entry.sensor.variable, entry.reading.value
+            ):
+                published = True
+        if published:
+            self._refresh_variables_view()
+
     # -- restoring the joints -----------------------------------------------
 
     def _joint_name(self, joint_id: str | None) -> str | None:
@@ -1056,6 +1142,28 @@ class MainWindow(QMainWindow):
         self.splitDockWidget(self.model_dock, dock, Qt.Orientation.Vertical)
         self.sensor_dock = dock
 
+    def _build_variable_dock(self) -> None:
+        self.variable_tree = VariableTree(self)
+        self.variable_tree.variable_selected.connect(self.select_variable)
+        self.variable_tree.assign_requested.connect(self.open_assign_tag_dialog)
+        self.variable_tree.clear_requested.connect(self.clear_variable_tag)
+        self.variable_tree.connect_requested.connect(self.connect_to_server)
+        self.variable_tree.settings_requested.connect(self.open_connection_dialog)
+
+        dock = QDockWidget(self.tr("Variables"), self)
+        dock.setObjectName("variable-dock")
+        dock.setWidget(self.variable_tree)
+        dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        # Tabbed with the sensors rather than given a slot of its own: the two
+        # are read at different moments — you place sensors, then you wire them
+        # up — and a third permanent panel would cost more than it gives.
+        self.tabifyDockWidget(self.sensor_dock, dock)
+        self.sensor_dock.raise_()
+        self.variable_dock = dock
+
     def _build_properties_dock(self) -> None:
         self.properties_panel = PropertiesPanel(self)
         self.properties_panel.name_edited.connect(self.apply_model_name)
@@ -1245,6 +1353,7 @@ class MainWindow(QMainWindow):
 
         self._update_actions()
         self._refresh_properties()
+        self.refresh_variables()
 
     def _mark_joint(self, joint_id: str | None) -> None:
         """Put the cross on the selected joint's initial frame, or clear it."""
@@ -1279,6 +1388,158 @@ class MainWindow(QMainWindow):
         self.edit_sensor_action.setEnabled(has_sensor_selection)
         self.mount_sensor_action.setEnabled(has_sensor_selection)
         self.remove_sensor_action.setEnabled(has_sensor_selection)
+
+        has_variable = self._selected_variable is not None
+        self.assign_tag_action.setEnabled(has_variable)
+        self.clear_tag_action.setEnabled(has_variable)
+        self.connect_action.setEnabled(not self._connection.is_connected)
+        self.disconnect_action.setEnabled(self._connection.is_connected)
+
+    # -- variables ------------------------------------------------------------
+
+    @property
+    def variables(self) -> VariableRegistry:
+        """The project's variables. The tab renders this; nothing else owns it."""
+        return self._variables
+
+    @property
+    def connection(self) -> ConnectionController:
+        """The OPC UA connection. Observable state, not a secret."""
+        return self._connection
+
+    @property
+    def selected_variable(self) -> str | None:
+        return self._selected_variable
+
+    def select_variable(self, name: str | None) -> None:
+        """Set the variable selection. Independent of the other three.
+
+        Not exclusive with the models, joints and sensors: a variable is not a
+        thing in the scene, and the properties dock never shows one — selecting
+        a row here should not clear what is being looked at over there.
+        """
+        if name == self._selected_variable:
+            return
+        self._selected_variable = name
+        self.variable_tree.select_variable(name)
+        self._update_actions()
+
+    def refresh_variables(self) -> None:
+        """Rebuild the variable list from what the scene now mentions.
+
+        Derived rather than stored: adding an axis called `X` adds `X`, and
+        renaming its variable leaves the old tag behind — which is honest, since
+        the tag was assigned to a name and that name is gone.
+        """
+        self._variables.set_tags(dict(self._connection_settings.tags))
+        self._variables.set_sources(self._variable_sources())
+        self._refresh_variables_view()
+
+    def _variable_sources(self) -> tuple[VariableSource, ...]:
+        """Every variable the scene names, joints first then sensors.
+
+        A joint reads — the PLC decides where the machine is. A sensor writes:
+        its reading is something this application produces.
+        """
+        sources: list[VariableSource] = []
+        for joint in self._joints:
+            if joint.joint.variable:
+                sources.append(
+                    VariableSource(
+                        name=joint.joint.variable,
+                        direction=BindingDirection.READ,
+                        owner=self.tr("axis or trajectory {0}").format(joint.joint.name),
+                    )
+                )
+        for sensor in self._sensors:
+            if sensor.sensor.variable:
+                sources.append(
+                    VariableSource(
+                        name=sensor.sensor.variable,
+                        direction=BindingDirection.WRITE,
+                        owner=self.tr("sensor {0}").format(sensor.sensor.name),
+                    )
+                )
+        return tuple(sources)
+
+    def _refresh_variables_view(self) -> None:
+        self.variable_tree.refresh(self._variables)
+        self._update_actions()
+
+    # -- the connection ---------------------------------------------------------
+
+    def connect_to_server(self) -> bool:
+        """Subscribe to every variable that has a tag. Returns whether it started.
+
+        A refusal is a status-bar message, not a modal: "nothing has a tag yet"
+        is a normal state of a project that has not been wired up.
+        """
+        refusal = self._connection.connect_to(self._connection_settings)
+        if refusal is not None:
+            self.statusBar().showMessage(refusal)
+            self._update_actions()
+            return False
+
+        self.statusBar().showMessage(
+            self.tr("Connecting to {0}…").format(self._connection_settings.endpoint)
+        )
+        self._update_actions()
+        return True
+
+    def disconnect_from_server(self) -> None:
+        """Stop reading. The scene keeps the last state it had (R10)."""
+        self._connection.disconnect_from_server()
+        self.statusBar().showMessage(self.tr("Disconnected"))
+        self._update_actions()
+
+    def _on_connection_status(self, status: object) -> None:
+        """The controller's status changed. Only the actions follow it — a status
+        bar rewritten ten times a second is unreadable."""
+        _ = status
+        self._update_actions()
+
+    def open_connection_dialog(self) -> ConnectionDialog:
+        """Where the server is, and whether writing is allowed."""
+        dialog = ConnectionDialog(self._connection_settings, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return dialog
+
+        self.save_connection_settings(dialog.settings)
+        self.statusBar().showMessage(
+            self.tr("Server: {0}").format(self._connection_settings.endpoint)
+        )
+        return dialog
+
+    def open_assign_tag_dialog(self) -> AssignTagDialog | None:
+        """Pick the node the selected variable reads from."""
+        name = self._selected_variable
+        if name is None:
+            return None
+
+        dialog = AssignTagDialog(
+            name,
+            self._connection_settings.endpoint,
+            self._connection_settings.tag_for(name),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return dialog
+
+        self.save_connection_settings(self._connection_settings.with_tag(name, dialog.tag))
+        self.statusBar().showMessage(
+            self.tr("{0} is unbound").format(name)
+            if dialog.tag is None
+            else self.tr("{0} reads {1}").format(name, dialog.tag.node_id)
+        )
+        return dialog
+
+    def clear_variable_tag(self) -> None:
+        """Leave the selected variable bound to nothing."""
+        name = self._selected_variable
+        if name is None or self._connection_settings.tag_for(name) is None:
+            return
+        self.save_connection_settings(self._connection_settings.with_tag(name, None))
+        self.statusBar().showMessage(self.tr("{0} is unbound").format(name))
 
     # -- sensors --------------------------------------------------------------
 
@@ -1395,6 +1656,7 @@ class MainWindow(QMainWindow):
         self.sensor_tree.refresh(self._sensors)
         self._update_actions()
         self._refresh_properties()
+        self.refresh_variables()
 
     # -- joints ---------------------------------------------------------------
 

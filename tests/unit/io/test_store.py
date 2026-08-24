@@ -105,3 +105,92 @@ class TestConcurrency:
         store.put("b", value=2.0, source_time_s=0.0)
 
         assert store.signal_names == frozenset({"a", "b"})
+
+
+class TestOutbox:
+    """Values on their way out to the PLC.
+
+    Here rather than in a second shared object: R10 says `StateStore` is the only
+    mutable state shared between threads, and anything else that needs sharing
+    extends it.
+    """
+
+    def test_a_fresh_store_has_nothing_to_write(self) -> None:
+        assert StateStore().take_writes() == {}
+
+    def test_a_queued_value_comes_back(self) -> None:
+        store = StateStore()
+
+        store.queue_write("gate", 1.0)
+
+        assert store.take_writes() == {"gate": 1.0}
+
+    def test_taking_empties_it(self) -> None:
+        # Taken rather than read, so a value cannot be written twice.
+        store = StateStore()
+        store.queue_write("gate", 1.0)
+
+        store.take_writes()
+
+        assert store.take_writes() == {}
+
+    def test_peeking_does_not_empty_it(self) -> None:
+        store = StateStore()
+        store.queue_write("gate", 1.0)
+
+        store.pending_writes()
+
+        assert store.take_writes() == {"gate": 1.0}
+
+    def test_only_the_newest_value_survives(self) -> None:
+        # A dict keyed by signal, not a queue: a value offered on every frame is
+        # written once, and only the newest one was ever going to matter.
+        store = StateStore()
+
+        for value in (1.0, 0.0, 1.0):
+            store.queue_write("gate", value)
+
+        assert store.take_writes() == {"gate": 1.0}
+
+    def test_signals_do_not_collide(self) -> None:
+        store = StateStore()
+
+        store.queue_write("gate", 1.0)
+        store.queue_write("zone", 0.0)
+
+        assert store.take_writes() == {"gate": 1.0, "zone": 0.0}
+
+    def test_clearing_drops_the_outbox_too(self) -> None:
+        # `clear()` is for switching machines; a value bound for the old one must
+        # not reach the new one's server.
+        store = StateStore()
+        store.queue_write("gate", 1.0)
+
+        store.clear()
+
+        assert store.take_writes() == {}
+
+    def test_the_outbox_is_separate_from_the_samples(self) -> None:
+        store = StateStore()
+
+        store.queue_write("gate", 1.0)
+
+        assert store.signal_names == frozenset()
+
+    def test_concurrent_writers_do_not_lose_a_signal(self) -> None:
+        # No sleeps: a barrier releases every thread at once.
+        store = StateStore()
+        names = [f"signal-{index}" for index in range(16)]
+        barrier = threading.Barrier(len(names))
+
+        def offer(name: str) -> None:
+            barrier.wait()
+            store.queue_write(name, 1.0)
+
+        threads = [threading.Thread(target=offer, args=(name,)) for name in names]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert set(store.take_writes()) == set(names)

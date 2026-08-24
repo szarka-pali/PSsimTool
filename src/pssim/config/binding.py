@@ -1,13 +1,86 @@
-"""The binding between a joint and an OPC UA node.
+"""The binding between something in the scene and an OPC UA node.
 
 Deliberately separate from `domain.machine.Joint`: the domain knows nothing about
 the PLC. This is the only place where a raw value from the PLC is converted into
-internal units.
+internal units, and the only place the inverse happens on the way back out.
+
+Two bindings, one protocol:
+
+- `JointBinding` comes from `machines/*.yaml` and names a **joint**. It is always
+  read: the PLC decides where the machine is.
+- `VariableBinding` comes from the application's settings and names a **variable**
+  — the string a joint or a sensor carries in a project (R16). It can go either
+  way, because a sensor's reading is something the simulation produces.
+
+`SignalBinding` is what `io/` consumes, so a data source never has to know which
+of the two it was handed. A `Protocol`, not a base class — the same boundary rule
+`io/base.py` follows (R12).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol, runtime_checkable
+
+from pssim.domain.errors import ConfigError
+
+
+class BindingDirection(StrEnum):
+    """Which way a value travels."""
+
+    READ = "read"
+    """From the PLC into the scene. Everything a joint does."""
+
+    WRITE = "write"
+    """From the scene out to the PLC. Only ever a sensor, and only when writing
+    has been deliberately allowed — see `.claude/rules/io-opcua.md`."""
+
+
+@runtime_checkable
+class SignalBinding(Protocol):
+    """What `io/` needs of a binding, whatever kind it is.
+
+    `signal` is the key the value is stored under, which is a joint's name for
+    one kind of binding and a variable's for the other. Naming it once here is
+    what lets `OpcUaSource` take both without a branch.
+    """
+
+    @property
+    def signal(self) -> str: ...
+
+    @property
+    def node_id(self) -> str: ...
+
+    @property
+    def direction(self) -> BindingDirection: ...
+
+    def to_internal(self, raw_value: float) -> float: ...
+
+    def to_plc(self, internal_value: float) -> float: ...
+
+
+def to_internal(raw_value: float, scale: float, offset: float) -> float:
+    """PLC units into metres / radians. `raw * scale + offset`, in that order.
+
+    The order is fixed: changing it would silently break every existing
+    `machines/*.yaml`.
+    """
+    return raw_value * scale + offset
+
+
+def to_plc(internal_value: float, scale: float, offset: float) -> float:
+    """The exact inverse of `to_internal`, so a value that goes out and comes
+    back is the value that went out.
+
+    A zero scale has no inverse — it maps everything onto `offset`. That is a
+    usable *read* (a signal pinned to a constant) and an impossible write, so it
+    is refused here rather than at construction, where it would turn an existing
+    machine definition into an error.
+    """
+    if scale == 0.0:
+        raise ConfigError("a binding with scale 0 cannot be written back")
+    return (internal_value - offset) / scale
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,9 +97,55 @@ class JointBinding:
     scale: float = 1.0
     offset: float = 0.0
 
+    @property
+    def signal(self) -> str:
+        """The key the store holds this under. A joint's name, here.
+
+        A property rather than a renamed field: `joint_name` is what
+        `machines/*.yaml` and `config/loader.py` already use, and renaming it
+        would change a versioned format for nothing.
+        """
+        return self.joint_name
+
+    @property
+    def direction(self) -> BindingDirection:
+        """Always read. The PLC decides where the machine is; this application
+        is an OPC UA *client* that displays it (see CLAUDE.md)."""
+        return BindingDirection.READ
+
     def to_internal(self, raw_value: float) -> float:
         """Convert a value from PLC units into metres / radians."""
-        return raw_value * self.scale + self.offset
+        return to_internal(raw_value, self.scale, self.offset)
+
+    def to_plc(self, internal_value: float) -> float:
+        """Present only to satisfy `SignalBinding`; a joint is never written."""
+        return to_plc(internal_value, self.scale, self.offset)
+
+
+@dataclass(frozen=True, slots=True)
+class VariableBinding:
+    """A project **variable** bound to a node, in either direction.
+
+    Where `JointBinding` comes from a versioned machine definition, this one
+    comes from the application's settings — the endpoint and the tag mapping are
+    deliberately not in the project file, so a `*.pssim` carries no addresses.
+    """
+
+    variable: str
+    node_id: str
+    scale: float = 1.0
+    offset: float = 0.0
+    direction: BindingDirection = BindingDirection.READ
+
+    @property
+    def signal(self) -> str:
+        return self.variable
+
+    def to_internal(self, raw_value: float) -> float:
+        return to_internal(raw_value, self.scale, self.offset)
+
+    def to_plc(self, internal_value: float) -> float:
+        return to_plc(internal_value, self.scale, self.offset)
 
 
 @dataclass(frozen=True, slots=True)

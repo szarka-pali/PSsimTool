@@ -41,6 +41,13 @@ class MockAxis:
         return self.center + self.amplitude * math.sin(angle)
 
 
+#: Writable nodes the simulation may publish into — a sensor's reading on its way
+#: back to the PLC. Separate from the axes because the direction is the opposite
+#: one, and because these are the only nodes on any server this project is ever
+#: allowed to write to (see `.claude/rules/io-opcua.md`).
+DEFAULT_OUTPUTS: Final = ("Sim.Sensor1", "Sim.Sensor2")
+
+
 #: Axes matching `machines/example.yaml`. Values in mm and in thousandths of a degree,
 #: that is, exactly as a servo typically sends them.
 DEFAULT_AXES: Final = (
@@ -56,10 +63,15 @@ async def run_mock_server(
     *,
     update_interval_s: float = 0.05,
     duration_s: float | None = None,
+    outputs: tuple[str, ...] = DEFAULT_OUTPUTS,
 ) -> None:
     """Run the mock server. `duration_s=None` means run until interrupted.
 
     `duration_s` is used by the integration tests so the server stops itself.
+
+    The axis nodes are read-only, exactly as a servo's actual position is. The
+    `outputs` are writable, and are the only nodes anywhere this project writes
+    to — the write path is tested here and nowhere else.
     """
     from asyncua import Server, ua  # a heavy import - only when actually needed
 
@@ -85,7 +97,13 @@ async def run_mock_server(
         await variable.set_writable(False)
         variables[axis] = variable
 
-    logger.info("mock server running", endpoint=endpoint, nodes=node_ids)
+    output_folder = await server.nodes.objects.add_folder(namespace_index, "Sim")
+    output_ids = [f"ns={namespace_index};s={name}" for name in outputs]
+    for name, node_id in zip(outputs, output_ids, strict=True):
+        node = await output_folder.add_variable(node_id, name, 0.0, ua.VariantType.Double)
+        await node.set_writable(True)
+
+    logger.info("mock server running", endpoint=endpoint, nodes=node_ids, writable=output_ids)
 
     async with server:
         elapsed = 0.0

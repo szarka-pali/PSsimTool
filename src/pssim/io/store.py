@@ -5,11 +5,17 @@ one — if something else needs sharing, extend the store. See docs/architecture
 
 The threading model:
 
-    thread B (asyncio, io/)  →  put()
-    thread A (Panda3D, viz/) →  sample_all() / status_of()
+    thread B (asyncio, io/)  →  put()          / take_writes()
+    thread A (Panda3D, viz/) →  sample_all()   / queue_write()
 
 What we share is the *latest value + a short ring buffer*, not a queue: a queue would
 grow whenever rendering fell behind and old data would be displayed.
+
+The **outbox** is the other direction, and it lives here for the reason R10 gives:
+this is the only mutable state shared between threads, and anything else that needs
+sharing extends it rather than starting a second one. It is a dict keyed by signal,
+not a queue, for the same reason the inbox is not: a value queued sixty times a
+second is written once, and only the newest one was ever going to matter.
 """
 
 from __future__ import annotations
@@ -26,12 +32,13 @@ class StateStore:
     computed under it. Interpolation runs outside the lock, over a copy.
     """
 
-    __slots__ = ("_buffers", "_lock", "_capacity")
+    __slots__ = ("_buffers", "_lock", "_capacity", "_outbox")
 
     def __init__(self, capacity: int = DEFAULT_CAPACITY) -> None:
         self._capacity = capacity
         self._lock = threading.Lock()
         self._buffers: dict[str, SignalBuffer] = {}
+        self._outbox: dict[str, float] = {}
 
     # -- writing (the data source's thread) ---------------------------------
 
@@ -58,6 +65,37 @@ class StateStore:
         """
         with self._lock:
             self._buffers.clear()
+            self._outbox.clear()
+
+    # -- the outbox (values on their way out to the PLC) --------------------
+
+    def queue_write(self, signal: str, value: float) -> None:
+        """Offer a value for the data source to publish. Called from thread A.
+
+        Queuing is not sending: whether anything leaves this process is decided
+        by the source, and only when writing has been deliberately allowed. A
+        value queued for a signal that is not bound to an output is simply never
+        taken, which is a normal state and not an error.
+        """
+        with self._lock:
+            self._outbox[signal] = value
+
+    def take_writes(self) -> dict[str, float]:
+        """Everything queued since the last call, and empty the outbox.
+
+        Taken rather than read, so a value cannot be written twice — and so that
+        a source which stops draining does not accumulate anything beyond one
+        entry per signal.
+        """
+        with self._lock:
+            pending = dict(self._outbox)
+            self._outbox.clear()
+        return pending
+
+    def pending_writes(self) -> dict[str, float]:
+        """What is waiting, without taking it. For tests and for a status line."""
+        with self._lock:
+            return dict(self._outbox)
 
     # -- reading (the render thread) ----------------------------------------
 

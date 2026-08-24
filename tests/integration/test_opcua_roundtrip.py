@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from pssim.config.binding import JointBinding
+from pssim.config.binding import BindingDirection, JointBinding, VariableBinding
 from pssim.io.base import SourceStatus
 from pssim.io.mock_server import DEFAULT_AXES, MockAxis, run_mock_server
 from pssim.io.opcua_source import OpcUaConfig, OpcUaSource
@@ -140,3 +140,133 @@ class TestResilience:
         source.stop()
 
         assert source.status is SourceStatus.DISCONNECTED
+
+
+async def read_node(node_id: str) -> float:
+    """One value straight from the server, for checking what a write landed as."""
+    from asyncua import Client
+
+    async with Client(url=ENDPOINT) as client:
+        return float(await client.get_node(node_id).read_value())
+
+
+def value_of(node_id: str) -> float:
+    return asyncio.run(read_node(node_id))
+
+
+OUTPUT_NODE = f"ns={NAMESPACE_INDEX};s=Sim.Sensor1"
+
+
+class TestWriting:
+    """The write path. Exercised here and nowhere else — the mock server is the
+    only server this project may ever write to (`.claude/rules/io-opcua.md`).
+    """
+
+    def test_writing_is_off_by_default(self) -> None:
+        with MockServerThread():
+            source = OpcUaSource(
+                OpcUaConfig(
+                    endpoint=ENDPOINT,
+                    bindings=(
+                        VariableBinding(
+                            variable="gate",
+                            node_id=OUTPUT_NODE,
+                            direction=BindingDirection.WRITE,
+                        ),
+                    ),
+                )
+            )
+            source.start()
+            try:
+                assert wait_until(lambda: source.status is SourceStatus.CONNECTED)
+                source.store.queue_write("gate", 42.0)
+                time.sleep(1.0)
+
+                # Nothing carried it: with the switch off the pump is never made.
+                assert value_of(OUTPUT_NODE) == pytest.approx(0.0)
+                assert source.store.pending_writes() == {"gate": 42.0}
+            finally:
+                source.stop()
+
+    def test_an_allowed_write_reaches_the_server(self) -> None:
+        with MockServerThread():
+            source = OpcUaSource(
+                OpcUaConfig(
+                    endpoint=ENDPOINT,
+                    allow_writing=True,
+                    bindings=(
+                        VariableBinding(
+                            variable="gate",
+                            node_id=OUTPUT_NODE,
+                            direction=BindingDirection.WRITE,
+                        ),
+                    ),
+                )
+            )
+            source.start()
+            try:
+                assert wait_until(lambda: source.status is SourceStatus.CONNECTED)
+                source.store.queue_write("gate", 7.0)
+
+                assert wait_until(lambda: value_of(OUTPUT_NODE) == pytest.approx(7.0))
+            finally:
+                source.stop()
+
+    def test_the_conversion_is_applied_on_the_way_out(self) -> None:
+        # The scene holds metres; the PLC is handed millimetres (R8).
+        with MockServerThread():
+            source = OpcUaSource(
+                OpcUaConfig(
+                    endpoint=ENDPOINT,
+                    allow_writing=True,
+                    bindings=(
+                        VariableBinding(
+                            variable="distance",
+                            node_id=OUTPUT_NODE,
+                            scale=0.001,
+                            direction=BindingDirection.WRITE,
+                        ),
+                    ),
+                )
+            )
+            source.start()
+            try:
+                assert wait_until(lambda: source.status is SourceStatus.CONNECTED)
+                source.store.queue_write("distance", 1.25)
+
+                assert wait_until(lambda: value_of(OUTPUT_NODE) == pytest.approx(1250.0))
+            finally:
+                source.stop()
+
+    def test_a_refused_write_does_not_kill_the_session(self) -> None:
+        # An axis node is read-only, and the server answers BadUserAccessDenied.
+        # The pump has to survive that: an exception there ends the session.
+        with MockServerThread():
+            source = OpcUaSource(
+                OpcUaConfig(
+                    endpoint=ENDPOINT,
+                    allow_writing=True,
+                    bindings=(
+                        JointBinding(
+                            joint_name="axis_x",
+                            node_id=f"ns={NAMESPACE_INDEX};s=Axes.X.ActPos",
+                            scale=0.001,
+                        ),
+                        VariableBinding(
+                            variable="nope",
+                            node_id=f"ns={NAMESPACE_INDEX};s=Axes.Z.ActPos",
+                            direction=BindingDirection.WRITE,
+                        ),
+                    ),
+                )
+            )
+            source.start()
+            try:
+                assert wait_until(lambda: source.status is SourceStatus.CONNECTED)
+                source.store.queue_write("nope", 1.0)
+                time.sleep(1.0)
+
+                assert source.status is SourceStatus.CONNECTED
+                assert wait_until(lambda: "axis_x" in source.store.signal_names)
+            finally:
+                source.stop()

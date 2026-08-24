@@ -19,7 +19,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
-from pssim.config.binding import JointBinding, SourceSettings
+from pssim.config.binding import (
+    BindingDirection,
+    JointBinding,
+    SignalBinding,
+    SourceSettings,
+)
 from pssim.domain.errors import DataSourceError
 from pssim.io.base import SourceStatus
 from pssim.io.store import StateStore
@@ -46,9 +51,18 @@ class OpcUaConfig:
     """
 
     endpoint: str
-    bindings: tuple[JointBinding, ...]
+    bindings: tuple[SignalBinding, ...]
     publishing_interval_ms: int = 50
     session_timeout_ms: int = 10_000
+
+    allow_writing: bool = False
+    """Whether the session runs a write pump at all.
+
+    Off by default and checked here rather than only in the UI: with it off the
+    pump is never created, so a value that reaches the store's outbox by mistake
+    has nothing that could carry it to a server. See `.claude/rules/io-opcua.md`
+    — writing is tested exclusively against `pssim mock-server`.
+    """
 
 
 class OpcUaSource:
@@ -73,7 +87,12 @@ class OpcUaSource:
         # Thread A signals through a threading.Event, thread B waits on an
         # asyncio.Event. The bridge between them is `call_soon_threadsafe` in `stop()`.
         self._async_stop: asyncio.Event | None = None
-        self._node_to_joint = {b.node_id: b for b in config.bindings}
+        self._node_to_binding = {
+            b.node_id: b for b in config.bindings if b.direction is BindingDirection.READ
+        }
+        self._outputs = {
+            b.signal: b for b in config.bindings if b.direction is BindingDirection.WRITE
+        }
         self._revised_interval_ms: int | None = None
 
     # -- DataSource ---------------------------------------------------------
@@ -184,7 +203,7 @@ class OpcUaSource:
                 period=self._config.publishing_interval_ms,
                 handler=_SubscriptionHandler(self),
             )
-            nodes = [client.get_node(node_id) for node_id in self._node_to_joint]
+            nodes = [client.get_node(node_id) for node_id in self._node_to_binding]
             await subscription.subscribe_data_change(nodes, queuesize=_QUEUE_SIZE)
 
             # The server may revise the interval - TwinCAT, for instance, ties it
@@ -199,10 +218,57 @@ class OpcUaSource:
                 revised_interval_ms=self._revised_interval_ms,
             )
 
+            # Created only when writing is allowed: no pump, nothing that can
+            # write, whatever ends up in the outbox.
+            pump = (
+                asyncio.create_task(self._pump_writes(client))
+                if self._config.allow_writing and self._outputs
+                else None
+            )
             try:
                 await self._wait_for_stop()
             finally:
+                if pump is not None:
+                    pump.cancel()
                 await subscription.delete()
+
+    async def _pump_writes(self, client: Any) -> None:
+        """Drain the store's outbox onto the server, once per publishing interval.
+
+        Coalesced by the outbox itself, which is a dict keyed by signal: a value
+        offered on every frame is written once, and only the newest one was ever
+        going to matter.
+
+        **Never raises.** A refused write — a node that turned read-only, a
+        server that dropped — is logged and the pump carries on, exactly as the
+        subscription handler does. An exception here would kill the session.
+        """
+        from asyncua import ua
+
+        interval_s = self._config.publishing_interval_ms / 1000.0
+        while True:
+            await asyncio.sleep(interval_s)
+            for signal, value in self._store.take_writes().items():
+                binding = self._outputs.get(signal)
+                if binding is None:
+                    continue
+                try:
+                    # An explicit Variant rather than a bare float: verified
+                    # against `pssim mock-server` that both work on a Double
+                    # node, but a bare float only because the node already held
+                    # one — this states the type instead of inheriting it.
+                    await client.get_node(binding.node_id).write_value(
+                        ua.Variant(binding.to_plc(value), ua.VariantType.Double)
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "write refused, carrying on",
+                        signal=signal,
+                        node=binding.node_id,
+                        error=str(exc),
+                    )
 
     # -- callback zo subscription ------------------------------------------
 
@@ -212,7 +278,7 @@ class OpcUaSource:
         Public deliberately: it is the contract between the source and its
         subscription handler.
         """
-        binding = self._node_to_joint.get(node_id)
+        binding = self._node_to_binding.get(node_id)
         if binding is None:
             return
 
@@ -231,7 +297,7 @@ class OpcUaSource:
             internal_time = self._timebase.to_internal(source_time, time.monotonic())
 
         self._store.put(
-            signal=binding.joint_name,
+            signal=binding.signal,
             value=binding.to_internal(float(value)),
             source_time_s=internal_time,
         )

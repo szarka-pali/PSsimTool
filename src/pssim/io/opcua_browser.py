@@ -110,20 +110,29 @@ def browse_variables(
         return asyncio.run(_browse(endpoint, timeout_s=timeout_s, max_depth=max_depth))
     except DataSourceError:
         raise
+    except TimeoutError as exc:
+        raise DataSourceError(f"{endpoint} did not answer within {timeout_s:g} s") from exc
     except Exception as exc:  # asyncua raises a wide family of its own
         raise DataSourceError(f"could not browse {endpoint}: {exc}") from exc
 
 
 async def _browse(endpoint: str, *, timeout_s: float, max_depth: int) -> tuple[OpcUaNode, ...]:
+    """Connect, walk, disconnect — the whole of it under one deadline.
+
+    The timeout has to cover the **connection**, not only the walk. A host that
+    accepts a TCP connection and then says nothing is exactly the case a browse
+    has to survive, and asyncua's own connect timeout is not this one.
+    """
+    return await asyncio.wait_for(_connect_and_walk(endpoint, max_depth), timeout=timeout_s)
+
+
+async def _connect_and_walk(endpoint: str, max_depth: int) -> tuple[OpcUaNode, ...]:
     from asyncua import Client
 
+    found: list[OpcUaNode] = []
     client = Client(url=endpoint)
     async with client:
-        found: list[OpcUaNode] = []
-        await asyncio.wait_for(
-            _walk(client.nodes.objects, (), found, max_depth),
-            timeout=timeout_s,
-        )
+        await _walk(client.nodes.objects, (), found, max_depth)
     # Sorted by where they sit, so a chooser lists a folder's nodes together
     # whatever order the server happened to answer in.
     return tuple(sorted(found, key=lambda node: (node.browse_path, node.node_id)))

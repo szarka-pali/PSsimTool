@@ -331,3 +331,14 @@ class TestBrowsing:
     def test_an_empty_endpoint_is_refused(self) -> None:
         with pytest.raises(DataSourceError):
             browse_variables("")
+
+    def test_the_timeout_covers_the_connection(self) -> None:
+        # A host that accepts a TCP connection and then says nothing is exactly
+        # what a browse has to survive; asyncua's own connect timeout is not
+        # this one, so the deadline has to wrap the connect as well as the walk.
+        started = time.monotonic()
+
+        with pytest.raises(DataSourceError):
+            browse_variables("opc.tcp://10.255.255.1:4840/", timeout_s=1.5)
+
+        assert time.monotonic() - started < 4.0

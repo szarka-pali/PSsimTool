@@ -12,8 +12,15 @@ import time
 import pytest
 
 from pssim.config.binding import BindingDirection, JointBinding, VariableBinding
+from pssim.domain.errors import DataSourceError
 from pssim.io.base import SourceStatus
-from pssim.io.mock_server import DEFAULT_AXES, MockAxis, run_mock_server
+from pssim.io.mock_server import (
+    DEFAULT_AXES,
+    DEFAULT_OUTPUTS,
+    MockAxis,
+    run_mock_server,
+)
+from pssim.io.opcua_browser import browse_variables
 from pssim.io.opcua_source import OpcUaConfig, OpcUaSource
 
 pytestmark = pytest.mark.integration
@@ -270,3 +277,57 @@ class TestWriting:
                 assert wait_until(lambda: "axis_x" in source.store.signal_names)
             finally:
                 source.stop()
+
+
+class TestBrowsing:
+    """Picking a tag from what the server actually has, rather than typing one."""
+
+    def test_it_finds_the_axes(self) -> None:
+        with MockServerThread():
+            found = {node.node_id for node in browse_variables(ENDPOINT)}
+
+        assert f"ns={NAMESPACE_INDEX};s=Axes.X.ActPos" in found
+
+    def test_it_skips_the_standard_namespace(self) -> None:
+        # Otherwise the three nodes somebody wants are buried under a hundred
+        # server diagnostics they do not.
+        with MockServerThread():
+            found = browse_variables(ENDPOINT)
+
+        assert all(not node.node_id.startswith("i=") for node in found)
+        assert len(found) == len(DEFAULT_AXES) + len(DEFAULT_OUTPUTS)
+
+    def test_it_reports_the_browse_path(self) -> None:
+        with MockServerThread():
+            paths = {node.browse_path for node in browse_variables(ENDPOINT)}
+
+        assert "Axes / Axes.X.ActPos" in paths
+
+    def test_it_reports_the_data_type(self) -> None:
+        with MockServerThread():
+            found = {node.node_id: node for node in browse_variables(ENDPOINT)}
+
+        assert found[f"ns={NAMESPACE_INDEX};s=Axes.X.ActPos"].data_type == "Double"
+
+    def test_an_axis_is_not_writable(self) -> None:
+        with MockServerThread():
+            found = {node.node_id: node for node in browse_variables(ENDPOINT)}
+
+        assert found[f"ns={NAMESPACE_INDEX};s=Axes.X.ActPos"].is_writable is False
+
+    def test_an_output_is_writable(self) -> None:
+        # Which is what a sensor's variable needs to be bound to.
+        with MockServerThread():
+            found = {node.node_id: node for node in browse_variables(ENDPOINT)}
+
+        assert found[OUTPUT_NODE].is_writable is True
+
+    def test_a_server_that_is_not_there_is_a_typed_error(self) -> None:
+        # A browse is a question with an answer, unlike a subscription dropping,
+        # which is a normal state to retry (R12).
+        with pytest.raises(DataSourceError):
+            browse_variables("opc.tcp://127.0.0.1:1/nothing/", timeout_s=2.0)
+
+    def test_an_empty_endpoint_is_refused(self) -> None:
+        with pytest.raises(DataSourceError):
+            browse_variables("")

@@ -387,7 +387,10 @@ class MainWindow(QMainWindow):
         self.bind_action.triggered.connect(self.open_bind_dialog)
         model_menu.addAction(self.bind_action)
 
-        self.values_action = QAction(self.tr("&Variables…"), self)
+        # `Values…`, not `Variables…`: the Communication tab now owns that word,
+        # and it means something else there — a name bound to an OPC UA tag,
+        # rather than the sliders that drive this model's joints by hand.
+        self.values_action = QAction(self.tr("&Values…"), self)
         self.values_action.setStatusTip(self.tr("Drive the joints that move this model"))
         self.values_action.triggered.connect(self.open_values_panel)
         model_menu.addAction(self.values_action)

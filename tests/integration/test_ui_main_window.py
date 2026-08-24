@@ -928,7 +928,7 @@ class TestPlacing:
             "Placement…",
             "Rename…",
             "Bind To…",
-            "Variables…",
+            "Values…",
             "Remove",
         ]
 

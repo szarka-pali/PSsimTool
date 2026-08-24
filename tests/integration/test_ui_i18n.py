@@ -18,6 +18,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from pssim.cad.model import CadAssembly, CadNode  # noqa: E402
@@ -37,6 +38,7 @@ from pssim.ui.labels import (  # noqa: E402
 )
 from pssim.ui.main_window import MainWindow, cad_file_filter  # noqa: E402
 from pssim.ui.placement_dialog import PlacementDialog  # noqa: E402
+from pssim.ui.settings import SettingsStore  # noqa: E402
 
 pytestmark = pytest.mark.ui
 
@@ -57,8 +59,19 @@ class _StubViewport(QWidget):
 
 
 @pytest.fixture
-def window(qt_app: QApplication) -> Iterator[MainWindow]:
-    instance = MainWindow(viewport_factory=_StubViewport)
+def settings_store(tmp_path: Path) -> SettingsStore:
+    """Column widths and connection settings in a throwaway ini file.
+
+    Injected rather than defaulted, for the same reason `RecentProjects` takes
+    its `QSettings`: the real one is the user's own store, and closing a window
+    saves the layout into it.
+    """
+    return SettingsStore(QSettings(str(tmp_path / "pssim.ini"), QSettings.Format.IniFormat))
+
+
+@pytest.fixture
+def window(qt_app: QApplication, settings_store: SettingsStore) -> Iterator[MainWindow]:
+    instance = MainWindow(viewport_factory=_StubViewport, settings=settings_store)
     yield instance
     instance.close()
 

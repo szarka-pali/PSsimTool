@@ -43,6 +43,12 @@ COLUMN_KIND: Final = 1
 COLUMN_STATE: Final = 2
 COLUMN_READING: Final = 3
 
+#: How this table is named in the saved view settings.
+TABLE_NAME: Final = "sensors"
+
+#: What the columns start at before anyone has dragged them.
+DEFAULT_COLUMN_WIDTHS: Final[tuple[int, ...]] = (150, 110, 95, 95)
+
 #: Short labels for the tree's Kind column. Every kind is listed: a missing one
 #: would raise on the row rather than degrade, and a scene with an unlabelled
 #: sensor is not worth crashing the tree over.
@@ -84,17 +90,37 @@ class SensorTree(QTreeWidget):
         self.setUniformRowHeights(True)
         self.setMinimumWidth(220)
 
+        # Interactive, not Stretch or ResizeToContents: both of those compute the
+        # width themselves and take the drag handle away with it.
         header = self.header()
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(COLUMN_NAME, header.ResizeMode.Stretch)
-        header.setSectionResizeMode(COLUMN_KIND, header.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COLUMN_STATE, header.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COLUMN_READING, header.ResizeMode.ResizeToContents)
+        for column in (COLUMN_NAME, COLUMN_KIND, COLUMN_STATE, COLUMN_READING):
+            header.setSectionResizeMode(column, header.ResizeMode.Interactive)
+        self.set_column_widths(DEFAULT_COLUMN_WIDTHS)
 
         self.itemSelectionChanged.connect(self._on_selection_changed)
 
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
+
+    # -- columns ------------------------------------------------------------
+
+    def column_widths(self) -> tuple[int, ...]:
+        """The current width of every column, for saving."""
+        return tuple(self.columnWidth(column) for column in range(self.columnCount()))
+
+    def set_column_widths(self, widths: tuple[int, ...]) -> None:
+        """Apply saved widths. A list of the wrong length is ignored entirely.
+
+        Ignored rather than applied as far as it goes: a saved layout from a
+        version with a different set of columns would otherwise put each width
+        against the wrong column, which looks like corruption rather than like
+        an old setting.
+        """
+        if len(widths) != self.columnCount():
+            return
+        for column, width in enumerate(widths):
+            self.setColumnWidth(column, width)
 
     # -- context menu ---------------------------------------------------------
 

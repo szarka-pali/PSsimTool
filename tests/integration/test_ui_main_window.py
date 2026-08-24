@@ -19,7 +19,7 @@ import pytest
 # and dies on CI with no display.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Qt, Signal  # noqa: E402
+from PySide6.QtCore import QObject, QSettings, Qt, Signal  # noqa: E402
 from PySide6.QtGui import QColor, QKeySequence  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QToolButton, QWidget  # noqa: E402
 
@@ -37,6 +37,7 @@ from pssim.ui.model_values_panel import ModelValuesPanel  # noqa: E402
 from pssim.ui.placement_dialog import PlacementDialog  # noqa: E402
 from pssim.ui.sensor_dialog import SensorDialog  # noqa: E402
 from pssim.ui.sensor_fields import kind_index  # noqa: E402
+from pssim.ui.settings import SettingsStore  # noqa: E402
 from pssim.ui.sizes_dialog import Sizes, SizesDialog  # noqa: E402
 from pssim.viz.embed import (  # noqa: E402
     DEFAULT_CROSS_SIZE_M,
@@ -64,14 +65,25 @@ def qt_app() -> QApplication:
 
 
 @pytest.fixture
-def window(qt_app: QApplication) -> Iterator[MainWindow]:
+def settings_store(tmp_path: Path) -> SettingsStore:
+    """Column widths and connection settings in a throwaway ini file.
+
+    Injected rather than defaulted, for the same reason `RecentProjects` takes
+    its `QSettings`: the real one is the user's own store, and closing a window
+    saves the layout into it.
+    """
+    return SettingsStore(QSettings(str(tmp_path / "pssim.ini"), QSettings.Format.IniFormat))
+
+
+@pytest.fixture
+def window(qt_app: QApplication, settings_store: SettingsStore) -> Iterator[MainWindow]:
     """A fresh window for every test, closed afterwards.
 
     Instead of the real 3D viewport it gets a plain widget: `ShowBase` may exist only
     once per process, so in the tests it is never created at all. Displaying geometry
     is verified by `tests/integration/test_viz_scene.py` and by real runs.
     """
-    instance = MainWindow(viewport_factory=QWidget)
+    instance = MainWindow(viewport_factory=QWidget, settings=settings_store)
     yield instance
     instance.close()
 
@@ -556,9 +568,11 @@ def _submenu_labels(menu: QMenu, title: str) -> list[str]:
 
 
 @pytest.fixture
-def window_with_viewport(qt_app: QApplication) -> Iterator[tuple[MainWindow, _StubViewport]]:
+def window_with_viewport(
+    qt_app: QApplication, settings_store: SettingsStore
+) -> Iterator[tuple[MainWindow, _StubViewport]]:
     viewport = _StubViewport()
-    instance = MainWindow(viewport_factory=lambda: viewport)
+    instance = MainWindow(viewport_factory=lambda: viewport, settings=settings_store)
     yield instance, viewport
     instance.close()
 

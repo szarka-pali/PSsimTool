@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from PySide6.QtCore import QCoreApplication, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QColorDialog,
     QDialog,
@@ -66,6 +66,7 @@ from pssim.ui.joint_registry import JointEntry, JointRegistry, descendants_of, w
 from pssim.ui.labels import describe_assembly, describe_placement, missing_geometry_suffix
 from pssim.ui.loader import StepImportThread
 from pssim.ui.model_registry import ModelEntry, ModelRegistry
+from pssim.ui.model_tree import TABLE_NAME as MODEL_TABLE
 from pssim.ui.model_tree import ModelTree
 from pssim.ui.model_values_panel import ModelValuesPanel
 from pssim.ui.placement_dialog import PlacementDialog
@@ -83,7 +84,9 @@ from pssim.ui.properties_panel import PropertiesPanel
 from pssim.ui.recent_files import RecentProjects, shorten
 from pssim.ui.sensor_dialog import SensorDialog
 from pssim.ui.sensor_registry import SensorEntry, SensorRegistry
+from pssim.ui.sensor_tree import TABLE_NAME as SENSOR_TABLE
 from pssim.ui.sensor_tree import SensorTree
+from pssim.ui.settings import SettingsStore, ViewSettings
 from pssim.ui.sizes_dialog import Sizes, SizesDialog
 from pssim.viz.axes import HIGHLIGHT_COLOR
 from pssim.viz.embed import (
@@ -100,6 +103,10 @@ logger = get_logger(__name__)
 ViewportFactory = Callable[[], QWidget]
 
 APP_TITLE: Final = "PSsimTool"
+
+#: Only ever used to give `QSettings` a stable place of its own on disk. Nothing
+#: is fetched from it and nothing needs to resolve.
+APP_DOMAIN: Final = "pssim.local"
 
 
 def cad_file_filter() -> str:
@@ -160,8 +167,13 @@ class MainWindow(QMainWindow):
         parent: QWidget | None = None,
         viewport_factory: ViewportFactory | None = None,
         recent: RecentProjects | None = None,
+        settings: SettingsStore | None = None,
     ) -> None:
         super().__init__(parent)
+
+        # Injectable so a test can point it at a temp file: the real one writes
+        # into the user's own store, which no test may touch.
+        self._settings = settings if settings is not None else SettingsStore()
 
         self._current_file: Path | None = None
         self._import_thread: StepImportThread | None = None
@@ -197,7 +209,48 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_toolbar()
         self._update_actions()
+        self.restore_view_settings()
         self.statusBar().showMessage(self.tr("Ready"))
+
+    # -- settings -----------------------------------------------------------
+
+    @property
+    def settings(self) -> SettingsStore:
+        """Where anything durable-but-not-scene is kept. Observable, not a secret."""
+        return self._settings
+
+    def restore_view_settings(self) -> None:
+        """Put the saved column widths back, if there are any.
+
+        A table with nothing saved keeps the widths it was built with — the
+        absence of a setting is not a reason to collapse a column.
+        """
+        view = self._settings.load_view()
+        for table, tree in self._tables().items():
+            widths = view.widths_for(table)
+            if widths:
+                tree.set_column_widths(widths)
+
+    def save_view_settings(self) -> None:
+        """Record where the columns currently are.
+
+        Called on close rather than on every drag: a width changes continuously
+        while the mouse is down, and writing the store per pixel would be a lot
+        of I/O for a value nobody reads until the next launch.
+        """
+        view = ViewSettings()
+        for table, tree in self._tables().items():
+            view = view.with_widths(table, tree.column_widths())
+        self._settings.save_view(view)
+
+    def _tables(self) -> dict[str, ModelTree | SensorTree]:
+        """Every table whose layout is saved, by the name it is saved under."""
+        return {MODEL_TABLE: self.model_tree, SENSOR_TABLE: self.sensor_tree}
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt's own name
+        """Qt calls this as the window goes away; the layout is saved there."""
+        self.save_view_settings()
+        super().closeEvent(event)
 
     # -- menu ---------------------------------------------------------------
 
@@ -2327,6 +2380,10 @@ def run(argv: list[str] | None = None, language: str = SOURCE_LANGUAGE) -> int:
 
     application: Any = QApplication.instance() or QApplication(argv or [])
     application.setApplicationName(APP_TITLE)
+    # Without both names `QSettings` has nowhere of its own to write, and the
+    # column widths would be saved into a location that changes between runs.
+    application.setOrganizationName(APP_TITLE)
+    application.setOrganizationDomain(APP_DOMAIN)
     install_translator(application, language)
 
     window = MainWindow()

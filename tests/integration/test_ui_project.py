@@ -43,6 +43,7 @@ from pssim.ui.main_window import MainWindow  # noqa: E402
 from pssim.ui.model_registry import ModelEntry  # noqa: E402
 from pssim.ui.project_controller import spec_to_camera  # noqa: E402
 from pssim.ui.recent_files import RecentProjects  # noqa: E402
+from pssim.ui.settings import SettingsStore  # noqa: E402
 from pssim.viz.orbit import OrbitCamera  # noqa: E402
 from tests.factories import axis_joint, beam_sensor, trajectory_joint  # noqa: E402
 
@@ -205,6 +206,7 @@ def window(qt_app: QApplication, settings: QSettings) -> Iterator[tuple[MainWind
     instance = MainWindow(
         viewport_factory=lambda: viewport,
         recent=RecentProjects(settings),
+        settings=SettingsStore(settings),
     )
     yield instance, viewport
     instance.close()
@@ -835,11 +837,19 @@ class TestRecentMenu:
         self, qt_app: QApplication, settings: QSettings, tmp_path: Path
     ) -> None:
         # The point of persisting: the list is still there after a restart.
-        first = MainWindow(viewport_factory=QWidget, recent=RecentProjects(settings))
+        first = MainWindow(
+            viewport_factory=QWidget,
+            recent=RecentProjects(settings),
+            settings=SettingsStore(settings),
+        )
         first.save_project_to(tmp_path / "line.pssim")
         first.close()
 
-        second = MainWindow(viewport_factory=QWidget, recent=RecentProjects(settings))
+        second = MainWindow(
+            viewport_factory=QWidget,
+            recent=RecentProjects(settings),
+            settings=SettingsStore(settings),
+        )
         try:
             assert len(second.recent_projects.paths) == 1
         finally:

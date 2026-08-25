@@ -7,7 +7,7 @@ graphics stack.
 
 from __future__ import annotations
 
-import asyncio
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -17,6 +17,10 @@ import typer
 
 from pssim.domain.errors import PSsimError
 from pssim.observability import configure, get_logger
+
+PASSWORD_ENV = "PSSIM_OPCUA_PASSWORD"
+"""Where `probe` reads a password from. Never a command-line option: a
+password typed on a command line lands in the shell's history."""
 
 if TYPE_CHECKING:
     from pssim.cad.step_import import ImportSettings
@@ -351,22 +355,71 @@ def mock_server(
 def probe(
     endpoint: Annotated[str, typer.Argument(help="opc.tcp://...")],
     browse: Annotated[
-        str | None, typer.Option("--browse", help="List the nodes in a namespace")
+        str | None, typer.Option("--browse", help="List the children of this node id")
+    ] = None,
+    policy: Annotated[
+        str | None,
+        typer.Option("--policy", help="Security policy, e.g. Basic256Sha256. Default: none"),
+    ] = None,
+    sign_only: Annotated[bool, typer.Option("--sign-only", help="Sign but do not encrypt")] = False,
+    user: Annotated[
+        str | None,
+        typer.Option("--user", help=f"User name. The password comes from ${PASSWORD_ENV}"),
     ] = None,
 ) -> None:
-    """Find out what an OPC UA server offers. The first step in a diagnosis."""
-    _guard(lambda: asyncio.run(_probe(endpoint, browse)))
+    """Find out what an OPC UA server offers. The first step in a diagnosis.
+
+    Always prints what the server advertises before trying anything, because
+    "it will not connect" is usually answered there: a server that does not
+    offer `Anonymous` refuses an anonymous session, and a server offering only
+    `Basic256Sha256` refuses an unsecured one.
+    """
+    _guard(lambda: _probe(endpoint, browse, policy, sign_only, user))
 
 
-async def _probe(endpoint: str, browse: str | None) -> None:
-    from asyncua import Client
+def _probe(
+    endpoint: str, browse: str | None, policy: str | None, sign_only: bool, user: str | None
+) -> None:
+    from pssim.io.opcua_browse_session import OBJECTS_NODE_ID, OpcUaBrowseSession
+    from pssim.io.opcua_security import (
+        POLICY_NONE,
+        Credentials,
+        SecurityMode,
+        TokenType,
+        discover_endpoints,
+    )
 
-    async with Client(url=endpoint) as client:
-        typer.echo(f"connected: {endpoint}")
-        root = client.get_node(browse) if browse else client.nodes.objects
-        for child in await root.get_children():
-            name = await child.read_browse_name()
-            typer.echo(f"  {child.nodeid.to_string()}  {name.Name}")
+    offers = discover_endpoints(endpoint)
+    typer.echo(f"{len(offers)} ways in:")
+    for offer in offers:
+        tokens = ", ".join(token.value for token in offer.token_types) or "-"
+        typer.echo(f"  {offer.label:<44} level {offer.security_level:<3} {tokens}")
+
+    mode = SecurityMode.NONE
+    if policy:
+        mode = SecurityMode.SIGN if sign_only else SecurityMode.SIGN_AND_ENCRYPT
+    credentials = Credentials(
+        policy_name=policy or POLICY_NONE,
+        mode=mode,
+        token=TokenType.USERNAME if user else TokenType.ANONYMOUS,
+        username=user or "",
+        password=os.environ.get(PASSWORD_ENV, ""),
+    )
+    typer.echo("")
+    typer.echo(f"connecting: {credentials.describe()}")
+
+    session = OpcUaBrowseSession(endpoint, credentials=credentials)
+    try:
+        session.open()
+        for node in session.children_of(browse or OBJECTS_NODE_ID).nodes:
+            access = " [w]" if node.is_writable else ""
+            typer.echo(f"  {node.node_id:<32} {node.label:<24} {node.data_type}{access}")
+    finally:
+        # The log is the point of the command when the connection failed, so it
+        # is printed either way rather than only on success.
+        for entry in session.diagnostics.entries:
+            typer.echo(f"  {entry.describe()}", err=True)
+        session.close()
 
 
 # -- helpers ----------------------------------------------------------------

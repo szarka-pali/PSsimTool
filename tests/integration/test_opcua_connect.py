@@ -20,6 +20,9 @@ Run with: ``uv run pytest -m integration``
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -28,8 +31,10 @@ from pathlib import Path
 import pytest
 from asyncua.ua.uaerrors import UaStatusCodeError
 
+from pssim.cli import PASSWORD_ENV
 from pssim.config.binding import JointBinding
 from pssim.domain.errors import DataSourceError
+from pssim.io._ready import wait_for_endpoint
 from pssim.io.base import SourceStatus
 from pssim.io.mock_server import MockSecurity, run_mock_server
 from pssim.io.opcua_diagnostics import DiagnosticStep, Outcome
@@ -78,7 +83,9 @@ class SecureMockServer:
 
     def __enter__(self) -> SecureMockServer:
         self._thread.start()
-        time.sleep(2.0)  # the endpoint has to be open before a client asks
+        # Asked rather than slept for: a fixed wait is either longer than
+        # the server needs or shorter than it on a slow machine.
+        assert wait_for_endpoint(self.endpoint), f"no server on {self.endpoint}"
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -372,3 +379,100 @@ class TestDiagnostics:
         )
         assert certificate.outcome is Outcome.OK
         assert "Basic256Sha256" in certificate.detail
+
+
+@pytest.fixture(scope="module")
+def probe_server() -> Iterator[SecureMockServer]:
+    """One server for the whole probe class: the command only reads, and starting
+    five of them to run five assertions is what made this suite slow."""
+    security = MockSecurity(is_secure=True, username=USER, password=PASSWORD)
+    with SecureMockServer(48460, security, duration_s=120.0) as running:
+        yield running
+
+
+def run_probe(endpoint: str, *arguments: str, password: str = "") -> str:
+    """`pssim probe` in a subprocess, which is the way a user runs it.
+
+    Not through typer's `CliRunner`: it swaps `sys.stdout` for the duration of a
+    call, structlog binds to whatever it finds on its first write, and every
+    later line from a background thread then hits a closed file. A subprocess has
+    none of that, and it exercises the real entry point.
+    """
+    environment = dict(os.environ)
+    environment[PASSWORD_ENV] = password
+    finished = subprocess.run(
+        [sys.executable, "-m", "pssim.cli", "probe", endpoint, *arguments],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=environment,
+    )
+    # Both halves: the offers go to stdout, the diagnostics to stderr, and the
+    # diagnostics are the half worth reading when the connection failed.
+    return finished.stdout + finished.stderr
+
+
+class TestTheProbeCommand:
+    """`pssim probe` is the connection dialog's first tab on the command line."""
+
+    def test_it_prints_what_the_server_offers(self, probe_server: SecureMockServer) -> None:
+        # Before trying anything: a server that will refuse still says what it wants.
+        assert "Basic256Sha256 / SignAndEncrypt" in run_probe(probe_server.endpoint)
+
+    def test_it_says_which_tokens_are_accepted(self, probe_server: SecureMockServer) -> None:
+        output = run_probe(probe_server.endpoint)
+
+        assert TokenType.USERNAME.value in output
+        assert TokenType.ANONYMOUS.value not in output
+
+    def test_an_anonymous_attempt_is_refused_and_says_so(
+        self, probe_server: SecureMockServer
+    ) -> None:
+        # The failure this whole wave exists for, on the command line.
+        output = run_probe(probe_server.endpoint)
+
+        assert "BadIdentityTokenRejected" in output
+
+    def test_a_secure_authenticated_probe_lists_the_nodes(
+        self, probe_server: SecureMockServer
+    ) -> None:
+        output = run_probe(
+            probe_server.endpoint,
+            "--policy",
+            "Basic256Sha256",
+            "--user",
+            USER,
+            "--browse",
+            f"ns={NAMESPACE_INDEX};i=1",
+            password=PASSWORD,
+        )
+
+        assert AXIS_NODE in output
+
+    def test_a_wrong_password_says_which_step_refused_it(
+        self, probe_server: SecureMockServer
+    ) -> None:
+        output = run_probe(
+            probe_server.endpoint,
+            "--policy",
+            "Basic256Sha256",
+            "--user",
+            USER,
+            password="not-the-password",
+        )
+
+        assert "BadUserAccessDenied" in output
+
+    def test_a_writable_node_is_marked(self, probe_server: SecureMockServer) -> None:
+        output = run_probe(
+            probe_server.endpoint,
+            "--policy",
+            "Basic256Sha256",
+            "--user",
+            USER,
+            "--browse",
+            f"ns={NAMESPACE_INDEX};i=2",
+            password=PASSWORD,
+        )
+
+        assert "[w]" in output

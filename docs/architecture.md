@@ -672,7 +672,94 @@ Three more decisions:
   replay can take its place, and `use_source` is that seam.
 - **A disconnected variable keeps its last value and says `Disconnected`.** The scene goes on
   drawing that value (R10); a row that blanked would contradict the viewport, and one that
-  still said `Online` would contradict itself.
+  still said `Online` would contradict itself. *Why* it is disconnected is a separate
+  question, and R20 is where the answer lives.
+
+### R20 — A connection is discovered, then attempted, and every step of it is recorded
+
+An endpoint and a publishing interval is what a mock server needs. A PLC asks for more: a
+security policy, a mode, often a user name and a password — and when any of it is wrong it
+answers with a status code and closes the channel. The first version of this could say only
+*Disconnected*, which is the state, not the reason.
+
+So a connection is now three things in the order they happen, and the dialog has one tab for
+each: **discover** what the server offers, **attempt** one of those offers, **browse** what
+turned out to be behind it.
+
+**Discovery opens no session** (`io/opcua_security.discover_endpoints`, through asyncua's
+`connect_and_get_server_endpoints`). That is what makes it usable as a first step: a server
+that will refuse the credentials still says what it wants, and the answer is `EndpointOffer`
+rows — policy, mode, the server's own `SecurityLevel`, and the `UserIdentityTokens` it accepts.
+
+That last field is what pays for the whole tab. **A server that does not list `Anonymous`
+refuses an anonymous session**, and that refusal used to arrive with nothing to read. Choosing
+an offer now greys out the authentication it does not accept, so the case is visible before
+connecting rather than diagnosed after.
+
+The rest of the decisions:
+
+- **Our own spellings, not asyncua's.** `SecurityMode` and `TokenType` are `StrEnum`s of ours,
+  and `SecurityPolicy` states the name and the URI separately — the URI for
+  `Aes128Sha256RsaOaep` reads `#Aes128_Sha256_RsaOaep`, so deriving one from the other would be
+  wrong in exactly one case. It is also what keeps `ua.MessageSecurityMode` out of `ui/` and out
+  of the settings file, where an `Invalid` or a `None_` would eventually be written.
+- **The server's certificate comes from the discovery answer.** Trust on first use, and stated
+  as such: it is what makes a secure connection possible without demanding a file the user has
+  not been given. It is *not* certificate validation and is not claimed to be.
+- **Our own certificate is generated once and reused**, in `%LOCALAPPDATA%/PSsimTool/pki/`,
+  through `Client.setup_self_signed_certificate` — which stamps the client's `application_uri`
+  into it. The lower-level `cert_gen` helper does not, and a server then warns about the
+  mismatch on every connection. That call returns `(certificate, key)`, the reverse of its
+  arguments; unpacking it the other way round fails much later, inside `load_certificate`.
+- **The password is never stored.** `ui/settings.py` has no field for it, which is the
+  enforcement rather than a convention: there is nowhere for it to be written by accident. It is
+  typed once per session and held in `MainWindow`, or comes from `PSSIM_OPCUA_PASSWORD` for an
+  unattended run. QSettings is a plain-text INI. The user *name* is remembered, because a
+  machine does not change its mind between mornings.
+- **A stored policy is validated on the way in**, like every other setting (R18). A name this
+  build cannot speak would otherwise fail inside `set_security`, with a message about asyncua
+  rather than about the file it came out of.
+
+**The diagnostics log is the second half of the answer.** `io/opcua_diagnostics` records each
+step — discover, select, certificate, channel, session, subscribe, write — with its outcome and,
+on a failure, the OPC UA status code. `BadUserAccessDenied` *is* the answer to "why not", and it
+was previously nowhere on screen. `Communication → Diagnostics…` opens the log without reopening
+the connection dialog, because that question is asked long after the dialog was closed.
+
+Two properties of the log that were got wrong first and are deliberate now:
+
+- **It is append-only, not cleared per attempt.** A source reconnects for ever (R12), so
+  clearing on each try wiped the failure explaining the last one about half a second after
+  recording it. A bounded history is the guard instead.
+- **`last_error` is `None` whenever the status is `CONNECTED`.** With an append-only log, a
+  failed first attempt otherwise goes on being reported after a later attempt succeeded.
+
+**Browsing after connecting is a live session, expanded lazily** (`io/opcua_browse_session.py`),
+which is UaExpert's model and the only usable one: a PLC address space runs to thousands of
+nodes and reading all of it to show one folder is not a wait anybody accepts. The session owns a
+thread and an asyncio loop of its own for the same reason `OpcUaSource` does (R10), and
+`asyncio.run_coroutine_threadsafe` is the bridge in.
+
+The one-shot `io/opcua_browser.browse_variables` **stays**. The two answer different questions:
+"walk the whole thing and hand me a list" is what `pssim probe` and a flat chooser want, and it
+is already tested. What they must not do is disagree about which nodes are bindable, so
+`NUMERIC_TYPES` is defined once and `BrowseNode.is_numeric` reads it.
+
+One tree widget serves both dialogs (`ui/opcua_browse_tree.py`), with one difference: the tag
+chooser calls `require_numeric()` and greys out what cannot drive a joint, the address-space
+viewer does not. Nothing is being picked in the viewer, so a `String` node greyed out there
+would be a judgement on a node nobody asked about.
+
+**The mock server can refuse.** `--secure` gives it a certificate and a
+`Basic256Sha256/SignAndEncrypt` endpoint beside the open one; `--require-user USER:PASSWORD`
+adds a `UserManager` and offers only `UserName`, so anonymous is not on the list. Without those
+the security half would be written rather than tested, and this is the only server this project
+may point at (`.claude/rules/io-opcua.md`).
+
+`pssim probe <endpoint>` is tab one on the command line: it prints the offers before trying
+anything, then connects with `--policy`, `--sign-only` and `--user`, and prints the diagnostics
+log whether or not it got in. There is no `--password` — one typed on a command line lands in
+the shell's history.
 
 ## Performance
 
@@ -695,5 +782,5 @@ of draw calls if approached naively. So when building the scene:
 | Collisions                     | bounding-box **warning** only (R14); real contact geometry deferred |
 | CAD formats other than STEP    | STEP is the minimum; IGES/JT/glTF can be added in `cad/`           |
 | Several machines in one scene  | the data model allows it, the scene builder does not yet           |
-| OPC UA security (certificates) | the interface is ready, the configuration is not implemented       |
+| OPC UA certificate validation  | the server's certificate is trusted on first use (R20)            |
 | Packaging                      | `setup_dist.py` does not exist; `pssim write-icon` is what it needs |

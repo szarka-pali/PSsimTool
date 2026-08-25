@@ -33,10 +33,11 @@ class SecureMockServer:
     port — so tests that run one after another never meet a socket the previous
     one has not let go of yet."""
 
-    def __init__(self, port: int, security: MockSecurity, duration_s: float = 12.0) -> None:
+    def __init__(self, port: int, security: MockSecurity, duration_s: float = 30.0) -> None:
         self.endpoint = f"opc.tcp://127.0.0.1:{port}/pssim-browse/"
         self._security = security
         self._duration_s = duration_s
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="mock-browse", daemon=True)
 
     def _run(self) -> None:
@@ -46,6 +47,7 @@ class SecureMockServer:
                 update_interval_s=0.1,
                 duration_s=self._duration_s,
                 security=self._security,
+                stop_event=self._stop,
             )
         )
 
@@ -55,7 +57,11 @@ class SecureMockServer:
         return self
 
     def __exit__(self, *_: object) -> None:
-        self._thread.join(timeout=self._duration_s + 5.0)
+        # Stopped the moment the test is done rather than left to run out its
+        # span. Fifty tests each leaving a server alive for its full duration is
+        # fifty servers at once, and the overlap made unrelated tests fail.
+        self._stop.set()
+        self._thread.join(timeout=10.0)
 
 
 class TestBrowseSession:

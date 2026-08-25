@@ -32,14 +32,19 @@ NAMESPACE_INDEX = 2
 class MockServerThread:
     """The mock server in its own thread, so the test can connect a client meanwhile."""
 
-    def __init__(self, duration_s: float = 15.0) -> None:
+    def __init__(self, duration_s: float = 30.0) -> None:
         self._duration_s = duration_s
+        self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="mock-server", daemon=True)
 
     def _run(self) -> None:
         asyncio.run(
             run_mock_server(
-                ENDPOINT, DEFAULT_AXES, update_interval_s=0.05, duration_s=self._duration_s
+                ENDPOINT,
+                DEFAULT_AXES,
+                update_interval_s=0.05,
+                duration_s=self._duration_s,
+                stop_event=self._stop,
             )
         )
 
@@ -49,7 +54,11 @@ class MockServerThread:
         return self
 
     def __exit__(self, *_: object) -> None:
-        self._thread.join(timeout=self._duration_s + 5.0)
+        # Stopped when the test is done rather than left to run out its span:
+        # servers that overlap are what made unrelated tests fail, and waiting
+        # out a fixed lifetime is what made the suite take twelve minutes.
+        self._stop.set()
+        self._thread.join(timeout=10.0)
 
 
 def wait_until(predicate: object, timeout_s: float = 10.0) -> bool:

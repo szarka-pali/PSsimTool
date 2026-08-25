@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import math
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -110,10 +111,15 @@ async def run_mock_server(
     duration_s: float | None = None,
     outputs: tuple[str, ...] = DEFAULT_OUTPUTS,
     security: MockSecurity = OPEN,
+    stop_event: threading.Event | None = None,
 ) -> None:
     """Run the mock server. `duration_s=None` means run until interrupted.
 
-    `duration_s` is used by the integration tests so the server stops itself.
+    `stop_event` is how a test ends it the moment it is done, which is what keeps
+    a suite of fifty from running fifty servers at once — `duration_s` alone
+    leaves each one alive for its full span whatever the test is doing, and the
+    overlap is enough to make unrelated tests fail. `duration_s` remains as the
+    backstop for a harness that dies without setting the event.
 
     The axis nodes are read-only, exactly as a servo's actual position is. The
     `outputs` are writable, and are the only nodes anywhere this project writes
@@ -160,6 +166,9 @@ async def run_mock_server(
     async with server:
         elapsed = 0.0
         while duration_s is None or elapsed < duration_s:
+            if stop_event is not None and stop_event.is_set():
+                logger.info("mock server stopping on request", endpoint=endpoint)
+                return
             for axis, variable in variables.items():
                 await variable.write_value(axis.value_at(elapsed))
             await asyncio.sleep(update_interval_s)

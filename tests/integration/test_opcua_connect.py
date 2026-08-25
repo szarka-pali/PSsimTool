@@ -1,4 +1,11 @@
-"""Security and authentication, against `pssim mock-server` and nothing else.
+"""Connecting: security, authentication, and what the diagnostics say about it.
+
+Against `pssim mock-server` and nothing else.
+
+Named `test_opcua_connect` rather than `test_opcua_security` because pytest
+imports test modules by basename, and `tests/unit/io/test_opcua_security.py`
+already owns that one — two files with the same name and no package around them
+collide at collection.
 
 These are the paths a client that has only ever met an open server has never
 taken: a real policy, a real user check, and the two refusals — wrong password,
@@ -21,8 +28,11 @@ from pathlib import Path
 import pytest
 from asyncua.ua.uaerrors import UaStatusCodeError
 
+from pssim.config.binding import JointBinding
 from pssim.domain.errors import DataSourceError
+from pssim.io.base import SourceStatus
 from pssim.io.mock_server import MockSecurity, run_mock_server
+from pssim.io.opcua_diagnostics import DiagnosticStep, Outcome
 from pssim.io.opcua_security import (
     POLICY_NONE,
     Credentials,
@@ -30,6 +40,7 @@ from pssim.io.opcua_security import (
     TokenType,
     discover_endpoints,
 )
+from pssim.io.opcua_source import OpcUaConfig, OpcUaSource
 
 pytestmark = pytest.mark.integration
 
@@ -86,6 +97,17 @@ async def read_axis(endpoint: str, credentials: Credentials, pki_dir: Path) -> f
 
 def value_through(endpoint: str, credentials: Credentials, pki_dir: Path) -> float:
     return asyncio.run(read_axis(endpoint, credentials, pki_dir))
+
+
+def wait_for(predicate: object, timeout_s: float = 10.0) -> bool:
+    """Poll until true or the deadline. The condition is a connection attempt on
+    another thread, so there is nothing to await."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():  # type: ignore[operator]
+            return True
+        time.sleep(0.1)
+    return False
 
 
 @pytest.fixture
@@ -222,3 +244,125 @@ class TestAuthentication:
             value = value_through(server.endpoint, credentials, pki)
 
         assert isinstance(value, float)
+
+
+class TestDiagnostics:
+    """What the source records about its own attempt.
+
+    `SourceStatus.DISCONNECTED` is true of a refused password, an absent server
+    and a certificate we could not produce. These are the tests that the three
+    are told apart.
+    """
+
+    def _source(self, endpoint: str, credentials: Credentials) -> OpcUaSource:
+        return OpcUaSource(
+            OpcUaConfig(
+                endpoint=endpoint,
+                bindings=(JointBinding(joint_name="axis_x", node_id=AXIS_NODE, scale=0.001),),
+                credentials=credentials,
+            )
+        )
+
+    def test_a_good_connection_records_every_step(self) -> None:
+        with SecureMockServer(48440, MockSecurity()) as server:
+            source = self._source(server.endpoint, Credentials())
+            source.start()
+            try:
+                assert wait_for(lambda: source.status is SourceStatus.CONNECTED)
+            finally:
+                source.stop()
+
+        steps = [entry.step for entry in source.diagnostics.entries]
+        assert DiagnosticStep.SESSION in steps
+        assert DiagnosticStep.SUBSCRIBE in steps
+
+    def test_a_good_connection_reports_no_error(self) -> None:
+        with SecureMockServer(48441, MockSecurity()) as server:
+            source = self._source(server.endpoint, Credentials())
+            source.start()
+            try:
+                assert wait_for(lambda: source.status is SourceStatus.CONNECTED)
+                assert source.last_error is None
+            finally:
+                source.stop()
+
+    def test_no_security_records_the_certificate_as_skipped(self) -> None:
+        # "Nothing to do" is worth showing: it is how a reader knows the step was
+        # reached rather than never attempted.
+        with SecureMockServer(48442, MockSecurity()) as server:
+            source = self._source(server.endpoint, Credentials())
+            source.start()
+            try:
+                assert wait_for(lambda: source.status is SourceStatus.CONNECTED)
+            finally:
+                source.stop()
+
+        certificate = next(
+            entry
+            for entry in source.diagnostics.entries
+            if entry.step is DiagnosticStep.CERTIFICATE
+        )
+        assert certificate.outcome is Outcome.SKIPPED
+
+    def test_a_refused_password_says_so(self) -> None:
+        # The whole point of this stage: before it, this was "Disconnected".
+        credentials = Credentials(token=TokenType.USERNAME, username=USER, password="nope")
+
+        with SecureMockServer(48443, MockSecurity(username=USER, password=PASSWORD)) as server:
+            source = self._source(server.endpoint, credentials)
+            source.start()
+            try:
+                assert wait_for(lambda: source.last_error is not None)
+            finally:
+                source.stop()
+
+        assert source.last_error is not None
+        assert "AccessDenied" in source.last_error
+
+    def test_the_failing_step_is_the_session(self) -> None:
+        credentials = Credentials(token=TokenType.USERNAME, username=USER, password="nope")
+
+        with SecureMockServer(48444, MockSecurity(username=USER, password=PASSWORD)) as server:
+            source = self._source(server.endpoint, credentials)
+            source.start()
+            try:
+                assert wait_for(lambda: source.diagnostics.last_failure is not None)
+            finally:
+                source.stop()
+
+        failure = source.diagnostics.last_failure
+        assert failure is not None
+        assert failure.step is DiagnosticStep.SESSION
+
+    def test_a_server_that_is_not_there_fails_differently(self) -> None:
+        # Same status, different diagnosis — and no status code, because nothing
+        # answered to give one.
+        source = self._source("opc.tcp://127.0.0.1:1/nothing/", Credentials())
+        source.start()
+        try:
+            assert wait_for(lambda: source.diagnostics.last_failure is not None, timeout_s=15.0)
+        finally:
+            source.stop()
+
+        failure = source.diagnostics.last_failure
+        assert failure is not None
+        assert failure.status_code == ""
+
+    def test_a_secure_connection_records_its_certificate(self) -> None:
+        credentials = Credentials(policy_name="Basic256Sha256", mode=SecurityMode.SIGN_AND_ENCRYPT)
+
+        with SecureMockServer(48445, MockSecurity(is_secure=True)) as server:
+            source = self._source(server.endpoint, credentials)
+            source.start()
+            try:
+                assert wait_for(lambda: source.status is SourceStatus.CONNECTED)
+            finally:
+                source.stop()
+
+        certificate = next(
+            entry
+            for entry in source.diagnostics.entries
+            if entry.step is DiagnosticStep.CERTIFICATE
+        )
+        assert certificate.outcome is Outcome.OK
+        assert "Basic256Sha256" in certificate.detail

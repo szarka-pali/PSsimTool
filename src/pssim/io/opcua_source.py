@@ -27,6 +27,8 @@ from pssim.config.binding import (
 )
 from pssim.domain.errors import DataSourceError
 from pssim.io.base import SourceStatus
+from pssim.io.opcua_diagnostics import DiagnosticLog, DiagnosticStep
+from pssim.io.opcua_security import Credentials, configure
 from pssim.io.store import StateStore
 from pssim.io.timebase import Timebase
 from pssim.observability import get_logger
@@ -54,6 +56,10 @@ class OpcUaConfig:
     bindings: tuple[SignalBinding, ...]
     publishing_interval_ms: int = 50
     session_timeout_ms: int = 10_000
+
+    credentials: Credentials | None = None
+    """How to get in: policy, mode, user. `None` is the open, anonymous
+    connection this could only ever make before."""
 
     allow_writing: bool = False
     """Whether the session runs a write pump at all.
@@ -94,6 +100,7 @@ class OpcUaSource:
             b.signal: b for b in config.bindings if b.direction is BindingDirection.WRITE
         }
         self._revised_interval_ms: int | None = None
+        self._diagnostics = DiagnosticLog()
 
     # -- DataSource ---------------------------------------------------------
 
@@ -104,6 +111,35 @@ class OpcUaSource:
     @property
     def store(self) -> StateStore:
         return self._store
+
+    @property
+    def diagnostics(self) -> DiagnosticLog:
+        """What the last attempt tried, and where it stopped.
+
+        `status` says whether there is a connection; this says why there is not.
+        A refused password and a server that is not there are the same status and
+        very different problems.
+        """
+        return self._diagnostics
+
+    @property
+    def last_error(self) -> str | None:
+        """One line about **why there is no connection**, or `None` while there is.
+
+        Connected means no error, whatever the log still holds: the diagnostics
+        are append-only now (a reconnect must not wipe the failure that explains
+        the last attempt), so a failed first try would otherwise go on being
+        reported after a later one succeeded.
+
+        A refused *write* stays in the diagnostics for anyone reading them; it is
+        not a reason to call a live connection broken.
+        """
+        if self._status is SourceStatus.CONNECTED:
+            return None
+        failure = self._diagnostics.last_failure
+        if failure is None:
+            return None
+        return failure.status_code or failure.detail
 
     @property
     def revised_interval_ms(self) -> int | None:
@@ -171,8 +207,10 @@ class OpcUaSource:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                # The diagnostics already hold the step that failed; this is the
+                # log, which is throttled because a reconnect loop runs for ever.
                 if attempt == 1 or attempt % 10 == 0:
-                    logger.warning("spojenie zlyhalo", error=str(exc), retry_in_s=delay)
+                    logger.warning("connection failed", error=str(exc), retry_in_s=delay)
 
             self._status = SourceStatus.DISCONNECTED
             if await self._wait_for_stop(timeout_s=delay):
@@ -192,45 +230,98 @@ class OpcUaSource:
         return True
 
     async def _session(self) -> None:
-        """One session: connect, subscribe, hold until it drops or a stop arrives."""
+        """One session: connect, subscribe, hold until it drops or a stop arrives.
+
+        Every stage records what happened, so a failure leaves the step it failed
+        on as the last line of the diagnostics — which is the difference between
+        "disconnected" and "the server refused the password".
+        """
         from asyncua import Client  # a heavy import - only when actually needed
+
+        credentials = self._config.credentials or Credentials()
+        self._diagnostics.start_attempt(credentials.describe())
 
         client = Client(url=self._config.endpoint)
         client.session_timeout = self._config.session_timeout_ms
+        await self._apply_credentials(client, credentials)
 
-        async with client:
-            subscription = await client.create_subscription(
-                period=self._config.publishing_interval_ms,
-                handler=_SubscriptionHandler(self),
-            )
-            nodes = [client.get_node(node_id) for node_id in self._node_to_binding]
-            await subscription.subscribe_data_change(nodes, queuesize=_QUEUE_SIZE)
+        # `connect()` explicitly rather than `async with client`: the two do the
+        # same thing, but this way the failure is caught where it happens and
+        # recorded as the session step. Inside a context manager it escapes
+        # unlabelled, and "Disconnected" with an empty log is what this whole
+        # module exists to stop.
+        try:
+            await client.connect()
+        except Exception as exc:
+            self._diagnostics.failed(DiagnosticStep.SESSION, exc)
+            raise
+        self._diagnostics.ok(DiagnosticStep.SESSION, self._config.endpoint)
 
-            # The server may revise the interval - TwinCAT, for instance, ties it
-            # to the task cycle.
-            revised = getattr(subscription.parameters, "RequestedPublishingInterval", None)
-            self._revised_interval_ms = int(revised) if revised else None
+        try:
+            await self._hold_subscription(client)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._diagnostics.failed(DiagnosticStep.SUBSCRIBE, exc)
+            raise
+        finally:
+            await client.disconnect()
 
-            self._status = SourceStatus.CONNECTED
-            logger.info(
-                "subscription active",
-                signals=len(nodes),
-                revised_interval_ms=self._revised_interval_ms,
-            )
+    async def _apply_credentials(self, client: Any, credentials: Credentials) -> None:
+        """Security and authentication onto the client, recorded either way.
 
-            # Created only when writing is allowed: no pump, nothing that can
-            # write, whatever ends up in the outbox.
-            pump = (
-                asyncio.create_task(self._pump_writes(client))
-                if self._config.allow_writing and self._outputs
-                else None
-            )
-            try:
-                await self._wait_for_stop()
-            finally:
-                if pump is not None:
-                    pump.cancel()
-                await subscription.delete()
+        A policy that needs no certificate is recorded as **skipped** rather than
+        left out: "there was nothing to do" and "it was not attempted" read the
+        same in a log that only mentions what happened.
+        """
+        try:
+            applied = await configure(client, credentials)
+        except Exception as exc:
+            self._diagnostics.failed(DiagnosticStep.CERTIFICATE, exc)
+            raise
+        if credentials.is_secure:
+            self._diagnostics.ok(DiagnosticStep.CERTIFICATE, applied)
+        else:
+            self._diagnostics.skipped(DiagnosticStep.CERTIFICATE, "no security, none needed")
+
+    async def _hold_subscription(self, client: Any) -> None:
+        """Subscribe to every read binding and stay until told to stop."""
+        subscription = await client.create_subscription(
+            period=self._config.publishing_interval_ms,
+            handler=_SubscriptionHandler(self),
+        )
+        nodes = [client.get_node(node_id) for node_id in self._node_to_binding]
+        await subscription.subscribe_data_change(nodes, queuesize=_QUEUE_SIZE)
+
+        # The server may revise the interval - TwinCAT, for instance, ties it
+        # to the task cycle.
+        revised = getattr(subscription.parameters, "RequestedPublishingInterval", None)
+        self._revised_interval_ms = int(revised) if revised else None
+
+        self._status = SourceStatus.CONNECTED
+        self._diagnostics.ok(
+            DiagnosticStep.SUBSCRIBE,
+            f"{len(nodes)} signals, {self._revised_interval_ms or '?'} ms revised",
+        )
+        logger.info(
+            "subscription active",
+            signals=len(nodes),
+            revised_interval_ms=self._revised_interval_ms,
+        )
+
+        # Created only when writing is allowed: no pump, nothing that can
+        # write, whatever ends up in the outbox.
+        pump = (
+            asyncio.create_task(self._pump_writes(client))
+            if self._config.allow_writing and self._outputs
+            else None
+        )
+        try:
+            await self._wait_for_stop()
+        finally:
+            if pump is not None:
+                pump.cancel()
+            await subscription.delete()
 
     async def _pump_writes(self, client: Any) -> None:
         """Drain the store's outbox onto the server, once per publishing interval.
@@ -263,6 +354,7 @@ class OpcUaSource:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
+                    self._diagnostics.failed(DiagnosticStep.WRITE, exc)
                     logger.warning(
                         "write refused, carrying on",
                         signal=signal,

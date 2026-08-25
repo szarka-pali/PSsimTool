@@ -7,15 +7,24 @@ integration tests would have nothing to run against. Writing to OPC UA is tested
 The server generates values **in PLC units** (mm, degrees), not in internal ones —
 otherwise the conversion in `JointBinding` would go untested.
 
-Run it with: ``uv run pssim mock-server``
+It can also **refuse** a connection, which matters as much as accepting one: a
+client that only ever met an open server is a client nobody has tested against a
+real PLC. `MockSecurity` turns on a real security policy and a real user check,
+and the failure paths — wrong password, anonymous where anonymous is not
+offered — are the ones the diagnostics have to explain.
+
+Run it with: ``uv run pssim mock-server``, or
+``uv run pssim mock-server --secure --require-user operator:letmein``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import math
+import tempfile
 from dataclasses import dataclass
-from typing import Final
+from pathlib import Path
+from typing import Any, Final
 
 from pssim.observability import get_logger
 
@@ -41,6 +50,42 @@ class MockAxis:
         return self.center + self.amplitude * math.sin(angle)
 
 
+#: The application uri the server claims and its certificate is issued for. They
+#: have to agree, or a client that checks warns and may refuse.
+MOCK_APPLICATION_URI: Final = "urn:pssim:mock"
+
+
+@dataclass(frozen=True, slots=True)
+class MockSecurity:
+    """What the server demands of a client. Everything off is the old behaviour.
+
+    A frozen bundle rather than three more parameters: `run_mock_server` was
+    already at the argument limit `.claude/rules/code-style.md` sets.
+    """
+
+    is_secure: bool = False
+    """Offer `Basic256Sha256/SignAndEncrypt` beside `NoSecurity`, with a
+    certificate generated on the spot."""
+
+    username: str = ""
+    password: str = ""
+    """When a username is given, anonymous sessions are not offered at all and
+    anything but this pair is refused with `BadUserAccessDenied`."""
+
+    pki_dir: Path | None = None
+    """Where the server's own certificate goes. A temp directory when unset —
+    a development server's key is not worth keeping."""
+
+    @property
+    def requires_user(self) -> bool:
+        return bool(self.username)
+
+
+#: An open server: no security, anonymous welcome. What `pssim mock-server` has
+#: always been, and the default so nothing existing changes.
+OPEN: Final = MockSecurity()
+
+
 #: Writable nodes the simulation may publish into — a sensor's reading on its way
 #: back to the PLC. Separate from the axes because the direction is the opposite
 #: one, and because these are the only nodes on any server this project is ever
@@ -64,6 +109,7 @@ async def run_mock_server(
     update_interval_s: float = 0.05,
     duration_s: float | None = None,
     outputs: tuple[str, ...] = DEFAULT_OUTPUTS,
+    security: MockSecurity = OPEN,
 ) -> None:
     """Run the mock server. `duration_s=None` means run until interrupted.
 
@@ -72,15 +118,21 @@ async def run_mock_server(
     The axis nodes are read-only, exactly as a servo's actual position is. The
     `outputs` are writable, and are the only nodes anywhere this project writes
     to — the write path is tested here and nowhere else.
+
+    `security` decides what a client must present. Left alone it is the open
+    server this has always been.
     """
     from asyncua import Server, ua  # a heavy import - only when actually needed
 
-    server = Server()
+    server = Server(user_manager=_user_manager(security))
     await server.init()
     server.set_endpoint(endpoint)
     server.set_server_name("PSsimTool Mock PLC")
-    # No security: this is a local development tool. Never do this on a real server.
-    server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
+    # Awaited on purpose: `set_application_uri` is a coroutine, and calling it
+    # without awaiting leaves the uri unset — the certificate then does not match
+    # and every client warns about it.
+    await server.set_application_uri(MOCK_APPLICATION_URI)
+    await _apply_security(server, security)
 
     namespace_index = await server.register_namespace(DEFAULT_NAMESPACE)
     folder = await server.nodes.objects.add_folder(namespace_index, "Axes")
@@ -114,9 +166,99 @@ async def run_mock_server(
             elapsed += update_interval_s
 
 
-def main(endpoint: str = DEFAULT_ENDPOINT) -> None:
+def _user_manager(security: MockSecurity) -> Any:
+    """A user check, or `None` for a server that asks for nobody.
+
+    `None` rather than a permissive manager: asyncua's default already welcomes
+    everyone, and a manager that always says yes would be a second place for
+    that decision to live.
+    """
+    if not security.requires_user:
+        return None
+
+    from asyncua.crypto.permission_rules import User, UserRole
+    from asyncua.server.user_managers import UserManager
+
+    expected_name = security.username
+    expected_password = security.password
+
+    class _OnlyOneUser(UserManager):
+        # The names are asyncua's: renaming the two we ignore would break the
+        # override, and only `username` and `password` decide anything here.
+        def get_user(  # noqa: PLR6301
+            self,
+            iserver: Any,  # noqa: ARG002
+            username: str | None = None,
+            password: str | None = None,
+            certificate: Any = None,  # noqa: ARG002
+        ) -> Any:
+            """`None` is how asyncua is told to refuse — it answers the client
+            with `BadUserAccessDenied`, which is what the diagnostics report."""
+            if username == expected_name and password == expected_password:
+                return User(role=UserRole.User)
+            logger.info("refusing a session", username=username)
+            return None
+
+    return _OnlyOneUser()
+
+
+async def _apply_security(server: Any, security: MockSecurity) -> None:
+    """Offer the policies `security` asks for, and only the tokens it allows."""
+    from asyncua import ua
+
+    if security.requires_user:
+        # Not merely "a username is accepted": anonymous is removed from what is
+        # offered, so a client that tries it is refused at the endpoint rather
+        # than at the session.
+        server.set_identity_tokens([ua.UserNameIdentityToken])
+
+    if not security.is_secure:
+        # No security: this is a local development tool. Never do this on a real
+        # server.
+        server.set_security_policy([ua.SecurityPolicyType.NoSecurity])
+        return
+
+    directory = security.pki_dir or Path(tempfile.mkdtemp(prefix="pssim-mock-pki-"))
+    directory.mkdir(parents=True, exist_ok=True)
+    certificate, key = await _server_certificate(directory)
+    await server.load_certificate(str(certificate))
+    await server.load_private_key(str(key))
+    # `NoSecurity` stays alongside, so one server can answer both a discovery
+    # that finds two offers and a client that picks either.
+    server.set_security_policy(
+        [
+            ua.SecurityPolicyType.NoSecurity,
+            ua.SecurityPolicyType.Basic256Sha256_SignAndEncrypt,
+        ]
+    )
+    logger.info("mock server security", policies=2, certificate=str(certificate))
+
+
+async def _server_certificate(directory: Path) -> tuple[Path, Path]:
+    """A self-signed pair for the server, issued for `MOCK_APPLICATION_URI`.
+
+    `cert_gen` rather than the `Client` helper — that one takes its identity from
+    a client's own uri, and this is a server.
+    """
+    from asyncua.crypto.cert_gen import setup_self_signed_certificate
+    from cryptography.x509.oid import ExtendedKeyUsageOID
+
+    key = directory / "mock_key.pem"
+    certificate = directory / "mock_cert.der"
+    await setup_self_signed_certificate(
+        key,
+        certificate,
+        MOCK_APPLICATION_URI,
+        "127.0.0.1",
+        [ExtendedKeyUsageOID.CLIENT_AUTH, ExtendedKeyUsageOID.SERVER_AUTH],
+        {"organizationName": "PSsimTool", "commonName": "PSsimTool Mock PLC"},
+    )
+    return certificate, key
+
+
+def main(endpoint: str = DEFAULT_ENDPOINT, security: MockSecurity = OPEN) -> None:
     """The entry point for `pssim mock-server`."""
     try:
-        asyncio.run(run_mock_server(endpoint))
+        asyncio.run(run_mock_server(endpoint, security=security))
     except KeyboardInterrupt:
         logger.info("mock server stopped")

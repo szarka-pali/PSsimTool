@@ -322,11 +322,29 @@ def write_icon(
 @app.command("mock-server")
 def mock_server(
     endpoint: Annotated[str, typer.Option("--endpoint", "-e")] = "opc.tcp://0.0.0.0:4840/pssim/",
+    secure: Annotated[
+        bool,
+        typer.Option("--secure", help="Also offer Basic256Sha256/SignAndEncrypt"),
+    ] = False,
+    require_user: Annotated[
+        str | None,
+        typer.Option("--require-user", help="Demand USER:PASSWORD and refuse anonymous"),
+    ] = None,
 ) -> None:
-    """Run the simulated OPC UA server. Development and tests without a PLC."""
+    """Run the simulated OPC UA server. Development and tests without a PLC.
+
+    The options exist so the client can be tested against a server that says
+    **no**: a client that has only ever met an open server is one nobody has
+    tested against a real PLC.
+    """
+    from pssim.io.mock_server import MockSecurity
     from pssim.io.mock_server import main as run_server
 
-    run_server(endpoint)
+    username, _, password = (require_user or "").partition(":")
+    run_server(
+        endpoint,
+        MockSecurity(is_secure=secure, username=username, password=password),
+    )
 
 
 @app.command()

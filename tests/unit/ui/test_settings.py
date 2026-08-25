@@ -10,9 +10,13 @@ on startup.
 
 from __future__ import annotations
 
+import pytest
+
+from pssim.io.opcua_security import POLICY_NONE, SecurityMode, TokenType
 from pssim.ui.settings import (
     DEFAULT_ENDPOINT,
     DEFAULT_PUBLISHING_INTERVAL_MS,
+    PASSWORD_ENV,
     ConnectionSettings,
     VariableTag,
     ViewSettings,
@@ -132,3 +136,103 @@ class TestConnectionSettings:
 
     def test_a_stored_true_does_turn_it_on(self) -> None:
         assert ConnectionSettings.from_dict({"allow_writing": True}).allow_writing is True
+
+
+class TestSecuritySettings:
+    """What is remembered about how to get in — and the one thing that is not."""
+
+    def test_security_is_off_until_chosen(self) -> None:
+        assert ConnectionSettings().security_mode is SecurityMode.NONE
+
+    def test_the_policy_matches_that(self) -> None:
+        assert ConnectionSettings().policy_name == POLICY_NONE
+
+    def test_a_session_starts_anonymous(self) -> None:
+        assert ConnectionSettings().token_type is TokenType.ANONYMOUS
+
+    def test_security_round_trips(self) -> None:
+        settings = ConnectionSettings(
+            policy_name="Basic256Sha256",
+            security_mode=SecurityMode.SIGN_AND_ENCRYPT,
+            token_type=TokenType.USERNAME,
+            username="operator",
+            certificate_path="C:/pki/own.der",
+            key_path="C:/pki/own.pem",
+        )
+
+        assert ConnectionSettings.from_dict(settings.to_dict()) == settings
+
+    def test_an_unknown_policy_falls_back_to_none(self) -> None:
+        # A settings file is outside data: a policy this build does not implement
+        # must not be carried into `set_security`.
+        restored = ConnectionSettings.from_dict({"policy_name": "Basic128Rsa15Ex"})
+
+        assert restored.policy_name == POLICY_NONE
+
+    def test_an_unknown_mode_falls_back_to_none(self) -> None:
+        assert (
+            ConnectionSettings.from_dict({"security_mode": "Encrypted"}).security_mode
+            is SecurityMode.NONE
+        )
+
+    def test_an_unknown_token_falls_back_to_anonymous(self) -> None:
+        assert (
+            ConnectionSettings.from_dict({"token_type": "Kerberos"}).token_type
+            is TokenType.ANONYMOUS
+        )
+
+
+class TestThePasswordIsNeverStored:
+    """R19: the username is remembered, the secret is not. `ui/settings.py` has
+    no field for it, so there is nowhere for it to be written by accident."""
+
+    def test_there_is_no_password_field(self) -> None:
+        assert not hasattr(ConnectionSettings(), "password")
+
+    def test_it_is_not_in_what_gets_written(self) -> None:
+        settings = ConnectionSettings(token_type=TokenType.USERNAME, username="operator")
+
+        assert "password" not in settings.to_dict()
+
+    def test_credentials_take_it_as_an_argument(self) -> None:
+        settings = ConnectionSettings(token_type=TokenType.USERNAME, username="operator")
+
+        assert settings.credentials("s3cret").password == "s3cret"
+
+    def test_the_environment_supplies_it_unattended(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(PASSWORD_ENV, "from-env")
+
+        assert ConnectionSettings().credentials().password == "from-env"
+
+    def test_what_is_typed_wins_over_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(PASSWORD_ENV, "from-env")
+
+        assert ConnectionSettings().credentials("typed").password == "typed"
+
+    def test_a_user_token_with_no_password_anywhere_has_to_be_asked_for(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(PASSWORD_ENV, raising=False)
+
+        assert ConnectionSettings(token_type=TokenType.USERNAME).needs_password is True
+
+    def test_an_anonymous_session_is_not_asked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(PASSWORD_ENV, raising=False)
+
+        assert ConnectionSettings().needs_password is False
+
+    def test_the_environment_answers_for_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(PASSWORD_ENV, "from-env")
+
+        assert ConnectionSettings(token_type=TokenType.USERNAME).needs_password is False
+
+    def test_the_description_does_not_carry_it(self) -> None:
+        settings = ConnectionSettings(token_type=TokenType.USERNAME, username="operator")
+
+        assert "s3cret" not in settings.describe()
+        assert "operator" in settings.describe()
+
+    def test_nor_does_the_repr_of_the_credentials(self) -> None:
+        # A frozen dataclass prints every field, and this object ends up in log
+        # lines and tracebacks.
+        assert "s3cret" not in repr(ConnectionSettings().credentials("s3cret"))

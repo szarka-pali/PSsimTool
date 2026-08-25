@@ -28,6 +28,7 @@ from enum import StrEnum
 from typing import Any, Final
 
 from pssim.domain.errors import DataSourceError
+from pssim.io.opcua_browser import NUMERIC_TYPES
 from pssim.io.opcua_diagnostics import DiagnosticLog, DiagnosticStep
 from pssim.io.opcua_security import Credentials, configure
 from pssim.observability import get_logger
@@ -86,6 +87,16 @@ class BrowseNode:
     @property
     def is_variable(self) -> bool:
         return self.kind is NodeKind.VARIABLE
+
+    @property
+    def is_numeric(self) -> bool:
+        """Whether it can carry a position, an angle or a reading.
+
+        The set is `opcua_browser.NUMERIC_TYPES` rather than a second copy of it:
+        the one-shot browse and the live session must agree about which nodes are
+        bindable, and two frozensets would eventually not.
+        """
+        return self.is_variable and self.data_type in NUMERIC_TYPES
 
     @property
     def label(self) -> str:

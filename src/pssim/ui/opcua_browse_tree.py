@@ -1,0 +1,288 @@
+"""The server's address space as a tree, read a folder at a time.
+
+Every expansion is one question to the server, asked on a worker thread and
+answered by signal. Nothing is read until a folder is opened, which is what makes
+this usable against a PLC holding thousands of nodes — and what
+`io/opcua_browser.browse_variables` cannot do, because it reads everything.
+
+The widget owns no connection. It renders whatever `OpcUaBrowseSession` it is
+given and reports what was picked; the dialog decides what that means. Same
+arrangement as the other trees here (R6).
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QWidget
+
+from pssim.io.opcua_browse_session import (
+    OBJECTS_NODE_ID,
+    BrowseNode,
+    BrowseResult,
+    NodeKind,
+    OpcUaBrowseSession,
+)
+from pssim.observability import get_logger
+
+logger = get_logger(__name__)
+
+COLUMN_NAME: Final = 0
+COLUMN_NODE_ID: Final = 1
+COLUMN_TYPE: Final = 2
+COLUMN_ACCESS: Final = 3
+
+#: Item data: the node this row stands for, and whether its children have been
+#: fetched. Qt wants ints above `UserRole`; nothing is read back from the text.
+NODE_ROLE: Final = int(Qt.ItemDataRole.UserRole) + 1
+LOADED_ROLE: Final = int(Qt.ItemDataRole.UserRole) + 2
+
+#: The row a folder shows while its contents are on their way. Replaced by the
+#: answer; without it the expander would not appear at all, and a folder with no
+#: visible arrow reads as an empty one.
+PLACEHOLDER_TEXT: Final = "…"
+
+
+class OpcUaBrowseTree(QTreeWidget):
+    """The address space. Lazily expanded, never blocking the thread that draws."""
+
+    node_selected = Signal(object)
+    """Carries the selected `BrowseNode`, or `None`."""
+
+    node_activated = Signal(object)
+    """A double-click — carries the `BrowseNode`. The quickest way to say
+    "that one", which for a variable is what a chooser is open for."""
+
+    failed = Signal(str)
+    """One expansion could not be read. Reported rather than raised: a folder a
+    server will not open is a fact about that folder, not a reason to close the
+    dialog."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        self._session: OpcUaBrowseSession | None = None
+        self._workers: dict[str, _ChildrenThread] = {}
+        self._numeric_only = False
+
+        self.setHeaderLabels(
+            [self.tr("Name"), self.tr("Node id"), self.tr("Type"), self.tr("Access")]
+        )
+        self.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
+        self.setUniformRowHeights(True)
+        self.setMinimumSize(560, 260)
+
+        header = self.header()
+        header.setStretchLastSection(False)
+        for column in range(self.columnCount()):
+            header.setSectionResizeMode(column, header.ResizeMode.Interactive)
+        for column, width in enumerate((230, 210, 80, 70)):
+            self.setColumnWidth(column, width)
+
+        self.itemExpanded.connect(self._on_expanded)
+        self.itemSelectionChanged.connect(self._on_selection_changed)
+        self.itemDoubleClicked.connect(self._on_double_clicked)
+
+    def require_numeric(self) -> None:
+        """Grey out every variable that cannot drive a joint.
+
+        For the tag chooser, not for the address-space viewer: in the connection
+        dialog the tree only shows what the server holds, and nothing there is
+        being picked, so a `String` node greyed out would be a judgement on a
+        node nobody asked about.
+        """
+        self._numeric_only = True
+        self.refresh()
+
+    # -- the session --------------------------------------------------------
+
+    @property
+    def session(self) -> OpcUaBrowseSession | None:
+        return self._session
+
+    def set_session(self, session: OpcUaBrowseSession | None) -> None:
+        """Show a different server, or nothing.
+
+        Any expansion still in flight is abandoned first: its answer describes a
+        server this tree is no longer looking at.
+        """
+        self._abandon_workers()
+        self._session = session
+        self.clear()
+        if session is not None:
+            self._request(OBJECTS_NODE_ID, parent=None)
+
+    def refresh(self) -> None:
+        """Read the whole tree again from the top. What a server that changed
+        under us needs, and the only way to see a tag added since connecting."""
+        self.set_session(self._session)
+
+    # -- reading ------------------------------------------------------------
+
+    @property
+    def selected_node(self) -> BrowseNode | None:
+        items = self.selectedItems()
+        if not items:
+            return None
+        node = items[0].data(COLUMN_NAME, NODE_ROLE)
+        return node if isinstance(node, BrowseNode) else None
+
+    # -- expansion ----------------------------------------------------------
+
+    def _on_expanded(self, item: QTreeWidgetItem) -> None:
+        """A folder was opened: ask the server what is in it, once."""
+        if item.data(COLUMN_NAME, LOADED_ROLE):
+            return
+        node = item.data(COLUMN_NAME, NODE_ROLE)
+        if isinstance(node, BrowseNode):
+            self._request(node.node_id, parent=item)
+
+    def _request(self, node_id: str, parent: QTreeWidgetItem | None) -> None:
+        """Start one worker for one node. A second request for the same node
+        while the first is in flight is dropped — double-clicking an expander
+        should not ask twice."""
+        session = self._session
+        if session is None or node_id in self._workers:
+            return
+
+        worker = _ChildrenThread(session, node_id, parent, self)
+        worker.succeeded.connect(self._on_children)
+        worker.failed.connect(self._on_failure)
+        worker.finished.connect(lambda: self._workers.pop(node_id, None))
+        self._workers[node_id] = worker
+        worker.start()
+
+    def _on_children(self, _node_id: str, parent: object, result: object) -> None:
+        """Fill in one folder. The node id rides along for the worker's own
+        bookkeeping; which item to fill is the `parent` it was started with."""
+        if not isinstance(result, BrowseResult):
+            return
+        holder = parent if isinstance(parent, QTreeWidgetItem) else None
+        self._fill(holder, result)
+
+    def _on_failure(self, node_id: str, message: str) -> None:
+        logger.warning("could not browse a node", node=node_id, error=message)
+        self.failed.emit(message)
+
+    def _fill(self, parent: QTreeWidgetItem | None, result: BrowseResult) -> None:
+        """Replace a folder's placeholder with what the server said is in it."""
+        if parent is None:
+            self.clear()
+        else:
+            parent.takeChildren()
+            parent.setData(COLUMN_NAME, LOADED_ROLE, True)
+
+        for node in result.nodes:
+            item = _make_item(node, self._numeric_only)
+            if parent is None:
+                self.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
+
+        if result.is_truncated:
+            # Said rather than silently shown: a folder cut off at the limit that
+            # looked complete would be a lie about the server.
+            truncated = QTreeWidgetItem([self.tr("… more, not shown"), "", "", ""])
+            truncated.setDisabled(True)
+            if parent is None:
+                self.addTopLevelItem(truncated)
+            else:
+                parent.addChild(truncated)
+
+    def _abandon_workers(self) -> None:
+        """Let go of every expansion in flight.
+
+        Not joined: a worker is blocked on a server that may be gone, and waiting
+        for it is what would freeze the window. Its signals are disconnected, so
+        a late answer reaches nothing.
+        """
+        for worker in self._workers.values():
+            worker.abandon()
+        self._workers.clear()
+
+    # -- events -------------------------------------------------------------
+
+    def _on_selection_changed(self) -> None:
+        self.node_selected.emit(self.selected_node)
+
+    def _on_double_clicked(self, _item: QTreeWidgetItem, _column: int) -> None:
+        node = self.selected_node
+        if node is not None:
+            self.node_activated.emit(node)
+
+
+class _ChildrenThread(QThread):
+    """One question to the server, off the thread that draws.
+
+    `children_of` blocks until the server answers. On a LAN that is milliseconds
+    and on a bad link it is not, and a window that stops repainting meanwhile
+    looks broken.
+    """
+
+    succeeded = Signal(str, object, object)
+    failed = Signal(str, str)
+
+    def __init__(
+        self,
+        session: OpcUaBrowseSession,
+        node_id: str,
+        parent_item: QTreeWidgetItem | None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._session = session
+        self._node_id = node_id
+        self._parent_item = parent_item
+
+    def abandon(self) -> None:
+        """Stop anyone hearing the answer. The thread itself finishes on its own
+        once the server replies or the request times out."""
+        self.succeeded.disconnect()
+        self.failed.disconnect()
+
+    def run(self) -> None:
+        """Never raises out of the thread: that would take the window with it."""
+        try:
+            result = self._session.children_of(self._node_id)
+        except Exception as exc:
+            self.failed.emit(self._node_id, str(exc))
+            return
+        self.succeeded.emit(self._node_id, self._parent_item, result)
+
+
+def _make_item(node: BrowseNode, numeric_only: bool) -> QTreeWidgetItem:
+    """One row. The node travels in item data, never read back from the text."""
+    item = QTreeWidgetItem(
+        [
+            node.label,
+            node.node_id,
+            node.data_type,
+            _access_text(node),
+        ]
+    )
+    item.setData(COLUMN_NAME, NODE_ROLE, node)
+    item.setData(COLUMN_NAME, LOADED_ROLE, False)
+    item.setToolTip(COLUMN_NAME, node.browse_name)
+
+    if node.has_children:
+        # A placeholder, so the expander exists before anything is known about
+        # what is inside. Without it a folder reads as empty until it is opened,
+        # which is the one thing it cannot be.
+        item.addChild(QTreeWidgetItem([PLACEHOLDER_TEXT, "", "", ""]))
+    elif node.kind is NodeKind.OTHER:
+        # A method or a type: shown so the tree matches the server, greyed
+        # because there is nothing this application can do with it.
+        item.setDisabled(True)
+    elif numeric_only and not node.is_numeric:
+        # Greyed rather than hidden: it is then obvious that the tag was found
+        # and rejected, not that it is missing.
+        item.setDisabled(True)
+    return item
+
+
+def _access_text(node: BrowseNode) -> str:
+    """`R` or `RW` for a variable, nothing for anything else."""
+    if not node.is_variable:
+        return ""
+    return "RW" if node.is_writable else "R"

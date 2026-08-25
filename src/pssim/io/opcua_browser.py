@@ -68,13 +68,13 @@ class OpcUaNode:
         here — the chooser greys them out rather than hiding them, so it is
         obvious the tag was found and rejected rather than missing.
         """
-        return self.data_type in _NUMERIC_TYPES
+        return self.data_type in NUMERIC_TYPES
 
 
 #: The variant types worth binding to. Verified against `pssim mock-server`:
 #: `read_data_type_as_variant_type()` returns a `ua.VariantType` whose `.name` is
 #: exactly one of these spellings.
-_NUMERIC_TYPES: Final[frozenset[str]] = frozenset(
+NUMERIC_TYPES: Final[frozenset[str]] = frozenset(
     {
         "Boolean",
         "SByte",

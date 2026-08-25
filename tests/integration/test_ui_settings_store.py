@@ -23,6 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
+from pssim.io.opcua_security import TokenType  # noqa: E402
 from pssim.ui.main_window import MainWindow  # noqa: E402
 from pssim.ui.model_tree import COLUMN_NAME, ModelTree  # noqa: E402
 from pssim.ui.model_tree import TABLE_NAME as MODEL_TABLE  # noqa: E402
@@ -89,6 +90,57 @@ class TestStore:
         ini.setValue("view/columns", "{not json")
 
         assert store.load_view() == ViewSettings()
+
+
+class TestThePasswordNeverReachesTheFile:
+    """R19, proved against the actual file rather than against `to_dict`.
+
+    The dialog is where a password is typed and the window is what saves the
+    settings afterwards; the check is that the bytes on disk hold neither the
+    secret nor a key that looks like somewhere to put one.
+    """
+
+    def test_there_is_no_key_to_put_one_in(
+        self, store: SettingsStore, ini: QSettings, tmp_path: Path
+    ) -> None:
+        store.save_connection(
+            ConnectionSettings(token_type=TokenType.USERNAME, username="operator")
+        )
+        ini.sync()
+
+        assert "password" not in _ini_text(tmp_path).lower()
+
+    def test_the_window_saves_the_settings_without_it(
+        self, window: MainWindow, ini: QSettings, tmp_path: Path
+    ) -> None:
+        # The whole path: a password typed into the dialog is held for the
+        # session, and what gets saved is everything except it.
+        window._session_password = "s3cret"
+        window.save_connection_settings(
+            ConnectionSettings(token_type=TokenType.USERNAME, username="operator")
+        )
+        ini.sync()
+
+        written = _ini_text(tmp_path)
+        assert "s3cret" not in written
+        # In the same breath, or the absence proves only that nothing was saved.
+        assert "operator" in written
+
+    def test_the_user_name_is_there_though(
+        self, store: SettingsStore, ini: QSettings, tmp_path: Path
+    ) -> None:
+        # The counter-check: absence proves nothing if nothing was written.
+        store.save_connection(
+            ConnectionSettings(token_type=TokenType.USERNAME, username="operator")
+        )
+        ini.sync()
+
+        assert "operator" in _ini_text(tmp_path)
+
+
+def _ini_text(tmp_path: Path) -> str:
+    """Every byte of the settings file, whatever encoding Qt chose for it."""
+    return (tmp_path / "pssim.ini").read_bytes().decode("utf-8", errors="replace")
 
 
 class TestTheWindowRemembers:

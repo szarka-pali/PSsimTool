@@ -24,6 +24,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from pssim.domain.errors import PSsimError
 from pssim.io.base import DataSource, SourceStatus
+from pssim.io.opcua_diagnostics import DiagnosticLog
 from pssim.io.opcua_source import OpcUaConfig, OpcUaSource
 from pssim.io.store import StateStore
 from pssim.observability import get_logger
@@ -63,6 +64,8 @@ class ConnectionController(QObject):
         self._stale_after_s = stale_after_s
         self._source: DataSource | None = None
         self._store = StateStore()
+        self._diagnostics = DiagnosticLog()
+        """Stands in before there is a source, so `diagnostics` is never `None`."""
 
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_INTERVAL_MS)
@@ -106,14 +109,36 @@ class ConnectionController(QObject):
     def is_connected(self) -> bool:
         return self.status is SourceStatus.CONNECTED
 
+    @property
+    def diagnostics(self) -> DiagnosticLog:
+        """What the last attempt tried, and where it stopped.
+
+        Empty rather than absent when there has been no attempt: a caller asking
+        "why am I not connected" before anything was tried should get an empty
+        answer, not a `None` to branch on.
+        """
+        source = self._source
+        log = getattr(source, "diagnostics", None)
+        return log if isinstance(log, DiagnosticLog) else self._diagnostics
+
+    @property
+    def last_error(self) -> str | None:
+        """One line about why there is no connection, or `None` while there is."""
+        error = getattr(self._source, "last_error", None)
+        return error if isinstance(error, str) else None
+
     # -- the connection -----------------------------------------------------
 
-    def connect_to(self, settings: ConnectionSettings) -> str | None:
+    def connect_to(self, settings: ConnectionSettings, password: str = "") -> str | None:
         """Start a source for whatever is currently bound.
 
         Returns `None` on success, or a sentence saying why not. A message rather
         than an exception: "no tags assigned yet" is a normal state of a project
         that has not been wired up, not a fault.
+
+        The password is a **parameter**, not something read off the settings: it
+        is typed once per session or comes from the environment, and nothing that
+        gets written to disk ever holds it.
         """
         self.disconnect_from_server()
 
@@ -127,6 +152,7 @@ class ConnectionController(QObject):
                     endpoint=settings.endpoint,
                     bindings=bindings,
                     publishing_interval_ms=settings.publishing_interval_ms,
+                    credentials=settings.credentials(password),
                     allow_writing=settings.allow_writing,
                 ),
                 store=self._store,
@@ -143,6 +169,8 @@ class ConnectionController(QObject):
             endpoint=settings.endpoint,
             signals=len(bindings),
             writing=settings.allow_writing,
+            # `describe()` never includes the password — see `io.opcua_security`.
+            security=settings.credentials().describe(),
         )
         self.status_changed.emit(self.status)
         return None

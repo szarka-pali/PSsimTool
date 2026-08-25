@@ -78,7 +78,7 @@ from pssim.ui.model_registry import ModelEntry, ModelRegistry
 from pssim.ui.model_tree import TABLE_NAME as MODEL_TABLE
 from pssim.ui.model_tree import ModelTree
 from pssim.ui.model_values_panel import ModelValuesPanel
-from pssim.ui.opcua_dialog import AssignTagDialog, ConnectionDialog
+from pssim.ui.opcua_dialog import AssignTagDialog, ConnectionDialog, DiagnosticsDialog
 from pssim.ui.placement_dialog import PlacementDialog
 from pssim.ui.project_controller import (
     LoadPlan,
@@ -198,6 +198,10 @@ class MainWindow(QMainWindow):
         self._joint_dialog_parent_id: str | None = None
         self._values_panel: ModelValuesPanel | None = None
         self._selected_variable: str | None = None
+        self._session_password = ""
+        """Typed into the connection dialog and held for this session only. It is
+        deliberately not in `ConnectionSettings`, which is what gets written to
+        disk — see `ui/settings.py`."""
         self._models = ModelRegistry()
         self._sensors = SensorRegistry()
         self._joints = JointRegistry()
@@ -524,6 +528,15 @@ class MainWindow(QMainWindow):
         self.clear_tag_action.setStatusTip(self.tr("Leave the selected variable bound to nothing"))
         self.clear_tag_action.triggered.connect(self.clear_variable_tag)
         menu.addAction(self.clear_tag_action)
+
+        menu.addSeparator()
+
+        self.diagnostics_action = QAction(self.tr("&Diagnostics…"), self)
+        self.diagnostics_action.setStatusTip(
+            self.tr("What the last connection attempt tried, and where it stopped")
+        )
+        self.diagnostics_action.triggered.connect(self.open_diagnostics_dialog)
+        menu.addAction(self.diagnostics_action)
 
     def _build_scene_menu(self, scene_menu: QMenu) -> None:
         """Everything that applies to the scene rather than to one item in it.
@@ -1477,7 +1490,7 @@ class MainWindow(QMainWindow):
         A refusal is a status-bar message, not a modal: "nothing has a tag yet"
         is a normal state of a project that has not been wired up.
         """
-        refusal = self._connection.connect_to(self._connection_settings)
+        refusal = self._connection.connect_to(self._connection_settings, self._session_password)
         if refusal is not None:
             self.statusBar().showMessage(refusal)
             self._update_actions()
@@ -1497,19 +1510,36 @@ class MainWindow(QMainWindow):
 
     def _on_connection_status(self, status: object) -> None:
         """The controller's status changed. Only the actions follow it — a status
-        bar rewritten ten times a second is unreadable."""
+        bar rewritten ten times a second is unreadable.
+
+        The *reason* is not put in the status bar either: it belongs in
+        `Communication → Diagnostics…`, where it can be read rather than
+        glimpsed before the next message overwrites it.
+        """
         _ = status
         self._update_actions()
 
+    def open_diagnostics_dialog(self) -> DiagnosticsDialog:
+        """What the last attempt tried, and where it stopped.
+
+        Reachable without reopening the connection dialog, because the question
+        "why am I not connected" comes up long after that dialog was closed.
+        """
+        dialog = DiagnosticsDialog(self._connection.diagnostics, parent=self)
+        dialog.exec()
+        return dialog
+
     def open_connection_dialog(self) -> ConnectionDialog:
-        """Where the server is, and whether writing is allowed."""
+        """Where the server is, how to get in, and what it turned out to hold."""
         dialog = ConnectionDialog(self._connection_settings, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return dialog
 
+        # The password is kept **here**, apart from the settings that get saved.
+        self._session_password = dialog.password
         self.save_connection_settings(dialog.settings)
         self.statusBar().showMessage(
-            self.tr("Server: {0}").format(self._connection_settings.endpoint)
+            self.tr("Server: {0}").format(self._connection_settings.describe())
         )
         return dialog
 
@@ -1523,6 +1553,7 @@ class MainWindow(QMainWindow):
             name,
             self._connection_settings.endpoint,
             self._connection_settings.tag_for(name),
+            self._connection_settings.credentials(self._session_password),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

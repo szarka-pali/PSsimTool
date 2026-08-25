@@ -20,12 +20,14 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from asyncua.ua.uaerrors import BadUserAccessDenied  # noqa: E402
 from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from pssim.config.binding import BindingDirection  # noqa: E402
 from pssim.domain.sensors import Sensor, SensorKind  # noqa: E402
 from pssim.io.base import SourceStatus  # noqa: E402
+from pssim.io.opcua_diagnostics import DiagnosticLog, DiagnosticStep  # noqa: E402
 from pssim.io.store import StateStore  # noqa: E402
 from pssim.ui.connection_controller import ConnectionController  # noqa: E402
 from pssim.ui.main_window import MainWindow  # noqa: E402
@@ -356,6 +358,56 @@ class TestThePump:
         assert entry.value == pytest.approx(1.0)
 
 
+class TestWhyItIsNotConnected:
+    """R19: a disconnected row says `Disconnected`; the reason lives here."""
+
+    def test_nothing_attempted_is_an_empty_log(self, qt_app: QApplication) -> None:
+        # Empty rather than `None`: a caller asking before anything was tried
+        # should get an empty answer, not something to branch on.
+        controller = ConnectionController(VariableRegistry())
+
+        assert controller.diagnostics.entries == ()
+
+    def test_and_no_error_either(self, qt_app: QApplication) -> None:
+        assert ConnectionController(VariableRegistry()).last_error is None
+
+    def test_a_source_without_diagnostics_is_survived(self, qt_app: QApplication) -> None:
+        # `DataSource` is a Protocol (R12) and a replay implements none of this.
+        controller = connected_controller(VariableRegistry())
+
+        assert controller.diagnostics.entries == ()
+        assert controller.last_error is None
+
+    def test_the_source_s_reason_is_passed_through(self, qt_app: QApplication) -> None:
+        controller = ConnectionController(VariableRegistry())
+        controller.use_source(_FailedSource(controller.store))
+
+        assert controller.last_error == "BadUserAccessDenied"
+
+    def test_so_is_its_log(self, qt_app: QApplication) -> None:
+        controller = ConnectionController(VariableRegistry())
+        controller.use_source(_FailedSource(controller.store))
+
+        assert controller.diagnostics.last_failure is not None
+
+
+class _FailedSource(_StubSource):
+    """A source that tried and could not, as `OpcUaSource` reports it."""
+
+    def __init__(self, store: StateStore) -> None:
+        super().__init__(store, SourceStatus.DISCONNECTED)
+        self._log = DiagnosticLog()
+        self._log.failed(DiagnosticStep.SESSION, BadUserAccessDenied())
+
+    @property
+    def diagnostics(self) -> DiagnosticLog:
+        return self._log
+
+    @property
+    def last_error(self) -> str:
+        return "BadUserAccessDenied"
+
+
 class TestTheValueShown:
     def test_it_is_shown_in_the_plc_s_own_units(self, window: MainWindow) -> None:
         # A row saying 1.25 for a tag holding 1250 invites a hunt for a bug that
@@ -426,46 +478,6 @@ class TestDialogs:
         dialog.show_failure("connection refused")
 
         assert "connection refused" in dialog.status_label.text()
-
-    def test_browsed_nodes_are_listed(self, qt_app: QApplication) -> None:
-        from pssim.io.opcua_browser import OpcUaNode
-
-        dialog = AssignTagDialog("X", "opc.tcp://plc:4840/")
-
-        dialog.show_nodes(
-            [
-                OpcUaNode(
-                    node_id="ns=2;s=X",
-                    browse_path="Axes / X",
-                    display_name="X",
-                    data_type="Double",
-                    is_writable=False,
-                )
-            ]
-        )
-
-        assert dialog.node_tree.topLevelItemCount() == 1
-
-    def test_a_non_numeric_node_is_offered_but_disabled(self, qt_app: QApplication) -> None:
-        # Greyed rather than hidden: it is obvious then that the tag was found
-        # and rejected, not that it is missing.
-        from pssim.io.opcua_browser import OpcUaNode
-
-        dialog = AssignTagDialog("X", "opc.tcp://plc:4840/")
-
-        dialog.show_nodes(
-            [
-                OpcUaNode(
-                    node_id="ns=2;s=Name",
-                    browse_path="Info / Name",
-                    display_name="Name",
-                    data_type="String",
-                    is_writable=False,
-                )
-            ]
-        )
-
-        assert dialog.node_tree.topLevelItem(0).isDisabled() is True
 
 
 class TestTheTabItself:

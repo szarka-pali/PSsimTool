@@ -1,13 +1,21 @@
-"""Two dialogs: where the server is, and which node a variable reads from.
+"""Connecting to an OPC UA server, and picking a tag off it.
 
-Kept apart because they answer different questions and are opened at different
-moments. The connection is set once and rarely revisited; a tag is assigned once
-per variable, and while doing that the only thing worth seeing is the server's
-own list of nodes.
+Two dialogs, and the first of them is the flow the way it actually goes:
 
-Browsing runs in a worker thread. `io.opcua_browser.browse_variables` blocks
-until the server answers, and a window that stops repainting while it does looks
-broken — the same reason a STEP import has `ui/loader.StepImportThread`.
+    type an endpoint → ask what it offers → pick one and say who you are
+        → connect → see what happened → walk its address space
+
+Three tabs, in that order. **Server** does everything up to connecting,
+**Address Space** is the tree that only exists once there is a session, and
+**Diagnostics** is the line-by-line record of the attempt — which is the tab that
+matters when it did not work, and the whole reason "Disconnected" was not enough.
+
+Nothing here imports asyncua. Discovery, the session and the security types all
+come from `io/`; this decides what to show and what to ask.
+
+Everything that talks to a server runs on a worker thread. A discovery against an
+unreachable host takes as long as its timeout, and a window that stops repainting
+meanwhile looks broken — the same reason `ui/loader.StepImportThread` exists.
 """
 
 from __future__ import annotations
@@ -15,7 +23,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Final
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -26,16 +34,29 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QPushButton,
+    QRadioButton,
     QSpinBox,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from pssim.io.opcua_browser import OpcUaNode, browse_variables
+from pssim.io.opcua_browse_session import BrowseNode, OpcUaBrowseSession
+from pssim.io.opcua_diagnostics import DiagnosticLog
+from pssim.io.opcua_security import (
+    POLICY_NONE,
+    Credentials,
+    EndpointOffer,
+    SecurityMode,
+    TokenType,
+    discover_endpoints,
+)
 from pssim.observability import get_logger
+from pssim.ui.opcua_browse_tree import OpcUaBrowseTree
 from pssim.ui.settings import ConnectionSettings, VariableTag
 
 logger = get_logger(__name__)
@@ -52,44 +73,187 @@ SCALE_DECIMALS: Final = 6
 
 OFFSET_LIMIT: Final = 1_000_000.0
 
-_BROWSE_COLUMNS: Final = 4
+OFFER_COLUMNS: Final = 4
+
+
+class _DiscoverThread(QThread):
+    """One discovery, off the thread that draws."""
+
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, endpoint: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._endpoint = endpoint
+
+    def run(self) -> None:
+        """Never raises out of the thread: that would take the window with it."""
+        try:
+            self.succeeded.emit(discover_endpoints(self._endpoint))
+        except Exception as exc:
+            logger.warning("discovery failed", endpoint=self._endpoint, error=str(exc))
+            self.failed.emit(str(exc))
+
+
+class _ConnectThread(QThread):
+    """One attempt at opening a browse session."""
+
+    succeeded = Signal(object)
+    failed = Signal(str, object)
+
+    def __init__(self, session: OpcUaBrowseSession, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._session = session
+
+    def run(self) -> None:
+        try:
+            self._session.open()
+        except Exception as exc:
+            # The diagnostics travel with the failure: which step it stopped on
+            # is the answer, and the message alone rarely is.
+            self.failed.emit(str(exc), self._session.diagnostics)
+            return
+        self.succeeded.emit(self._session)
 
 
 class ConnectionDialog(QDialog):
-    """Where the server is, how often it should publish, and whether this
-    application may write to it.
-
-    The writing switch is here rather than buried in a preferences tree because
-    it is the one setting in this window with consequences outside it.
-    """
+    """Where the server is, how to get in, and what it turned out to hold."""
 
     def __init__(self, settings: ConnectionSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("OPC UA Connection"))
         self.setModal(True)
 
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
+        self._settings = settings
+        self._offers: tuple[EndpointOffer, ...] = ()
+        self._discovering: _DiscoverThread | None = None
+        self._connecting: _ConnectThread | None = None
+        self._session: OpcUaBrowseSession | None = None
 
-        self.endpoint_edit = QLineEdit(settings.endpoint, self)
+        layout = QVBoxLayout(self)
+        self.tabs = QTabWidget(self)
+        self.tabs.addTab(self._build_server_tab(), self.tr("Server"))
+        self.tabs.addTab(self._build_address_tab(), self.tr("Address Space"))
+        self.tabs.addTab(self._build_diagnostics_tab(), self.tr("Diagnostics"))
+        layout.addWidget(self.tabs)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._apply_settings(settings)
+        self._update_authentication()
+
+    # -- the tabs -----------------------------------------------------------
+
+    def _build_server_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+
+        form = QFormLayout()
+        endpoint_row = QHBoxLayout()
+        self.endpoint_edit = QLineEdit(tab)
         self.endpoint_edit.setToolTip(
             self.tr("For example opc.tcp://192.168.0.10:4840/ - or the mock server on localhost")
         )
         self.endpoint_edit.setMinimumWidth(320)
-        form.addRow(self.tr("Endpoint:"), self.endpoint_edit)
+        endpoint_row.addWidget(self.endpoint_edit)
 
-        self.interval_spin = QSpinBox(self)
+        self.discover_button = QPushButton(self.tr("&Discover"), tab)
+        self.discover_button.setToolTip(self.tr("Ask the server how it may be talked to"))
+        self.discover_button.clicked.connect(self.start_discovery)
+        endpoint_row.addWidget(self.discover_button)
+        form.addRow(self.tr("Endpoint:"), endpoint_row)
+
+        self.interval_spin = QSpinBox(tab)
         self.interval_spin.setRange(MIN_INTERVAL_MS, MAX_INTERVAL_MS)
         self.interval_spin.setSuffix(" ms")
-        self.interval_spin.setValue(settings.publishing_interval_ms)
         self.interval_spin.setToolTip(
             self.tr("How often to ask the server to publish. It may grant a different one.")
         )
         form.addRow(self.tr("Publish every:"), self.interval_spin)
         layout.addLayout(form)
 
-        self.writing_check = QCheckBox(self.tr("Allow writing to the server"), self)
-        self.writing_check.setChecked(settings.allow_writing)
+        layout.addWidget(self._build_offers_group(tab))
+        layout.addWidget(self._build_authentication_group(tab))
+        layout.addWidget(self._build_writing_group(tab))
+
+        connect_row = QHBoxLayout()
+        self.connect_button = QPushButton(self.tr("&Connect"), tab)
+        self.connect_button.setToolTip(
+            self.tr("Open a session with the chosen security, and browse it")
+        )
+        self.connect_button.clicked.connect(self.start_connect)
+        connect_row.addWidget(self.connect_button)
+        connect_row.addStretch(1)
+        layout.addLayout(connect_row)
+
+        self.status_label = QLabel(self.tr("Not connected"), tab)
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+        return tab
+
+    def _build_offers_group(self, parent: QWidget) -> QGroupBox:
+        group = QGroupBox(self.tr("What the server offers"), parent)
+        inner = QVBoxLayout(group)
+
+        self.offer_tree = QTreeWidget(group)
+        self.offer_tree.setHeaderLabels(
+            [self.tr("Policy"), self.tr("Mode"), self.tr("Level"), self.tr("Accepts")]
+        )
+        self.offer_tree.setRootIsDecorated(False)
+        self.offer_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
+        self.offer_tree.setMaximumHeight(140)
+        header = self.offer_tree.header()
+        header.setStretchLastSection(False)
+        for column, width in enumerate((170, 130, 55, 170)):
+            self.offer_tree.setColumnWidth(column, width)
+        self.offer_tree.itemSelectionChanged.connect(self._on_offer_selected)
+        inner.addWidget(self.offer_tree)
+
+        self.offers_label = QLabel(self.tr("Not asked yet"), group)
+        self.offers_label.setWordWrap(True)
+        self.offers_label.setEnabled(False)
+        inner.addWidget(self.offers_label)
+        return group
+
+    def _build_authentication_group(self, parent: QWidget) -> QGroupBox:
+        group = QGroupBox(self.tr("Authentication"), parent)
+        layout = QVBoxLayout(group)
+
+        self.anonymous_radio = QRadioButton(self.tr("Anonymous"), group)
+        self.anonymous_radio.toggled.connect(self._on_token_changed)
+        layout.addWidget(self.anonymous_radio)
+
+        self.username_radio = QRadioButton(self.tr("User name and password"), group)
+        self.username_radio.toggled.connect(self._on_token_changed)
+        layout.addWidget(self.username_radio)
+
+        form = QFormLayout()
+        self.username_edit = QLineEdit(group)
+        form.addRow(self.tr("User:"), self.username_edit)
+
+        self.password_edit = QLineEdit(group)
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_edit.setToolTip(
+            self.tr(
+                "Not saved anywhere. Type it each session, or set PSSIM_OPCUA_PASSWORD "
+                "for an unattended run."
+            )
+        )
+        form.addRow(self.tr("Password:"), self.password_edit)
+        layout.addLayout(form)
+        return group
+
+    def _build_writing_group(self, parent: QWidget) -> QGroupBox:
+        group = QGroupBox(self.tr("Writing"), parent)
+        layout = QVBoxLayout(group)
+
+        self.writing_check = QCheckBox(self.tr("Allow writing to the server"), group)
         self.writing_check.setToolTip(
             self.tr(
                 "Off by default. With it off nothing this application produces can leave "
@@ -102,59 +266,260 @@ class ConnectionDialog(QDialog):
             self.tr(
                 "Writing affects the machine on the other end. Leave it off unless you mean it."
             ),
-            self,
+            group,
         )
         warning.setWordWrap(True)
         warning.setEnabled(False)
         layout.addWidget(warning)
+        return group
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+    def _build_address_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
 
-        self._settings = settings
+        self.browse_tree = OpcUaBrowseTree(tab)
+        self.browse_tree.failed.connect(self._on_browse_failed)
+        layout.addWidget(self.browse_tree)
+
+        self.address_label = QLabel(self.tr("Connect first"), tab)
+        self.address_label.setWordWrap(True)
+        self.address_label.setEnabled(False)
+        layout.addWidget(self.address_label)
+        return tab
+
+    def _build_diagnostics_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+
+        self.diagnostics_list = QListWidget(tab)
+        # Monospaced by nature of what it holds: step, outcome, code, detail,
+        # and columns that line up are what make a log scannable.
+        self.diagnostics_list.setAlternatingRowColors(True)
+        layout.addWidget(self.diagnostics_list)
+        return tab
+
+    # -- settings in and out ------------------------------------------------
+
+    def _apply_settings(self, settings: ConnectionSettings) -> None:
+        self.endpoint_edit.setText(settings.endpoint)
+        self.interval_spin.setValue(settings.publishing_interval_ms)
+        self.writing_check.setChecked(settings.allow_writing)
+        self.username_edit.setText(settings.username)
+        if settings.token_type is TokenType.USERNAME:
+            self.username_radio.setChecked(True)
+        else:
+            self.anonymous_radio.setChecked(True)
 
     @property
     def settings(self) -> ConnectionSettings:
-        """What the fields now say. The tag mapping is carried through untouched —
-        this dialog is about the connection, not about the assignments."""
+        """What the fields say, minus the secret.
+
+        The tag mapping is carried through untouched — this dialog is about the
+        connection, not about the assignments — and **the password is not here**,
+        because this is the object that gets written to disk.
+        """
         return replace(
             self._settings,
             endpoint=self.endpoint_edit.text().strip(),
             publishing_interval_ms=self.interval_spin.value(),
             allow_writing=self.writing_check.isChecked(),
+            policy_name=self._chosen_policy_name(),
+            security_mode=self._chosen_mode(),
+            token_type=self._chosen_token(),
+            username=self.username_edit.text().strip(),
         )
 
+    @property
+    def password(self) -> str:
+        """What was typed, for this session only. Never returned by `settings`."""
+        return self.password_edit.text()
 
-class _BrowseThread(QThread):
-    """One browse, off the thread that draws."""
+    def credentials(self) -> Credentials:
+        """Everything needed to open a session right now, secret included."""
+        return self.settings.credentials(self.password)
 
-    succeeded = Signal(object)
-    failed = Signal(str)
+    def _chosen_policy_name(self) -> str:
+        offer = self.selected_offer
+        return offer.policy_name if offer is not None else self._settings.policy_name
 
-    def __init__(self, endpoint: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._endpoint = endpoint
+    def _chosen_mode(self) -> SecurityMode:
+        offer = self.selected_offer
+        return offer.mode if offer is not None else self._settings.security_mode
 
-    def run(self) -> None:
-        """Never raises out of the thread: an exception here would take the
-        window with it. The message goes to the dialog instead."""
-        try:
-            self.succeeded.emit(browse_variables(self._endpoint))
-        except Exception as exc:
-            logger.warning("browse failed", endpoint=self._endpoint, error=str(exc))
-            self.failed.emit(str(exc))
+    def _chosen_token(self) -> TokenType:
+        return TokenType.USERNAME if self.username_radio.isChecked() else TokenType.ANONYMOUS
+
+    # -- discovery ----------------------------------------------------------
+
+    @property
+    def offers(self) -> tuple[EndpointOffer, ...]:
+        return self._offers
+
+    @property
+    def selected_offer(self) -> EndpointOffer | None:
+        items = self.offer_tree.selectedItems()
+        if not items:
+            return None
+        index = self.offer_tree.indexOfTopLevelItem(items[0])
+        return self._offers[index] if 0 <= index < len(self._offers) else None
+
+    def start_discovery(self) -> None:
+        """Ask the server what it offers. Does not block the window."""
+        endpoint = self.endpoint_edit.text().strip()
+        if not endpoint or self._discovering is not None:
+            return
+        self.discover_button.setEnabled(False)
+        self.offers_label.setText(self.tr("Asking {0}…").format(endpoint))
+
+        thread = _DiscoverThread(endpoint, self)
+        thread.succeeded.connect(self.show_offers)
+        thread.failed.connect(self.show_discovery_failure)
+        thread.finished.connect(self._on_discovery_finished)
+        self._discovering = thread
+        thread.start()
+
+    def show_offers(self, offers: object) -> None:
+        """Fill the table. Public so a test can supply offers without a server."""
+        found = tuple(offer for offer in _as_tuple(offers) if isinstance(offer, EndpointOffer))
+        self._offers = found
+        self.offer_tree.clear()
+        for offer in found:
+            self.offer_tree.addTopLevelItem(_offer_item(offer))
+
+        if not found:
+            self.offers_label.setText(self.tr("The server offered nothing usable"))
+            return
+
+        self.offers_label.setText(self.tr("{0} ways in").format(len(found)))
+        # Strongest first is how `discover_endpoints` sorts them, so selecting
+        # the first is selecting what the server itself would prefer.
+        first = self.offer_tree.topLevelItem(0)
+        if first is not None:
+            self.offer_tree.setCurrentItem(first)
+
+    def show_discovery_failure(self, message: str) -> None:
+        """Report a discovery that did not happen, in the dialog rather than a
+        modal on top of a modal."""
+        self.offers_label.setText(self.tr("Could not ask: {0}").format(message))
+
+    def _on_discovery_finished(self) -> None:
+        self._discovering = None
+        self.discover_button.setEnabled(True)
+
+    def _on_offer_selected(self) -> None:
+        self._update_authentication()
+
+    def _update_authentication(self) -> None:
+        """Offer only what the chosen endpoint accepts.
+
+        A server that does not list `Anonymous` will refuse an anonymous session,
+        and that refusal used to arrive with nothing to explain it. Greyed here
+        instead, before the click.
+        """
+        offer = self.selected_offer
+        accepts_anonymous = offer is None or offer.accepts(TokenType.ANONYMOUS)
+        accepts_username = offer is None or offer.accepts(TokenType.USERNAME)
+
+        self.anonymous_radio.setEnabled(accepts_anonymous)
+        self.username_radio.setEnabled(accepts_username)
+        if not accepts_anonymous and accepts_username:
+            self.username_radio.setChecked(True)
+        elif not accepts_username and accepts_anonymous:
+            self.anonymous_radio.setChecked(True)
+
+        typing_a_user = self.username_radio.isChecked()
+        self.username_edit.setEnabled(typing_a_user)
+        self.password_edit.setEnabled(typing_a_user)
+
+    def _on_token_changed(self, _checked: bool) -> None:
+        self._update_authentication()
+
+    # -- connecting ---------------------------------------------------------
+
+    @property
+    def session(self) -> OpcUaBrowseSession | None:
+        """The open session, or `None`. The dialog owns it while it is open."""
+        return self._session
+
+    def start_connect(self) -> None:
+        """Open a session with the chosen security, and browse it."""
+        endpoint = self.endpoint_edit.text().strip()
+        if not endpoint or self._connecting is not None:
+            return
+
+        self.close_session()
+        self.connect_button.setEnabled(False)
+        self.status_label.setText(self.tr("Connecting to {0}…").format(endpoint))
+
+        session = OpcUaBrowseSession(endpoint, self.credentials())
+        thread = _ConnectThread(session, self)
+        thread.succeeded.connect(self.show_connected)
+        thread.failed.connect(self.show_connect_failure)
+        thread.finished.connect(self._on_connect_finished)
+        self._connecting = thread
+        thread.start()
+
+    def show_connected(self, session: object) -> None:
+        """A session is up: show its tree and its log."""
+        if not isinstance(session, OpcUaBrowseSession):
+            return
+        self._session = session
+        self.status_label.setText(self.tr("Connected: {0}").format(self.credentials().describe()))
+        self.address_label.setText(self.tr("Open a folder to read what is in it"))
+        self.browse_tree.set_session(session)
+        self.show_diagnostics(session.diagnostics)
+        self.tabs.setCurrentIndex(1)
+
+    def show_connect_failure(self, message: str, diagnostics: object) -> None:
+        """Report a connection that did not happen, and show why.
+
+        The Diagnostics tab is raised rather than merely filled: the answer is
+        there, and a failure that leaves the user looking at the same form they
+        just submitted tells them nothing.
+        """
+        self.status_label.setText(self.tr("Could not connect: {0}").format(message))
+        if isinstance(diagnostics, DiagnosticLog):
+            self.show_diagnostics(diagnostics)
+        self.tabs.setCurrentIndex(2)
+
+    def show_diagnostics(self, diagnostics: DiagnosticLog) -> None:
+        """Render a log. Public so a test, or the window's own Diagnostics entry,
+        can show one without a dialog having produced it."""
+        self.diagnostics_list.clear()
+        for entry in diagnostics.entries:
+            self.diagnostics_list.addItem(entry.describe())
+
+    def _on_connect_finished(self) -> None:
+        self._connecting = None
+        self.connect_button.setEnabled(True)
+
+    def _on_browse_failed(self, message: str) -> None:
+        self.address_label.setText(self.tr("Could not read that folder: {0}").format(message))
+
+    def close_session(self) -> None:
+        """Let go of the session. Idempotent."""
+        self.browse_tree.set_session(None)
+        session = self._session
+        self._session = None
+        if session is not None:
+            session.close()
+
+    def done(self, result: int) -> None:
+        """Qt's own close path, whichever button was pressed.
+
+        The session is closed here rather than in `accept`: Cancel, Escape and
+        the window button all arrive here, and a session left open would hold a
+        server's resources for as long as the application ran.
+        """
+        self.close_session()
+        super().done(result)
 
 
 class AssignTagDialog(QDialog):
     """Pick the node one variable reads from, and its unit conversion.
 
     The node id can be typed — a server that cannot be reached right now should
-    not stop the assignment — but the list is the point: a NodeId read off
+    not stop the assignment — but the tree is the point: a NodeId read off
     someone else's screen is how the wrong tag gets bound.
     """
 
@@ -163,13 +528,16 @@ class AssignTagDialog(QDialog):
         variable: str,
         endpoint: str,
         current: VariableTag | None = None,
+        credentials: Credentials | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Assign a Tag to {0}").format(variable))
         self.setModal(True)
         self._endpoint = endpoint
-        self._thread: _BrowseThread | None = None
+        self._credentials = credentials or Credentials()
+        self._session: OpcUaBrowseSession | None = None
+        self._connecting: _ConnectThread | None = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_browse_group())
@@ -199,20 +567,11 @@ class AssignTagDialog(QDialog):
         row.addStretch(1)
         inner.addLayout(row)
 
-        self.node_tree = QTreeWidget(group)
-        self.node_tree.setHeaderLabels(
-            [self.tr("Where"), self.tr("Node id"), self.tr("Type"), self.tr("Way")]
-        )
-        self.node_tree.setRootIsDecorated(False)
-        self.node_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
-        self.node_tree.setMinimumSize(520, 220)
-        header = self.node_tree.header()
-        header.setStretchLastSection(False)
-        for column in range(_BROWSE_COLUMNS):
-            header.setSectionResizeMode(column, header.ResizeMode.Interactive)
-        for column, width in enumerate((190, 200, 70, 60)):
-            self.node_tree.setColumnWidth(column, width)
-        self.node_tree.itemSelectionChanged.connect(self._on_node_selected)
+        self.node_tree = OpcUaBrowseTree(group)
+        self.node_tree.require_numeric()
+        self.node_tree.node_selected.connect(self._on_node_selected)
+        self.node_tree.node_activated.connect(self._on_node_activated)
+        self.node_tree.failed.connect(self.show_failure)
         inner.addWidget(self.node_tree)
         return group
 
@@ -245,42 +604,32 @@ class AssignTagDialog(QDialog):
     # -- browsing -----------------------------------------------------------
 
     def start_browse(self) -> None:
-        """Ask the server what it has. Does not block the window."""
-        if self._thread is not None:
+        """Open a session and show the address space. Does not block."""
+        if self._connecting is not None:
             return
         self.browse_button.setEnabled(False)
-        self.status_label.setText(self.tr("Browsing {0}…").format(self._endpoint))
+        self.status_label.setText(self.tr("Connecting to {0}…").format(self._endpoint))
 
-        thread = _BrowseThread(self._endpoint, self)
-        thread.succeeded.connect(self.show_nodes)
-        thread.failed.connect(self.show_failure)
+        session = OpcUaBrowseSession(self._endpoint, self._credentials)
+        thread = _ConnectThread(session, self)
+        thread.succeeded.connect(self.show_session)
+        thread.failed.connect(self._on_connect_failed)
         thread.finished.connect(self._on_browse_finished)
-        self._thread = thread
+        self._connecting = thread
         thread.start()
 
-    def show_nodes(self, nodes: object) -> None:
-        """Fill the list. Public so a test can supply nodes without a server."""
-        found = tuple(nodes) if isinstance(nodes, (list, tuple)) else ()
-        self.node_tree.clear()
-        for node in found:
-            if not isinstance(node, OpcUaNode):
-                continue
-            item = QTreeWidgetItem(
-                [
-                    node.browse_path,
-                    node.node_id,
-                    node.data_type,
-                    self.tr("read/write") if node.is_writable else self.tr("read"),
-                ]
-            )
-            if not node.is_numeric:
-                # Greyed rather than hidden: it is obvious then that the tag was
-                # found and rejected, not that it is missing.
-                item.setDisabled(True)
-                item.setToolTip(0, self.tr("Not a number - nothing here can use it"))
-            self.node_tree.addTopLevelItem(item)
+    def _on_connect_failed(self, message: str, _diagnostics: object) -> None:
+        """The log is not shown here: this dialog assigns a tag, and the place to
+        read a failed attempt is `Communication → Diagnostics…`."""
+        self.show_failure(message)
 
-        self.status_label.setText(self.tr("{0} variables found").format(len(found)))
+    def show_session(self, session: object) -> None:
+        """Show an open session's tree. Public so a test can supply one."""
+        if not isinstance(session, OpcUaBrowseSession):
+            return
+        self._session = session
+        self.node_tree.set_session(session)
+        self.status_label.setText(self.tr("Open a folder to read what is in it"))
 
     def show_failure(self, message: str) -> None:
         """Report a browse that did not happen, in the dialog rather than a modal
@@ -288,14 +637,23 @@ class AssignTagDialog(QDialog):
         self.status_label.setText(self.tr("Could not browse: {0}").format(message))
 
     def _on_browse_finished(self) -> None:
-        self._thread = None
+        self._connecting = None
         self.browse_button.setEnabled(True)
 
-    def _on_node_selected(self) -> None:
-        """Picking from the list fills the field, which stays editable."""
-        items = self.node_tree.selectedItems()
-        if items:
-            self.node_edit.setText(items[0].text(1))
+    def _on_node_selected(self, node: object) -> None:
+        """Picking in the tree fills the field, which stays editable.
+
+        Only a variable: selecting a folder is navigation, and letting it
+        overwrite a node id already typed would lose it on the way past.
+        """
+        if isinstance(node, BrowseNode) and node.is_variable:
+            self.node_edit.setText(node.node_id)
+
+    def _on_node_activated(self, node: object) -> None:
+        """A double-click on a variable is "that one, done"."""
+        if isinstance(node, BrowseNode) and node.is_variable:
+            self.node_edit.setText(node.node_id)
+            self.accept()
 
     # -- values -------------------------------------------------------------
 
@@ -314,3 +672,84 @@ class AssignTagDialog(QDialog):
             scale=self.scale_spin.value(),
             offset=self.offset_spin.value(),
         )
+
+    def done(self, result: int) -> None:
+        """Close the session however the dialog is dismissed."""
+        self.node_tree.set_session(None)
+        session = self._session
+        self._session = None
+        if session is not None:
+            session.close()
+        super().done(result)
+
+
+class DiagnosticsDialog(QDialog):
+    """The last connection attempt, line by line.
+
+    Its own dialog because the question it answers — "why am I not connected" —
+    comes up long after the connection dialog was closed, and reopening that one
+    to read a log would start by offering to connect again.
+    """
+
+    def __init__(self, diagnostics: DiagnosticLog, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(self.tr("OPC UA Diagnostics"))
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        self.entry_list = QListWidget(self)
+        self.entry_list.setAlternatingRowColors(True)
+        self.entry_list.setMinimumSize(620, 240)
+        layout.addWidget(self.entry_list)
+
+        self.summary_label = QLabel(self)
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.show_diagnostics(diagnostics)
+
+    def show_diagnostics(self, diagnostics: DiagnosticLog) -> None:
+        """Render a log, and say in one line what it amounts to."""
+        self.entry_list.clear()
+        for entry in diagnostics.entries:
+            self.entry_list.addItem(entry.describe())
+
+        failure = diagnostics.last_failure
+        if not diagnostics.entries:
+            self.summary_label.setText(self.tr("Nothing has been attempted yet"))
+        elif failure is None:
+            self.summary_label.setText(self.tr("Nothing failed"))
+        else:
+            self.summary_label.setText(
+                self.tr("Stopped at {0}: {1}").format(
+                    failure.step.value, failure.status_code or failure.detail
+                )
+            )
+
+
+def _offer_item(offer: EndpointOffer) -> QTreeWidgetItem:
+    """One row of what the server offers."""
+    item = QTreeWidgetItem(
+        [
+            offer.policy_name,
+            offer.mode.value,
+            str(offer.security_level),
+            ", ".join(token.value for token in offer.token_types),
+        ]
+    )
+    item.setTextAlignment(2, Qt.AlignmentFlag.AlignRight)
+    if offer.policy_name == POLICY_NONE:
+        item.setToolTip(0, "No security: the traffic is readable by anything on the network")
+    return item
+
+
+def _as_tuple(value: object) -> tuple[object, ...]:
+    """Whatever came over a signal, as a tuple. A `Signal(object)` carries lists
+    and tuples alike, and neither is worth a branch at every call site."""
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return ()

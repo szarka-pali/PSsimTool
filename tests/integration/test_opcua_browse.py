@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 
 import pytest
 
 from pssim.domain.errors import DataSourceError
+from pssim.io._ready import wait_for_endpoint
 from pssim.io.mock_server import MockSecurity, run_mock_server
 from pssim.io.opcua_browse_session import OBJECTS_NODE_ID, OpcUaBrowseSession
 from pssim.io.opcua_security import Credentials, SecurityMode, TokenType
@@ -53,7 +53,9 @@ class SecureMockServer:
 
     def __enter__(self) -> SecureMockServer:
         self._thread.start()
-        time.sleep(2.0)  # the endpoint has to be open before a client asks
+        # Asked rather than slept for: a fixed wait is either longer than
+        # the server needs or shorter than it on a slow machine.
+        assert wait_for_endpoint(self.endpoint), f"no server on {self.endpoint}"
         return self
 
     def __exit__(self, *_: object) -> None:

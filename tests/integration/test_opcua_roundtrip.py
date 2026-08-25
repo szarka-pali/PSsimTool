@@ -13,6 +13,7 @@ import pytest
 
 from pssim.config.binding import BindingDirection, JointBinding, VariableBinding
 from pssim.domain.errors import DataSourceError
+from pssim.io._ready import wait_for_endpoint
 from pssim.io.base import SourceStatus
 from pssim.io.mock_server import (
     DEFAULT_AXES,
@@ -50,7 +51,9 @@ class MockServerThread:
 
     def __enter__(self) -> MockServerThread:
         self._thread.start()
-        time.sleep(1.5)  # the server needs time to open the endpoint
+        # Asked rather than slept for: a fixed wait is either longer than
+        # the server needs or shorter than it on a slow machine.
+        assert wait_for_endpoint(self.endpoint), f"no server on {self.endpoint}"
         return self
 
     def __exit__(self, *_: object) -> None:

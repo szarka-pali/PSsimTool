@@ -28,6 +28,7 @@ from pssim.config.binding import (
 from pssim.domain.errors import DataSourceError
 from pssim.io.base import SourceStatus
 from pssim.io.opcua_diagnostics import DiagnosticLog, DiagnosticStep
+from pssim.io.opcua_path import is_numeric_value, parse_path, resolve_value
 from pssim.io.opcua_security import Credentials, configure
 from pssim.io.store import StateStore
 from pssim.io.timebase import Timebase
@@ -93,9 +94,13 @@ class OpcUaSource:
         # Thread A signals through a threading.Event, thread B waits on an
         # asyncio.Event. The bridge between them is `call_soon_threadsafe` in `stop()`.
         self._async_stop: asyncio.Event | None = None
-        self._node_to_binding = {
-            b.node_id: b for b in config.bindings if b.direction is BindingDirection.READ
-        }
+        # A **list** per node, not one binding: `Position.X` and `Position.Y`
+        # are two signals reading two places in one notification, so a dict
+        # keyed by node id would silently keep only the last of them.
+        self._node_to_bindings: dict[str, list[SignalBinding]] = {}
+        for binding in config.bindings:
+            if binding.direction is BindingDirection.READ:
+                self._node_to_bindings.setdefault(binding.node_id, []).append(binding)
         self._outputs = {
             b.signal: b for b in config.bindings if b.direction is BindingDirection.WRITE
         }
@@ -256,6 +261,7 @@ class OpcUaSource:
             self._diagnostics.failed(DiagnosticStep.SESSION, exc)
             raise
         self._diagnostics.ok(DiagnosticStep.SESSION, self._config.endpoint)
+        await self._load_structures(client)
 
         try:
             await self._hold_subscription(client)
@@ -266,6 +272,34 @@ class OpcUaSource:
             raise
         finally:
             await client.disconnect()
+
+    async def _load_structures(self, client: Any) -> None:
+        """Teach the client the server's own struct types, when one is read.
+
+        Without this a struct arrives as an `ExtensionObject` of undecoded bytes
+        and no path can be resolved out of it; with it, asyncua generates a
+        dataclass per type and a notification carries the decoded object, nested
+        structs included. Verified against a live server — a subscription
+        delivers it decoded, not only a read.
+
+        Called only when some binding actually has a path. It is a round trip and
+        a code generation, and every setup that reads plain scalars — which is
+        every setup that existed before this — should not start paying for it.
+
+        A failure is logged and carried past. A server whose type dictionary
+        cannot be read is still a server whose scalars can be subscribed to, and
+        the paths that then fail to resolve fail one signal at a time.
+        """
+        if not any(binding.path for binding in self._config.bindings):
+            return
+        try:
+            await client.load_data_type_definitions()
+        except Exception as exc:
+            logger.warning(
+                "could not load the server's structure definitions",
+                endpoint=self._config.endpoint,
+                error=str(exc),
+            )
 
     async def _apply_credentials(self, client: Any, credentials: Credentials) -> None:
         """Security and authentication onto the client, recorded either way.
@@ -290,7 +324,7 @@ class OpcUaSource:
             period=self._config.publishing_interval_ms,
             handler=_SubscriptionHandler(self),
         )
-        nodes = [client.get_node(node_id) for node_id in self._node_to_binding]
+        nodes = [client.get_node(node_id) for node_id in self._node_to_bindings]
         await subscription.subscribe_data_change(nodes, queuesize=_QUEUE_SIZE)
 
         # The server may revise the interval - TwinCAT, for instance, ties it
@@ -369,17 +403,12 @@ class OpcUaSource:
 
         Public deliberately: it is the contract between the source and its
         subscription handler.
-        """
-        binding = self._node_to_binding.get(node_id)
-        if binding is None:
-            return
 
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            logger.warning(
-                "signal is not numeric, ignoring",
-                node=node_id,
-                type=type(value).__name__,
-            )
+        One notification may feed several signals: a struct arrives whole, and
+        each binding takes its own field out of it.
+        """
+        bindings = self._node_to_bindings.get(node_id)
+        if not bindings:
             return
 
         if source_time is None:
@@ -388,9 +417,46 @@ class OpcUaSource:
         else:
             internal_time = self._timebase.to_internal(source_time, time.monotonic())
 
+        for binding in bindings:
+            self._store_one(binding, node_id, value, internal_time)
+
+    def _store_one(
+        self, binding: SignalBinding, node_id: str, value: Any, internal_time: float
+    ) -> None:
+        """Take one binding's number out of a notification and store it.
+
+        A path that does not fit the value costs **this signal** and nothing
+        else: the other fields of the same struct still arrive, and the
+        subscription stays up. A field the server renamed is a configuration
+        problem, not a reason to stop reading the machine.
+        """
+        try:
+            found = resolve_value(value, parse_path(binding.path))
+        except DataSourceError as exc:
+            # Warned once per notification would be a flood at 20 Hz; the store
+            # marking the signal stale is what the scene shows (R11).
+            logger.debug(
+                "a signal's path does not fit the value",
+                signal=binding.signal,
+                node=node_id,
+                path=binding.path,
+                error=str(exc),
+            )
+            return
+
+        if not is_numeric_value(found):
+            logger.warning(
+                "signal is not numeric, ignoring",
+                signal=binding.signal,
+                node=node_id,
+                path=binding.path,
+                type=type(found).__name__,
+            )
+            return
+
         self._store.put(
             signal=binding.signal,
-            value=binding.to_internal(float(value)),
+            value=binding.to_internal(float(found)),
             source_time_s=internal_time,
         )
 

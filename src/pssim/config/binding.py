@@ -44,6 +44,13 @@ class SignalBinding(Protocol):
     `signal` is the key the value is stored under, which is a joint's name for
     one kind of binding and a variable's for the other. Naming it once here is
     what lets `OpcUaSource` take both without a branch.
+
+    `path` is where inside the node's value the number is — `Position.X`,
+    `Limits[1]` — and empty for the node's own value, which is what every
+    binding written before structures existed means. It stays **text** here on
+    purpose: parsing and walking it is `io/opcua_path.py`, and `config/` may not
+    import `io/` (the layer test pins that). The boundary resolves it, in the one
+    place the scaling already happens (R8).
     """
 
     @property
@@ -51,6 +58,9 @@ class SignalBinding(Protocol):
 
     @property
     def node_id(self) -> str: ...
+
+    @property
+    def path(self) -> str: ...
 
     @property
     def direction(self) -> BindingDirection: ...
@@ -96,6 +106,10 @@ class JointBinding:
     node_id: str
     scale: float = 1.0
     offset: float = 0.0
+    path: str = ""
+    """Where inside the node's value to read, for a node holding a structure or
+    an array. Empty means the value itself — which is what every machine
+    definition written before this said, so nothing existing has to change."""
 
     @property
     def signal(self) -> str:
@@ -136,6 +150,8 @@ class VariableBinding:
     scale: float = 1.0
     offset: float = 0.0
     direction: BindingDirection = BindingDirection.READ
+    path: str = ""
+    """Where inside the node's value to read or write. See `JointBinding.path`."""
 
     @property
     def signal(self) -> str:

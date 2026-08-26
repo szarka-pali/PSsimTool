@@ -233,7 +233,7 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_connection_indicator()
         self._connection.status_changed.connect(self._on_connection_status)
-        self._connection.values_changed.connect(self._refresh_variables_view)
+        self._connection.values_changed.connect(self._on_values_changed)
         self._update_actions()
         self.refresh_variables()
         self.restore_view_settings()
@@ -1501,9 +1501,53 @@ class MainWindow(QMainWindow):
                 )
         return tuple(sources)
 
+    def _on_values_changed(self) -> None:
+        """New values arrived. Move what they drive, then redraw the table.
+
+        In that order, and this is the whole point of reading them: a value in
+        the registry that the scene does not follow is a number in a table.
+        """
+        self._drive_joints_from_variables()
+        self._refresh_variables_view()
+
     def _refresh_variables_view(self) -> None:
         self.variable_tree.refresh(self._variables)
         self._update_actions()
+
+    def _drive_joints_from_variables(self) -> None:
+        """Move every joint whose variable has a value it is allowed to follow.
+
+        The sensors are re-read **once** at the end rather than per joint: every
+        sensor is evaluated against every model (R16), and doing that per axis on
+        every notification is the same work several times over.
+        """
+        moved = False
+        for entry in self._variables:
+            if entry.direction is not BindingDirection.READ or entry.value is None:
+                continue
+            joint_id = self._joint_id_for_variable(entry.name)
+            if joint_id is None:
+                # A sensor's variable, or one whose joint was renamed since. It
+                # still arrives and is still shown; there is nothing to drive.
+                continue
+            self._set_joint_value(joint_id, entry.value)
+            moved = True
+
+        if moved:
+            self.refresh_sensor_readings()
+
+    def _joint_id_for_variable(self, variable: str) -> str | None:
+        """The joint this variable drives, or `None` when no joint claims it.
+
+        Searched rather than indexed: a scene has a handful of joints, and an
+        index would have to be rebuilt everywhere a joint is added, renamed or
+        removed — the one that got forgotten would leave an axis not following
+        its own variable, which is exactly the fault this method exists to fix.
+        """
+        for entry in self._joints:
+            if entry.joint.variable == variable:
+                return entry.joint_id
+        return None
 
     # -- the connection ---------------------------------------------------------
 
@@ -2266,6 +2310,16 @@ class MainWindow(QMainWindow):
         raised the edit — it gets the same number back, so that is a no-op, and
         not having to know the source keeps this to one code path.
         """
+        self._set_joint_value(joint_id, value)
+        self.refresh_sensor_readings()
+
+    def _set_joint_value(self, joint_id: str, value: float) -> None:
+        """Everything `apply_joint_value` does except re-reading the sensors.
+
+        Split out for the one caller that moves several joints at once: the
+        sensors are evaluated against every model, so once at the end beats once
+        per axis on every notification from the PLC.
+        """
         self._joints.set_value(joint_id, value)
 
         set_joint_value = getattr(self._viewport, "set_joint_value", None)
@@ -2275,8 +2329,6 @@ class MainWindow(QMainWindow):
         self.properties_panel.set_joint_value_silently(joint_id, value)
         if self._values_panel is not None:
             self._values_panel.set_value_silently(joint_id, value)
-
-        self.refresh_sensor_readings()
 
     def apply_joint_definition(self, joint_id: str, joint: ModelJoint) -> None:
         """Store an axis or trajectory edited in the properties panel. Qt slot.

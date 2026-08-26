@@ -685,6 +685,50 @@ Four decisions in that path:
   and it is a fault in the value rather than in the connection, so the Status column
   stays uncoloured.
 
+**A tag states decimal places, not a scale.** The conversion used to be a single
+`scale` the user worked out and typed, and that is what
+`machines/example.yaml`'s `scale: 1.7453292519943296e-05` is — `pi/180/1000`, with a
+comment to explain it. Nobody gets that right twice. So a tag says the two things a
+PLC programmer already knows:
+
+```
+PLC number  →  ÷ 10^decimals  →  + offset  →  mm or degrees  →  × MM_TO_M or DEG_TO_RAD
+```
+
+- `decimals` is `0` for a `REAL` or `FLOAT`, which is then **1:1**: `354.21` means
+  354.21 mm of travel or 354.21° of rotation. `1` makes an `INT`'s `652` read `65.2`.
+  It is a count of the implied decimal places an integer carries, which is how a PLC
+  holds a fractional position.
+- `offset` is in **that same unit** — millimetres or degrees, never metres or
+  radians. Every number typed for a tag is now in the PLC's own units, and an offset
+  in metres beside a value in millimetres is precisely the inconsistency being
+  removed. It is a zero point: `-100` where the PLC reads 100 and the machine is at
+  zero.
+- **Which of mm or degrees is decided by the joint**, not typed.
+  `domain.model_joints.value_scale` had already answered this for the limits and for
+  a hand-typed value; the PLC path was the only one that made the user answer it.
+  That is what lets the same `354.21` be a distance on a rail and an angle on a
+  rotary head without the tag knowing which it drives.
+
+Three consequences, all deliberate:
+
+- **A variable with no joint converts by nothing.** A sensor's travels the other way
+  and reports metres or counts (R16); there is no kind to ask, so `unit_scale` is
+  `1.0` and the value passes through, which is what it did before.
+- **A stored `scale` is dropped, loudly.** It existed only to express what is now
+  automatic, so honouring it would convert twice and put a model a thousand times
+  off. A warning naming the node is better than a silently wrong scene, and the
+  decimal places have to be looked at once either way.
+- **`machines/*.yaml` keeps its single `scale`.** `SignalSpec` and `JointBinding` are
+  unchanged, because that format is versioned and every existing definition has to go
+  on loading. So the two routes state the same thing differently, which is a real
+  cost; bringing the nicer form over needs its own migration and is not this change.
+
+The dialog shows one worked line — *The PLC's 652 becomes 65.2 mm* — recomputed as
+the fields change. A wrong decimal place is invisible in a spin box and unmissable in
+that sentence, and this is the one setting in the application whose mistake is a
+model quietly standing somewhere else.
+
 **Applying a value is a switch per variable** (the `Apply` column, on by default).
 Cleared, the value goes on arriving and being shown and stops moving the model —
 which is how a scene is posed by hand while the PLC is connected, and it is what the
@@ -931,4 +975,5 @@ of draw calls if approached naively. So when building the scene:
 | Several machines in one scene  | the data model allows it, the scene builder does not yet           |
 | OPC UA certificate validation  | the server's certificate is trusted on first use (R20)            |
 | A struct path in `machines/*.yaml` | the tag route is complete; the versioned format is not (R21)   |
+| Decimal places in `machines/*.yaml` | a tag states them; the YAML still wants a raw scale (R19)     |
 | Packaging                      | `setup_dist.py` does not exist; `pssim write-icon` is what it needs |

@@ -954,6 +954,17 @@ class MainWindow(QMainWindow):
             if self._sensors.set_reading(entry.sensor_id, reading):
                 changed = True
 
+        # **Before** the early return below, and that is the whole point: this
+        # used to sit under it, so a reading that had not moved since the last
+        # frame was never offered - and a machine standing still is exactly when
+        # nothing moves. Connecting and then leaving the scene alone wrote
+        # nothing at all.
+        #
+        # It costs nothing to do every time: the outbox is a dict keyed by
+        # signal (R19), so a value offered on every frame is written once.
+        if self.publish_sensor_readings():
+            self._refresh_variables_view()
+
         if not changed:
             return
 
@@ -964,16 +975,21 @@ class MainWindow(QMainWindow):
         if shown is not None:
             self.properties_panel.set_sensor_reading_silently(shown)
 
-        # Offered to the connection, not sent: whether anything leaves this
-        # process is the source's decision, and only when writing was allowed.
+    def publish_sensor_readings(self) -> bool:
+        """Offer every bound sensor's reading. Returns whether a row now reads
+        differently.
+
+        Offered to the connection, not sent: whether anything leaves this process
+        is the source's decision, and only when writing was deliberately allowed
+        (R19).
+        """
         published = False
         for entry in self._sensors:
             if entry.sensor.variable and self._connection.publish(
                 entry.sensor.variable, entry.reading.value
             ):
                 published = True
-        if published:
-            self._refresh_variables_view()
+        return published
 
     # -- restoring the joints -----------------------------------------------
 
@@ -1673,6 +1689,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(refusal)
             self._update_actions()
             return False
+        self.on_connected()
 
         self.statusBar().showMessage(
             self.tr("Connecting to {0}…").format(self._connection_settings.endpoint)
@@ -1685,6 +1702,26 @@ class MainWindow(QMainWindow):
         self._connection.disconnect_from_server()
         self.statusBar().showMessage(self.tr("Disconnected"))
         self._update_actions()
+
+    def on_connected(self) -> None:
+        """Offer everything the scene currently holds, once, on connecting.
+
+        A value's being unchanged since the last frame is not a reason for the
+        server never to hear it: a machine standing still is exactly when nothing
+        changes, and until this the first write waited for something to move.
+        Whether any of it leaves the process is still the source's decision and
+        still only when writing was allowed (R19).
+        """
+        # Re-read the scene first: the registry holds whatever the last
+        # evaluation produced, and a scene just loaded has not had one.
+        self.refresh_sensor_readings()
+        # Again, in case that bailed - it needs a viewport that answers, and
+        # there is no reason for a connection to depend on one. Offering twice
+        # costs nothing: the outbox is a dict keyed by signal (R19).
+        published = self.publish_sensor_readings()
+        published = self.publish_joint_values() or published
+        if published:
+            self._refresh_variables_view()
 
     def _on_connection_status(self, status: object) -> None:
         """The controller's status changed. Only the actions follow it — a status

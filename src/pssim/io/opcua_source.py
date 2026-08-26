@@ -30,6 +30,7 @@ from pssim.io.base import SourceStatus
 from pssim.io.opcua_diagnostics import DiagnosticLog, DiagnosticStep
 from pssim.io.opcua_path import is_numeric_value, parse_path, resolve_value
 from pssim.io.opcua_security import Credentials, configure
+from pssim.io.opcua_values import FALLBACK_TYPE, coerce_for, is_writable_type
 from pssim.io.store import StateStore
 from pssim.io.timebase import Timebase
 from pssim.observability import get_logger
@@ -106,6 +107,9 @@ class OpcUaSource:
         }
         self._revised_interval_ms: int | None = None
         self._diagnostics = DiagnosticLog()
+        # Each output node's variant type, read from the server once a session.
+        # Empty until then, and `FALLBACK_TYPE` stands in for anything missing.
+        self._write_types: dict[str, str] = {}
 
     # -- DataSource ---------------------------------------------------------
 
@@ -262,6 +266,7 @@ class OpcUaSource:
             raise
         self._diagnostics.ok(DiagnosticStep.SESSION, self._config.endpoint)
         await self._load_structures(client)
+        await self._read_write_types(client)
 
         try:
             await self._hold_subscription(client)
@@ -300,6 +305,45 @@ class OpcUaSource:
                 endpoint=self._config.endpoint,
                 error=str(exc),
             )
+
+    async def _read_write_types(self, client: Any) -> None:
+        """Ask each output node what type it holds, once per session.
+
+        The server is the authority on this and nothing else is: a node id typed
+        by hand carries no type, and one picked from the browser may have been
+        changed on the PLC since. One read per output at connect time, and every
+        setup here has a handful of them.
+
+        A node that will not say is left out and written as `Double`, which is
+        what the path did unconditionally before this — an unreadable type must
+        not turn a working configuration into a failing one.
+        """
+        if not self._config.allow_writing or not self._outputs:
+            return
+        for signal, binding in self._outputs.items():
+            try:
+                name = (
+                    await client.get_node(binding.node_id).read_data_type_as_variant_type()
+                ).name
+            except Exception as exc:
+                logger.warning(
+                    "could not read an output node's type, writing it as a float",
+                    signal=signal,
+                    node=binding.node_id,
+                    error=str(exc),
+                )
+                continue
+            if not is_writable_type(name):
+                # A String or a DateTime node: a number written there means
+                # nothing, and refusing beats guessing.
+                logger.warning(
+                    "an output node holds something a number cannot drive",
+                    signal=signal,
+                    node=binding.node_id,
+                    type=name,
+                )
+                continue
+            self._write_types[signal] = name
 
     async def _apply_credentials(self, client: Any, credentials: Credentials) -> None:
         """Security and authentication onto the client, recorded either way.
@@ -382,8 +426,16 @@ class OpcUaSource:
                     # against `pssim mock-server` that both work on a Double
                     # node, but a bare float only because the node already held
                     # one — this states the type instead of inheriting it.
+                    #
+                    # And **the node's own type**, not Double for everything: a
+                    # 0/1 sensor bound to a Boolean, which is what a PLC
+                    # programmer would use for one, was refused by the server.
+                    type_name = self._write_types.get(signal, FALLBACK_TYPE)
                     await client.get_node(binding.node_id).write_value(
-                        ua.Variant(binding.to_plc(value), ua.VariantType.Double)
+                        ua.Variant(
+                            coerce_for(binding.to_plc(value), type_name),
+                            getattr(ua.VariantType, type_name, ua.VariantType.Double),
+                        )
                     )
                 except asyncio.CancelledError:
                     raise

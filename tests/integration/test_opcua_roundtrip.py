@@ -167,19 +167,25 @@ class TestResilience:
         assert source.status is SourceStatus.DISCONNECTED
 
 
-async def read_node(endpoint: str, node_id: str) -> float:
-    """One value straight from the server, for checking what a write landed as."""
+async def read_node(endpoint: str, node_id: str) -> object:
+    """One value straight from the server, for checking what a write landed as.
+
+    Returned as it came rather than as a float: a `Boolean` node has to be seen
+    to be a `bool`, which is the whole point of asking the node its type before
+    writing to it.
+    """
     from asyncua import Client
 
     async with Client(url=endpoint) as client:
-        return float(await client.get_node(node_id).read_value())
+        return await client.get_node(node_id).read_value()
 
 
-def value_of(endpoint: str, node_id: str) -> float:
+def value_of(endpoint: str, node_id: str) -> object:
     return asyncio.run(read_node(endpoint, node_id))
 
 
 OUTPUT_NODE = f"ns={NAMESPACE_INDEX};s=Sim.Sensor1"
+FLAG_NODE = f"ns={NAMESPACE_INDEX};s=Sim.Flag1"
 
 
 class TestWriting:
@@ -264,6 +270,59 @@ class TestWriting:
                 assert wait_until(
                     lambda: value_of(server.endpoint, OUTPUT_NODE) == pytest.approx(1250.0)
                 )
+            finally:
+                source.stop()
+
+    def test_a_boolean_node_is_written_as_a_boolean(self) -> None:
+        # What a PLC programmer uses for a 0/1 sensor, and what the path refused
+        # while it stated `Double` for every node.
+        with MockServerThread() as server:
+            source = OpcUaSource(
+                OpcUaConfig(
+                    endpoint=server.endpoint,
+                    allow_writing=True,
+                    bindings=(
+                        VariableBinding(
+                            variable="gate",
+                            node_id=FLAG_NODE,
+                            direction=BindingDirection.WRITE,
+                        ),
+                    ),
+                )
+            )
+            source.start()
+            try:
+                assert wait_until(lambda: source.status is SourceStatus.CONNECTED)
+                source.store.queue_write("gate", 1.0)
+
+                assert wait_until(lambda: value_of(server.endpoint, FLAG_NODE) is True)
+            finally:
+                source.stop()
+
+    def test_and_cleared_again(self) -> None:
+        with MockServerThread() as server:
+            source = OpcUaSource(
+                OpcUaConfig(
+                    endpoint=server.endpoint,
+                    allow_writing=True,
+                    bindings=(
+                        VariableBinding(
+                            variable="gate",
+                            node_id=FLAG_NODE,
+                            direction=BindingDirection.WRITE,
+                        ),
+                    ),
+                )
+            )
+            source.start()
+            try:
+                assert wait_until(lambda: source.status is SourceStatus.CONNECTED)
+                source.store.queue_write("gate", 1.0)
+                assert wait_until(lambda: value_of(server.endpoint, FLAG_NODE) is True)
+
+                source.store.queue_write("gate", 0.0)
+
+                assert wait_until(lambda: value_of(server.endpoint, FLAG_NODE) is False)
             finally:
                 source.stop()
 

@@ -93,6 +93,12 @@ OPEN: Final = MockSecurity()
 #: allowed to write to (see `.claude/rules/io-opcua.md`).
 DEFAULT_OUTPUTS: Final = ("Sim.Sensor1", "Sim.Sensor2")
 
+#: Writable **Boolean** nodes, which is what a PLC programmer uses for a 0/1
+#: sensor. Separate from the doubles above because the type is the whole point:
+#: the write path used to state `Double` for every node, and one of these refused
+#: it.
+DEFAULT_FLAGS: Final = ("Sim.Flag1",)
+
 
 #: Axes matching `machines/example.yaml`. Values in mm and in thousandths of a degree,
 #: that is, exactly as a servo typically sends them.
@@ -131,6 +137,7 @@ async def run_mock_server(
     update_interval_s: float = 0.05,
     duration_s: float | None = None,
     outputs: tuple[str, ...] = DEFAULT_OUTPUTS,
+    flags: tuple[str, ...] = DEFAULT_FLAGS,
     security: MockSecurity = OPEN,
     stop_event: threading.Event | None = None,
     with_structs: bool = True,
@@ -189,11 +196,16 @@ async def run_mock_server(
 
     structs = await _add_structs(server, namespace_index, axes) if with_structs else None
 
+    flag_ids = [f"ns={namespace_index};s={name}" for name in flags]
+    for name, node_id in zip(flags, flag_ids, strict=True):
+        node = await output_folder.add_variable(node_id, name, False, ua.VariantType.Boolean)
+        await node.set_writable(True)
+
     logger.info(
         "mock server running",
         endpoint=endpoint,
         nodes=node_ids,
-        writable=output_ids,
+        writable=output_ids + flag_ids,
         structs=list(DEFAULT_STRUCTS) if structs is not None else [],
     )
 

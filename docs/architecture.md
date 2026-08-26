@@ -801,7 +801,10 @@ The rest of the decisions:
   enforcement rather than a convention: there is nowhere for it to be written by accident. It is
   typed once per session and held in `MainWindow`, or comes from `PSSIM_OPCUA_PASSWORD` for an
   unattended run. QSettings is a plain-text INI. The user *name* is remembered, because a
-  machine does not change its mind between mornings.
+  machine does not change its mind between mornings. Storing it in the OS
+  credential store — `keyring`, or DPAPI directly — was weighed and declined: it buys
+  convenience at the cost of a secret this application then owns, and typing it once a
+  morning is not the problem worth that.
 - **A stored policy is validated on the way in**, like every other setting (R18). A name this
   build cannot speak would otherwise fail inside `set_security`, with a message about asyncua
   rather than about the file it came out of.
@@ -952,6 +955,88 @@ own migration story, and validating it in `config/schema.py` would mean `config/
 importing `io/`, which `tests/unit/test_layer_boundaries.py` forbids. The tag route —
 which is what the address-space browser feeds — is complete.
 
+### R22 — A direction is chosen within what the node allows, and a browse is remembered
+
+Three things that all follow from the same place: the address space is expensive to
+walk and the server is the authority on what it holds.
+
+**What was read is kept** (`ui/browse_cache.BrowseCache`). Closing the connection
+dialog used to throw away every answer, so reopening it meant walking back down to
+where you were, one request per folder, against a PLC that may be across a plant
+network. The window owns the cache, so it outlives the dialog: a cached folder opens
+with no thread and no request, and the tree comes back where it was left.
+
+**In memory, for this run, written nowhere.** A saved address space is a stale one —
+the tag added on the PLC this morning would not be in it — and `Refresh` exists
+precisely because a server changes under you. Persisting it would turn a convenience
+into a source of wrong answers.
+
+**Two refreshes, because they answer different questions.** `Refresh Node` re-reads
+one place and keeps the rest; anything deeper stays cached until refreshed in turn.
+`Refresh All` forgets the server and walks it again from `Objects`. A single button
+would make the cheap case cost the expensive one.
+
+The cache is keyed by node id **and** path, because a struct's every field shares one
+node id (R21). `forget` drops a struct's fields along with the struct — they are stale
+the moment it is re-read — and compares parsed path steps rather than text, so
+`Position` does not take `PositionRaw` with it. A **truncated** answer is never kept:
+it is a partial picture, and serving it again from the cache would make the truncation
+permanent for the session without another request ever being made.
+
+One property the tests lean on: **a cache hit needs no event loop.** A hit fills the
+tree synchronously, a miss goes to a worker thread and has to be waited for. A hit
+that needed waiting would have stopped being one.
+
+**A variable's direction is chosen, not inferred.** A joint's was always read and a
+sensor's always written. A joint's is now the tag's choice — reading is the PLC saying
+where the machine is, writing is this application saying where its model is, which is
+what a hardware-in-the-loop setup wants. A write-bound joint is not driven by anything
+arriving; it offers its own value through the same guarded pump a sensor uses (R19).
+
+**The node bounds the choice.** `BrowseNode` reads `CurrentRead` off `UserAccessLevel`
+as well as `CurrentWrite`, and the dialog greys out what the node refuses and says
+which it is: a servo's actual position is read-only, a command word may be write-only,
+and offering the impossible one is how a binding gets made that the server then
+rejects. Picking a node that refuses the current choice moves the choice rather than
+leaving a tag that cannot work. A **struct field** is never writable — a write goes
+back as the whole struct or not at all — so a path forces reading.
+
+A sensor is not asked at all: its reading is something this application produces, so
+there is nothing arriving for it to read, and a pair of radios with one permanently
+unreachable is worse than none.
+
+`VariableTag.direction` is **`None` until chosen**, and that is not a nicety: a source
+whose own default is `WRITE` would otherwise be flipped to reading by any tag that had
+never been asked — including every tag stored before the field existed. The registry
+resolves it, keeping the sources for the purpose, because settings load before a
+project does (R18) and the tag is usually first.
+
+**A sensor's variable converts per kind**, the way a joint's does. The three families
+R16 already names each say what their number is:
+
+| kinds | unit |
+| --- | --- |
+| `BEAM`, `INDUCTIVE`, `PROXIMITY` | `0/1` — already 0 or 1, both ways |
+| `TOF`, `LASER_DISTANCE` | `mm` — metres inside, exactly a trajectory |
+| `ENCODER_INC`, `ENCODER_ABS` | `counts` — the count *is* the reading |
+
+A test pins that every kind is in exactly one family. A kind in none of them would
+convert by accident rather than by rule, which is what the next kind added would
+otherwise do.
+
+**And the write path asks the node what it is.** It stated `Double` for every node,
+verified against a `Double` node — so a 0/1 sensor bound to a `Boolean`, which is what
+a PLC programmer uses for one, was refused by the server, logged, and carried past,
+leaving the node unchanged. Each output node's type is read once a session; a node
+that will not say is written as `Double`, so an unreadable type cannot turn a working
+configuration into a failing one, and a `String` node is refused rather than handed a
+number that means nothing. `io/opcua_values.py` is the coercion, pure and keyed by the
+type's name, and an integer is **rounded** rather than truncated — `int(0.9)` is `0`,
+and a sensor 0.9999 of a count along would write a zero.
+
+The mock server grew `Sim.Flag1`, a writable `Boolean`, because none of that is
+testable otherwise.
+
 ## Performance
 
 A STEP assembly typically has hundreds to thousands of parts, which is an unaffordable number  
@@ -976,4 +1061,6 @@ of draw calls if approached naively. So when building the scene:
 | OPC UA certificate validation  | the server's certificate is trusted on first use (R20)            |
 | A struct path in `machines/*.yaml` | the tag route is complete; the versioned format is not (R21)   |
 | Decimal places in `machines/*.yaml` | a tag states them; the YAML still wants a raw scale (R19)     |
+| Storing the OPC UA password    | declined: typed per session or from the environment (R20)         |
+| Reading a sensor from the PLC  | a sensor writes only; the direction choice is a joint's (R22)     |
 | Packaging                      | `setup_dist.py` does not exist; `pssim write-icon` is what it needs |

@@ -102,6 +102,38 @@ class SensorReading:
     is_valid: bool = True
 
 
+#: The 0/1 kinds: they answer whether something is there, not how far.
+PRESENCE_KINDS: Final = frozenset({SensorKind.BEAM, SensorKind.INDUCTIVE, SensorKind.PROXIMITY})
+
+
+def reading_scale(kind: SensorKind) -> float:
+    """What multiplies a **PLC** number to get this kind's internal reading.
+
+    The mirror of `model_joints.value_scale`, and the same reason for existing: a
+    sensor's variable needs a unit and only its kind knows which.
+
+    - a 0/1 kind is already 0 or 1, on the wire and in here;
+    - a rangefinder measures in metres internally and a PLC states millimetres;
+    - an encoder reports **counts** both ways (R16), so there is nothing to
+      convert - the count is the reading.
+    """
+    return MM_TO_M if kind in DISTANCE_KINDS else 1.0
+
+
+def reading_unit(kind: SensorKind) -> str:
+    """What this kind's number is in, for a label beside a field.
+
+    Not translated, for the reason `model_joints.display_unit` is not: `mm` is a
+    symbol, and `counts` is what a servo's datasheet calls them in any language a
+    commissioning engineer reads one in.
+    """
+    if kind in DISTANCE_KINDS:
+        return "mm"
+    if kind in ENCODER_KINDS:
+        return "counts"
+    return "0/1"
+
+
 @dataclass(frozen=True, slots=True)
 class Sensor:
     """One sensor, in the frame of whatever it is mounted on.

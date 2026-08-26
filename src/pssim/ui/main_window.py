@@ -63,7 +63,7 @@ from pssim.domain.model_joints import (
     value_scale,
 )
 from pssim.domain.placement import IDENTITY_PLACEMENT
-from pssim.domain.sensors import Sensor, SensorKind
+from pssim.domain.sensors import Sensor, SensorKind, reading_scale, reading_unit
 from pssim.domain.units import MM_TO_M
 from pssim.observability import get_logger
 from pssim.ui.browse_cache import BrowseCache
@@ -1526,6 +1526,10 @@ class MainWindow(QMainWindow):
                         # application produces, so there is nothing arriving for
                         # it to read (R19).
                         is_direction_fixed=True,
+                        # Per kind, the way a joint's is per kind: millimetres
+                        # for a rangefinder, and nothing to convert for a 0/1
+                        # sensor or an encoder's counts (R16).
+                        unit_scale=reading_scale(sensor.sensor.kind),
                     )
                 )
         return tuple(sources)
@@ -1549,14 +1553,18 @@ class MainWindow(QMainWindow):
         return any(entry.sensor.variable == variable for entry in self._sensors)
 
     def _variable_unit(self, variable: str) -> str:
-        """`mm` or `°` — what the PLC's number means for this variable.
+        """What the PLC's number means for this variable.
 
-        Empty for one no joint claims: a sensor's variable has no joint kind to
-        ask (R16), and the dialog then says "units" rather than guessing.
+        `mm` or `°` from a joint's kind; `mm`, `counts` or `0/1` from a sensor's.
+        Empty for a name nothing claims, and the dialog then says "units" rather
+        than guessing.
         """
         for entry in self._joints:
             if entry.joint.variable == variable:
                 return display_unit(entry.joint.kind)
+        for sensor in self._sensors:
+            if sensor.sensor.variable == variable:
+                return reading_unit(sensor.sensor.kind)
         return ""
 
     def _refresh_variables_view(self) -> None:

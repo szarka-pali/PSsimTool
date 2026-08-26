@@ -201,6 +201,21 @@ def describe_tag_conversion(decimals: int, offset: float, unit: str) -> str:
     return _tr("The PLC's 652 becomes {0} {1}").format(f"{result:g}", unit)
 
 
+def describe_access(can_read: bool, can_write: bool) -> str:
+    """What the node's `UserAccessLevel` said, in the R/W/RW a PLC person reads.
+
+    Shown beside the direction radios so a greyed-out one is explained rather
+    than merely unavailable.
+    """
+    if can_read and can_write:
+        return _tr("the node is RW")
+    if can_write:
+        return _tr("the node is write-only")
+    if can_read:
+        return _tr("the node is read-only")
+    return _tr("the node allows neither")
+
+
 def describe_variable_state(entry: VariableEntry) -> str:
     """The Status column: where this variable stands with the server."""
     return _tr(_VARIABLE_STATES.get(entry.state, entry.state.value))

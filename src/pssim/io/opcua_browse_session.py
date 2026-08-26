@@ -95,6 +95,16 @@ class BrowseNode:
     drive a joint."""
 
     is_writable: bool = False
+    is_readable: bool = True
+    """What the server's `UserAccessLevel` says this session may do with it.
+
+    Both, because a variable may be bound in either direction and the node
+    decides which are possible: a servo's actual position is read-only, a
+    command word may be write-only. Readable defaults to `True` because that is
+    the ordinary case and because a node whose access could not be read at all
+    should not look forbidden.
+    """
+
     has_children: bool = False
     """Whether it is worth offering an expander. Answered by the server while its
     children are being listed, so opening a leaf costs nothing."""
@@ -716,6 +726,7 @@ async def _describe(node: Any) -> BrowseNode | None:
         kind=kind,
         data_type=details.data_type,
         is_writable=details.is_writable,
+        is_readable=details.is_readable,
         # An object may hold anything. A **variable** gets an expander when it is
         # a struct or an array: that is where the fields somebody wants are, and
         # it is also where a PLC that exposes its struct members as real child
@@ -742,6 +753,7 @@ class _Details:
     display: str = ""
     data_type: str = ""
     is_writable: bool = False
+    is_readable: bool = True
     is_container: bool = False
 
 
@@ -782,13 +794,12 @@ async def _variable_details(node: Any, kind: NodeKind, ua: Any) -> _Details:
 
     rank = rank_value.Value.Value
     is_array = rank is not None and rank != _SCALAR_RANK
-    is_writable = ua.AccessLevel.CurrentWrite in ua.AccessLevel.parse_bitfield(
-        access_value.Value.Value
-    )
+    access = ua.AccessLevel.parse_bitfield(access_value.Value.Value)
     return _Details(
         display=display,
         data_type=f"{variant}[]" if is_array else variant,
-        is_writable=is_writable,
+        is_writable=ua.AccessLevel.CurrentWrite in access,
+        is_readable=ua.AccessLevel.CurrentRead in access,
         # A struct arrives as an `ExtensionObject` and an array as a list.
         # Neither is a number, and both have something inside worth picking.
         is_container=is_array or variant == _EXTENSION_OBJECT,

@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pssim.config.binding import BindingDirection
 from pssim.io.opcua_browse_session import BrowseNode, OpcUaBrowseSession
 from pssim.io.opcua_diagnostics import DiagnosticLog
 from pssim.io.opcua_security import (
@@ -57,7 +58,7 @@ from pssim.io.opcua_security import (
 )
 from pssim.observability import get_logger
 from pssim.ui.browse_cache import BrowseCache
-from pssim.ui.labels import describe_tag_conversion
+from pssim.ui.labels import describe_access, describe_tag_conversion
 from pssim.ui.opcua_browse_tree import OpcUaBrowseTree
 from pssim.ui.settings import MAX_DECIMALS, ConnectionSettings, VariableTag
 
@@ -567,6 +568,7 @@ class AssignTagDialog(QDialog):
         credentials: Credentials | None = None,
         unit: str = "",
         cache: BrowseCache | None = None,
+        is_direction_fixed: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -577,6 +579,8 @@ class AssignTagDialog(QDialog):
         # Passed in because only the window knows which joint named the variable;
         # empty for a sensor's, which has no joint to ask (R16).
         self._unit = unit or self.tr("units")
+        # A sensor's variable has no direction to choose (R19).
+        self._direction_is_fixed = is_direction_fixed
         self._credentials = credentials or Credentials()
         self._session: OpcUaBrowseSession | None = None
         self._connecting: _ConnectThread | None = None
@@ -639,6 +643,8 @@ class AssignTagDialog(QDialog):
         )
         form.addRow(self.tr("Path:"), self.path_edit)
 
+        form.addRow(self.tr("Direction:"), self._build_direction_row(current))
+
         # Decimal places rather than a factor: a `REAL` is 1:1 and a `DINT`
         # has an implied decimal point, which is how a PLC programmer knows the
         # number. Working the unit conversion out by hand is what produced
@@ -674,6 +680,66 @@ class AssignTagDialog(QDialog):
         self.decimals_spin.valueChanged.connect(self._on_conversion_changed)
         self.offset_spin.valueChanged.connect(self._on_conversion_changed)
         return form
+
+    def _build_direction_row(self, current: VariableTag | None) -> QHBoxLayout:
+        """Read or write, and what the node will actually allow.
+
+        Offered at all only where the choice is the tag's to make: a sensor's
+        variable is always a write, because its reading is something this
+        application produces (R19), and a pair of radios with one of them
+        permanently unreachable is worse than no radios.
+        """
+        row = QHBoxLayout()
+        self.read_radio = QRadioButton(self.tr("Read from the server"), self)
+        self.read_radio.setToolTip(self.tr("The PLC says where the machine is"))
+        row.addWidget(self.read_radio)
+
+        self.write_radio = QRadioButton(self.tr("Write to the server"), self)
+        self.write_radio.setToolTip(
+            self.tr("This application says where its model is - and only when writing is allowed")
+        )
+        row.addWidget(self.write_radio)
+        row.addStretch(1)
+
+        chosen = current.direction if current is not None else None
+        self.write_radio.setChecked(chosen is BindingDirection.WRITE)
+        self.read_radio.setChecked(chosen is not BindingDirection.WRITE)
+
+        self.access_label = QLabel(self)
+        self.access_label.setEnabled(False)
+        row.addWidget(self.access_label)
+
+        if self._direction_is_fixed:
+            self.read_radio.setEnabled(False)
+            self.write_radio.setEnabled(False)
+            self.write_radio.setChecked(True)
+            self.access_label.setText(self.tr("a sensor always writes"))
+        return row
+
+    def allow_directions(self, can_read: bool, can_write: bool) -> None:
+        """Limit the choice to what the node's `UserAccessLevel` permits.
+
+        A servo's actual position is read-only and a command word may be
+        write-only; offering the impossible one is how a binding gets made that
+        the server then refuses. Greyed rather than hidden, so it is visible that
+        the node was asked and said no.
+        """
+        if self._direction_is_fixed:
+            return
+        self.read_radio.setEnabled(can_read)
+        self.write_radio.setEnabled(can_write)
+        if self.write_radio.isChecked() and not can_write and can_read:
+            self.read_radio.setChecked(True)
+        elif self.read_radio.isChecked() and not can_read and can_write:
+            self.write_radio.setChecked(True)
+        self.access_label.setText(describe_access(can_read, can_write))
+
+    @property
+    def direction(self) -> BindingDirection:
+        """Which way the tag says it travels."""
+        if self.write_radio.isChecked():
+            return BindingDirection.WRITE
+        return BindingDirection.READ
 
     def _on_conversion_changed(self, _value: object) -> None:
         self._refresh_conversion()
@@ -748,11 +814,17 @@ class AssignTagDialog(QDialog):
             self.accept()
 
     def _take(self, node: BrowseNode) -> None:
-        """Both halves of what a row identifies. The path is set even when it is
-        empty: picking a plain node after a field has to clear the old path, or
-        the tag would keep pointing inside a value the new node does not have."""
+        """Both halves of what a row identifies, and what the node allows.
+
+        The path is set even when it is empty: picking a plain node after a field
+        has to clear the old path, or the tag would keep pointing inside a value
+        the new node does not have.
+        """
         self.node_edit.setText(node.node_id)
         self.path_edit.setText(node.path)
+        # A field is never writable on its own - a write goes back as the whole
+        # struct or not at all - so a path forces reading.
+        self.allow_directions(node.is_readable, node.is_writable and not node.is_field)
 
     # -- values -------------------------------------------------------------
 
@@ -771,6 +843,7 @@ class AssignTagDialog(QDialog):
             decimals=self.decimals_spin.value(),
             offset=self.offset_spin.value(),
             path=self.path_edit.text().strip(),
+            direction=self.direction,
         )
 
     def done(self, result: int) -> None:

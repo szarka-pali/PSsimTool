@@ -1508,6 +1508,11 @@ class MainWindow(QMainWindow):
                         # the scene knows which, and it is what decides whether
                         # the PLC's 354.21 is a distance or an angle.
                         unit_scale=value_scale(joint.joint.kind),
+                        # Reading by default, and the tag may say otherwise:
+                        # writing a joint is this application telling the PLC
+                        # where its model is, which is what a hardware-in-the-loop
+                        # setup wants.
+                        is_direction_fixed=False,
                     )
                 )
         for sensor in self._sensors:
@@ -1517,6 +1522,10 @@ class MainWindow(QMainWindow):
                         name=sensor.sensor.variable,
                         direction=BindingDirection.WRITE,
                         owner=self.tr("sensor {0}").format(sensor.sensor.name),
+                        # Not a choice: a sensor's reading is something this
+                        # application produces, so there is nothing arriving for
+                        # it to read (R19).
+                        is_direction_fixed=True,
                     )
                 )
         return tuple(sources)
@@ -1529,6 +1538,15 @@ class MainWindow(QMainWindow):
         """
         self._drive_joints_from_variables()
         self._refresh_variables_view()
+
+    def _variable_direction_is_fixed(self, variable: str) -> bool:
+        """Whether this variable's direction is the tag's to choose.
+
+        A sensor's is not: its reading is something this application produces, so
+        there is nothing arriving for it to read (R19). Anything else - a joint,
+        or a name no longer claimed - may go either way.
+        """
+        return any(entry.sensor.variable == variable for entry in self._sensors)
 
     def _variable_unit(self, variable: str) -> str:
         """`mm` or `°` — what the PLC's number means for this variable.
@@ -1555,6 +1573,8 @@ class MainWindow(QMainWindow):
         moved = False
         for entry in self._variables:
             if entry.direction is not BindingDirection.READ or entry.value is None:
+                # A variable set to write is not driven by anything arriving; it
+                # publishes instead, in `publish_joint_values`.
                 continue
             if not entry.is_applied:
                 continue
@@ -1592,6 +1612,24 @@ class MainWindow(QMainWindow):
         clamped, was_clamped = clamp(low, high, value)
         self._set_joint_value(joint_id, clamped)
         return was_clamped
+
+    def publish_joint_values(self) -> bool:
+        """Offer every write-bound joint's value to the server.
+
+        The mirror of `_drive_joints_from_variables`, and the same arrangement a
+        sensor already has: offered to the connection, not sent. Whether anything
+        leaves this process is the source's decision and only when writing was
+        deliberately allowed (R19).
+        """
+        published = False
+        for entry in self._variables:
+            if entry.direction is not BindingDirection.WRITE:
+                continue
+            for joint_id in self._joint_ids_for_variable(entry.name):
+                joint = self._joints.get(joint_id)
+                if joint is not None and self._connection.publish(entry.name, joint.value):
+                    published = True
+        return published
 
     def _joint_ids_for_variable(self, variable: str) -> tuple[str, ...]:
         """Every joint this variable drives. Empty when no joint claims it.
@@ -1690,6 +1728,7 @@ class MainWindow(QMainWindow):
             self._connection_settings.credentials(self._session_password),
             self._variable_unit(name),
             self._browse_cache,
+            self._variable_direction_is_fixed(name),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -2379,6 +2418,8 @@ class MainWindow(QMainWindow):
         """
         self._set_joint_value(joint_id, value)
         self.refresh_sensor_readings()
+        if self.publish_joint_values():
+            self._refresh_variables_view()
 
     def _set_joint_value(self, joint_id: str, value: float) -> None:
         """Everything `apply_joint_value` does except re-reading the sensors.

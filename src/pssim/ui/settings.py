@@ -36,6 +36,7 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, TypeGuard
 
+from pssim.config.binding import BindingDirection
 from pssim.domain.errors import DataSourceError
 from pssim.io.opcua_path import parse_path
 from pssim.io.opcua_security import (
@@ -92,6 +93,21 @@ class VariableTag:
     offset: float = 0.0
     """Added after the decimals, in millimetres or degrees - the same unit the
     value is in, never metres or radians."""
+
+    direction: BindingDirection | None = None
+    """Which way this variable travels, where the thing that named it allows a
+    choice. `None` means "not chosen" - whatever named it decides.
+
+    A joint's may be either: reading is the PLC saying where the machine is,
+    writing is this application saying where its model is, which is what a
+    hardware-in-the-loop setup wants. A sensor's is always a write and this is
+    ignored for it (R19).
+
+    `None` rather than a default of `READ`, and that is not a nicety: a source
+    whose own default is `WRITE` would otherwise be flipped to reading by any tag
+    that had never been asked the question - including every tag stored before
+    this field existed.
+    """
     path: str = ""
     """Where inside the node's value the number is: `Position.X`, `Limits[1]`.
 
@@ -107,6 +123,10 @@ class VariableTag:
             "decimals": self.decimals,
             "offset": self.offset,
         }
+        # Written only when it was actually chosen, so a settings file from a
+        # scene where nobody touched it reads as it did before.
+        if self.direction is not None:
+            stored["direction"] = self.direction.value
         # Written only when there is one, so a settings file from a scene with no
         # structures in it looks exactly as it did before paths existed.
         if self.path:
@@ -140,6 +160,7 @@ class VariableTag:
             decimals=_as_decimals(data.get("decimals")),
             offset=_as_float(data.get("offset"), 0.0),
             path=_as_path(data.get("path")),
+            direction=_as_direction(data.get("direction")),
         )
 
 
@@ -397,6 +418,20 @@ def _as_path(value: Any) -> str:
         logger.warning("ignoring an unusable variable path", path=value)
         return ""
     return value
+
+
+def _as_direction(value: Any) -> BindingDirection | None:
+    """A stored direction, or nothing.
+
+    Nothing rather than reading: absent means "not chosen", and the thing that
+    named the variable then decides. A value this build does not recognise is
+    treated the same way - a corrupted setting must never be what starts writing
+    to a machine's server, which is the reasoning `allow_writing` follows (R18).
+    """
+    for direction in BindingDirection:
+        if direction.value == value:
+            return direction
+    return None
 
 
 def _as_decimals(value: Any) -> int:

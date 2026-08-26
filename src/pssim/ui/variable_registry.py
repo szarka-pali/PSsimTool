@@ -63,6 +63,13 @@ class VariableSource:
     decides whether `354.21` from the PLC is a distance or an angle. `1.0` for a
     sensor's variable, which has no joint to ask (R16)."""
 
+    is_direction_fixed: bool = False
+    """Whether `direction` is the answer or merely the default.
+
+    A sensor's variable is always a write - its reading is something this
+    application produces (R19) - so there is nothing to choose. A joint's may go
+    either way, and the tag says which."""
+
 
 @dataclass(frozen=True, slots=True)
 class VariableEntry:
@@ -126,10 +133,13 @@ class VariableRegistry:
     every time something moves.
     """
 
-    __slots__ = ("_entries", "_tags", "_applied", "_is_connected")
+    __slots__ = ("_entries", "_sources", "_tags", "_applied", "_is_connected")
 
     def __init__(self) -> None:
         self._entries: dict[str, VariableEntry] = {}
+        # Kept because a direction has to be re-resolved when a tag arrives, and
+        # only the source knows whether the choice was the tag's to make.
+        self._sources: dict[str, VariableSource] = {}
         self._tags: dict[str, VariableTag] = {}
         # Kept by name outside the entries, like `_tags`: a variable switched off
         # must stay switched off when the scene is re-read, and the entries are
@@ -190,18 +200,20 @@ class VariableRegistry:
                 # is legitimate: an axis and the sensor watching it can share it.
                 continue
             previous = self._entries.get(source.name)
+            tag = self._tags.get(source.name)
             rebuilt[source.name] = VariableEntry(
                 name=source.name,
-                direction=source.direction,
+                direction=self._direction_for(source, tag),
                 owner=source.owner,
                 unit_scale=source.unit_scale,
-                tag=self._tags.get(source.name),
+                tag=tag,
                 value=previous.value if previous is not None else None,
                 state=self._state_for(source.name, previous),
                 is_applied=self._applied.get(source.name, True),
                 is_out_of_range=(previous.is_out_of_range if previous is not None else False),
             )
 
+        self._sources = {source.name: source for source in sources if source.name}
         if rebuilt == self._entries:
             return False
         self._entries = rebuilt
@@ -213,9 +225,25 @@ class VariableRegistry:
         loading a project after the settings is the normal order."""
         self._tags = dict(tags)
         for name, entry in self._entries.items():
+            tag = self._tags.get(name)
             self._entries[name] = replace(
-                entry, tag=self._tags.get(name), state=self._state_for(name, entry)
+                entry,
+                tag=tag,
+                direction=self._direction_for(self._sources[name], tag)
+                if name in self._sources
+                else entry.direction,
+                state=self._state_for(name, entry),
             )
+
+    def _direction_for(self, source: VariableSource, tag: VariableTag | None) -> BindingDirection:
+        """Which way a variable travels: the scene's answer, or the tag's choice.
+
+        The source wins where it says so, which is a sensor. Otherwise the tag
+        decides, and with no tag there is nothing bound and the default stands.
+        """
+        if source.is_direction_fixed or tag is None or tag.direction is None:
+            return source.direction
+        return tag.direction
 
     def set_value(self, name: str, value: float, is_stale: bool = False) -> bool:
         """Record what arrived. Returns whether the row now reads differently."""

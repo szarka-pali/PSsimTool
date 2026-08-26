@@ -62,6 +62,10 @@ DEFAULT_PUBLISHING_INTERVAL_MS: Final = 50
 #: dialog, and neither writes it anywhere.
 PASSWORD_ENV: Final = "PSSIM_OPCUA_PASSWORD"
 
+#: The most decimal places a tag may claim. Past this the divisor is larger than
+#: anything a PLC integer holds, so a bigger number is a corrupted setting.
+MAX_DECIMALS: Final = 9
+
 #: The QSettings keys. Spelled once — a typo in one of the two halves of a
 #: read/write pair is silent, and looks exactly like "it did not save".
 _VIEW_KEY: Final = "view/columns"
@@ -72,14 +76,22 @@ _CONNECTION_KEY: Final = "connection/opcua"
 class VariableTag:
     """Which OPC UA node a project variable is bound to, and its unit conversion.
 
-    `scale` and `offset` are the same pair `config.binding.JointBinding` uses and
-    in the same order (`raw * scale + offset`) — a PLC sends millimetres or
-    thousandths of a degree, and the scene runs in metres and radians (R8).
+    The conversion is stated the way a PLC programmer knows the number, not as a
+    factor to be worked out: **decimal places** and an **offset in the PLC's own
+    unit**. Whether that unit is millimetres or degrees comes from the joint the
+    variable drives, so the same tag reads `354.21` as a distance on a rail and
+    as an angle on a rotary head (see `config.binding.from_plc`).
     """
 
     node_id: str
-    scale: float = 1.0
+    decimals: int = 0
+    """How many decimal places an integer value carries. `0` for a `REAL` or a
+    `FLOAT`, which is then 1:1: `354.21` is 354.21 mm or 354.21 degrees. `1` makes
+    `652` read `65.2`."""
+
     offset: float = 0.0
+    """Added after the decimals, in millimetres or degrees - the same unit the
+    value is in, never metres or radians."""
     path: str = ""
     """Where inside the node's value the number is: `Position.X`, `Limits[1]`.
 
@@ -92,7 +104,7 @@ class VariableTag:
     def to_dict(self) -> dict[str, Any]:
         stored: dict[str, Any] = {
             "node_id": self.node_id,
-            "scale": self.scale,
+            "decimals": self.decimals,
             "offset": self.offset,
         }
         # Written only when there is one, so a settings file from a scene with no
@@ -113,9 +125,19 @@ class VariableTag:
         node_id = data.get("node_id")
         if not isinstance(node_id, str) or not node_id:
             return None
+        if "scale" in data and "decimals" not in data:
+            # Written before the conversion was stated as decimal places. That
+            # `scale` was the whole unit factor typed out by hand, which is now
+            # automatic - keeping it would apply the conversion twice and put a
+            # model a thousand times off. Dropped loudly rather than quietly.
+            logger.warning(
+                "ignoring a variable tag's old scale - check its decimal places",
+                node_id=node_id,
+                scale=data.get("scale"),
+            )
         return cls(
             node_id=node_id,
-            scale=_as_float(data.get("scale"), 1.0),
+            decimals=_as_decimals(data.get("decimals")),
             offset=_as_float(data.get("offset"), 0.0),
             path=_as_path(data.get("path")),
         )
@@ -374,6 +396,22 @@ def _as_path(value: Any) -> str:
     except DataSourceError:
         logger.warning("ignoring an unusable variable path", path=value)
         return ""
+    return value
+
+
+def _as_decimals(value: Any) -> int:
+    """A count of decimal places, or none.
+
+    Negative is refused rather than clamped: it would mean multiplying by ten,
+    which is a different feature and one nobody asked for. An absurd count is
+    refused too - past this the divisor exceeds what a PLC integer can hold, so
+    it is a corrupted setting rather than a choice.
+    """
+    if not isinstance(value, int) or isinstance(value, bool):
+        return 0
+    if value < 0 or value > MAX_DECIMALS:
+        logger.warning("ignoring an unusable decimal count", decimals=value)
+        return 0
     return value
 
 

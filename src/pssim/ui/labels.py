@@ -190,6 +190,17 @@ def describe_applied(is_applied: bool) -> str:
     return _tr("Values still arrive but do not move the model - set it by hand instead.")
 
 
+def describe_tag_conversion(decimals: int, offset: float, unit: str) -> str:
+    """One worked example of what a tag does, for the assign dialog.
+
+    Arithmetic rather than a rule: a wrong decimal place is invisible in the
+    fields and obvious in a line that says what the PLC's 652 would become. This
+    is the one setting in the application that silently puts a model elsewhere.
+    """
+    result = 652.0 / (10.0**decimals) + offset
+    return _tr("The PLC's 652 becomes {0} {1}").format(f"{result:g}", unit)
+
+
 def describe_variable_state(entry: VariableEntry) -> str:
     """The Status column: where this variable stands with the server."""
     return _tr(_VARIABLE_STATES.get(entry.state, entry.state.value))

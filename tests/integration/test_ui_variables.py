@@ -12,6 +12,7 @@ Runs headless. Requires `uv sync --extra ui`. Run with ``uv run pytest -m ui``.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 from pssim.config.binding import BindingDirection  # noqa: E402
 from pssim.domain.sensors import Sensor, SensorKind  # noqa: E402
+from pssim.domain.units import DEG_TO_RAD  # noqa: E402
 from pssim.io.base import SourceStatus  # noqa: E402
 from pssim.io.opcua_diagnostics import DiagnosticLog, DiagnosticStep  # noqa: E402
 from pssim.io.store import StateStore  # noqa: E402
@@ -76,9 +78,11 @@ def with_a_driven_axis(window: MainWindow, variable: str = "X") -> MainWindow:
     return window
 
 
-def assign(window: MainWindow, variable: str, node_id: str, scale: float = 1.0) -> None:
+def assign(window: MainWindow, variable: str, node_id: str, decimals: int = 0) -> None:
     window.save_connection_settings(
-        window.connection_settings.with_tag(variable, VariableTag(node_id=node_id, scale=scale))
+        window.connection_settings.with_tag(
+            variable, VariableTag(node_id=node_id, decimals=decimals)
+        )
     )
 
 
@@ -166,11 +170,11 @@ class TestAssigningATag:
     def test_the_tag_is_saved(self, window: MainWindow, store: SettingsStore) -> None:
         with_a_driven_axis(window, "X")
 
-        assign(window, "X", "ns=2;s=Axes.X.ActPos", scale=0.001)
+        assign(window, "X", "ns=2;s=Axes.X.ActPos", decimals=1)
 
         tag = store.load_connection().tag_for("X")
         assert tag is not None
-        assert tag.scale == pytest.approx(0.001)
+        assert tag.decimals == 1
 
     def test_a_saved_tag_comes_back(self, qt_app: QApplication, store: SettingsStore) -> None:
         # Settings load before a project does, so a tag whose variable has not
@@ -410,15 +414,25 @@ class _FailedSource(_StubSource):
 
 class TestTheValueShown:
     def test_it_is_shown_in_the_plc_s_own_units(self, window: MainWindow) -> None:
-        # A row saying 1.25 for a tag holding 1250 invites a hunt for a bug that
-        # is not there.
+        # A row saying 1.5708 for a tag the PLC set to 90 invites a hunt for a bug
+        # that is not there. `X` names an axis, so the PLC's unit is degrees.
         with_a_driven_axis(window, "X")
-        assign(window, "X", "ns=2;s=X", scale=0.001)
+        assign(window, "X", "ns=2;s=X")
         window.variables.set_connected(True)
-        window.variables.set_value("X", 1.25)
+        window.variables.set_value("X", math.pi / 2.0)
         window._refresh_variables_view()
 
-        assert window.variable_tree.topLevelItem(0).text(COLUMN_VALUE) == "1250"
+        assert window.variable_tree.topLevelItem(0).text(COLUMN_VALUE) == "90"
+
+    def test_an_integer_tag_shows_the_integer(self, window: MainWindow) -> None:
+        # One decimal place: the PLC's 652 is 65.2 degrees, and the row says 652.
+        with_a_driven_axis(window, "X")
+        assign(window, "X", "ns=2;s=X", decimals=1)
+        window.variables.set_connected(True)
+        window.variables.set_value("X", 65.2 * DEG_TO_RAD)
+        window._refresh_variables_view()
+
+        assert window.variable_tree.topLevelItem(0).text(COLUMN_VALUE) == "652"
 
     def test_no_value_yet_is_a_dash(self, window: MainWindow) -> None:
         with_a_driven_axis(window, "X")
@@ -465,11 +479,11 @@ class TestDialogs:
     def test_it_reports_the_conversion(self, qt_app: QApplication) -> None:
         dialog = AssignTagDialog("X", "opc.tcp://plc:4840/")
         dialog.node_edit.setText("ns=2;s=X")
-        dialog.scale_spin.setValue(0.001)
+        dialog.decimals_spin.setValue(1)
 
         tag = dialog.tag
         assert tag is not None
-        assert tag.scale == pytest.approx(0.001)
+        assert tag.decimals == 1
 
     def test_a_failed_browse_is_reported_in_the_dialog(self, qt_app: QApplication) -> None:
         # Not a modal on top of a modal.

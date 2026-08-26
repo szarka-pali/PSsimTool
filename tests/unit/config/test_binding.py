@@ -66,25 +66,30 @@ class TestVariableBinding:
 
 
 class TestTheInverse:
+    """`JointBinding`'s, which still states its conversion as a single `scale`
+    because `machines/*.yaml` is versioned and existing definitions have to keep
+    loading. `VariableBinding` states decimal places instead - see
+    `test_binding_decimals.py`."""
+
     def test_metres_become_millimetres(self) -> None:
-        binding = VariableBinding(variable="X", node_id="n", scale=0.001)
+        binding = JointBinding(joint_name="X", node_id="n", scale=0.001)
 
         assert binding.to_plc(1.25) == pytest.approx(1250.0, abs=1e-6)
 
     def test_the_offset_is_removed_before_the_scale(self) -> None:
-        binding = VariableBinding(variable="X", node_id="n", scale=0.001, offset=0.5)
+        binding = JointBinding(joint_name="X", node_id="n", scale=0.001, offset=0.5)
 
         assert binding.to_plc(1.5) == pytest.approx(1000.0, abs=1e-6)
 
     @pytest.mark.parametrize("raw", [0.0, 1.0, -250.0, 1250.75])
     def test_a_value_that_goes_out_and_comes_back_is_itself(self, raw: float) -> None:
-        binding = VariableBinding(variable="X", node_id="n", scale=0.001, offset=-0.25)
+        binding = JointBinding(joint_name="X", node_id="n", scale=0.001, offset=-0.25)
 
         assert binding.to_plc(binding.to_internal(raw)) == pytest.approx(raw, abs=1e-6)
 
     def test_a_zero_scale_cannot_be_written(self) -> None:
         # It maps everything onto the offset: a usable read, an impossible write.
-        binding = VariableBinding(variable="X", node_id="n", scale=0.0)
+        binding = JointBinding(joint_name="X", node_id="n", scale=0.0)
 
         with pytest.raises(ConfigError):
             binding.to_plc(1.0)
@@ -92,6 +97,6 @@ class TestTheInverse:
     def test_a_zero_scale_still_reads(self) -> None:
         # Refused at the write rather than at construction, which would turn an
         # existing machine definition into an error.
-        binding = VariableBinding(variable="X", node_id="n", scale=0.0, offset=2.0)
+        binding = JointBinding(joint_name="X", node_id="n", scale=0.0, offset=2.0)
 
         assert binding.to_internal(999.0) == pytest.approx(2.0, abs=1e-9)

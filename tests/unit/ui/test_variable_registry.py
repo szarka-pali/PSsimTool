@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from pssim.config.binding import BindingDirection
+from pssim.domain.units import MM_TO_M
 from pssim.ui.settings import VariableTag
 from pssim.ui.variable_registry import (
     VariableRegistry,
@@ -22,8 +23,9 @@ def source(
     name: str = "X",
     direction: BindingDirection = BindingDirection.READ,
     owner: str = "axis rail",
+    unit_scale: float = 1.0,
 ) -> VariableSource:
-    return VariableSource(name=name, direction=direction, owner=owner)
+    return VariableSource(name=name, direction=direction, owner=owner, unit_scale=unit_scale)
 
 
 def registry_with(*sources: VariableSource) -> VariableRegistry:
@@ -118,11 +120,30 @@ class TestTags:
 
     def test_a_bound_variable_becomes_a_binding(self) -> None:
         registry = registry_with(source("X"))
-        registry.set_tags({"X": VariableTag(node_id="ns=2;s=X", scale=0.001)})
+        registry.set_tags({"X": VariableTag(node_id="ns=2;s=X")})
 
-        binding = registry.bindings()[0]
-        assert binding.node_id == "ns=2;s=X"
-        assert binding.to_internal(1250.0) == pytest.approx(1.25)
+        assert registry.bindings()[0].node_id == "ns=2;s=X"
+
+    def test_the_binding_takes_the_unit_from_the_source(self) -> None:
+        # The registry has no idea whether `X` belongs to a rail or a rotary
+        # head, and that is what decides whether 1250 is a distance or an angle.
+        registry = registry_with(source("X", unit_scale=MM_TO_M))
+        registry.set_tags({"X": VariableTag(node_id="ns=2;s=X")})
+
+        assert registry.bindings()[0].to_internal(1250.0) == pytest.approx(1.25)
+
+    def test_and_the_decimals_from_the_tag(self) -> None:
+        registry = registry_with(source("X", unit_scale=MM_TO_M))
+        registry.set_tags({"X": VariableTag(node_id="ns=2;s=X", decimals=1)})
+
+        assert registry.bindings()[0].to_internal(652.0) == pytest.approx(0.0652)
+
+    def test_a_variable_with_no_joint_converts_by_nothing(self) -> None:
+        # A sensor's: it travels the other way and has no joint kind to ask (R16).
+        registry = registry_with(source("gate", direction=BindingDirection.WRITE))
+        registry.set_tags({"gate": VariableTag(node_id="ns=2;s=Sim.Sensor1")})
+
+        assert registry.bindings()[0].to_internal(1.25) == pytest.approx(1.25)
 
     def test_the_binding_carries_the_direction(self) -> None:
         registry = registry_with(source("I0.0", direction=BindingDirection.WRITE))

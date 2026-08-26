@@ -54,6 +54,15 @@ class VariableSource:
     """`axis tilt`, `sensor gate` — shown so a variable can be traced back to the
     thing that named it, which matters when two of them read alike."""
 
+    unit_scale: float = 1.0
+    """Millimetres or degrees into metres or radians, from the kind of joint that
+    named it (`domain.model_joints.value_scale`).
+
+    Carried on the **source** because only the scene knows it: the registry has
+    no idea whether a name belongs to a rail or a rotary head, and that is what
+    decides whether `354.21` from the PLC is a distance or an angle. `1.0` for a
+    sensor's variable, which has no joint to ask (R16)."""
+
 
 @dataclass(frozen=True, slots=True)
 class VariableEntry:
@@ -62,6 +71,10 @@ class VariableEntry:
     name: str
     direction: BindingDirection
     owner: str
+    unit_scale: float = 1.0
+    """What `VariableSource.unit_scale` said, kept so the binding can be built
+    without going back to the scene."""
+
     tag: VariableTag | None = None
     value: float | None = None
     """The number that **arrived**, not the one the joint took. When a value is
@@ -97,10 +110,11 @@ class VariableEntry:
         return VariableBinding(
             variable=self.name,
             node_id=self.tag.node_id,
-            scale=self.tag.scale,
             offset=self.tag.offset,
             direction=self.direction,
             path=self.tag.path,
+            decimals=self.tag.decimals,
+            unit_scale=self.unit_scale,
         )
 
 
@@ -180,6 +194,7 @@ class VariableRegistry:
                 name=source.name,
                 direction=source.direction,
                 owner=source.owner,
+                unit_scale=source.unit_scale,
                 tag=self._tags.get(source.name),
                 value=previous.value if previous is not None else None,
                 state=self._state_for(source.name, previous),

@@ -63,21 +63,63 @@ class TestViewSettings:
 
 class TestVariableTag:
     def test_it_round_trips(self) -> None:
-        tag = VariableTag(node_id="ns=2;s=Axes.X.ActPos", scale=0.001, offset=-0.5)
+        tag = VariableTag(node_id="ns=2;s=Axes.X.ActPos", decimals=1, offset=-0.5)
 
         assert VariableTag.from_dict(tag.to_dict()) == tag
 
     def test_a_tag_without_a_node_is_not_a_tag(self) -> None:
-        assert VariableTag.from_dict({"scale": 2.0}) is None
+        assert VariableTag.from_dict({"decimals": 2}) is None
 
     def test_an_empty_node_is_not_a_tag(self) -> None:
         assert VariableTag.from_dict({"node_id": ""}) is None
 
-    def test_a_missing_scale_defaults_to_one(self) -> None:
+    def test_a_missing_decimal_count_is_none_of_them(self) -> None:
+        # Which is 1:1 - what a REAL wants, and the safe reading of silence.
         tag = VariableTag.from_dict({"node_id": "ns=2;s=X"})
 
         assert tag is not None
-        assert tag.scale == 1.0
+        assert tag.decimals == 0
+
+    def test_a_stored_scale_is_dropped(self) -> None:
+        # It only ever existed to express the unit conversion by hand, which is
+        # now automatic. Keeping it would apply the conversion twice and put a
+        # model a thousand times off.
+        tag = VariableTag.from_dict({"node_id": "ns=2;s=X", "scale": 0.001})
+
+        assert tag is not None
+        assert tag.decimals == 0
+        assert not hasattr(tag, "scale")
+
+    def test_a_stored_scale_beside_decimals_is_ignored_too(self) -> None:
+        tag = VariableTag.from_dict({"node_id": "ns=2;s=X", "scale": 0.001, "decimals": 2})
+
+        assert tag is not None
+        assert tag.decimals == 2
+
+    def test_a_negative_decimal_count_is_refused(self) -> None:
+        # It would mean multiplying by ten, which is a different feature.
+        tag = VariableTag.from_dict({"node_id": "ns=2;s=X", "decimals": -1})
+
+        assert tag is not None
+        assert tag.decimals == 0
+
+    def test_an_absurd_decimal_count_is_refused(self) -> None:
+        tag = VariableTag.from_dict({"node_id": "ns=2;s=X", "decimals": 40})
+
+        assert tag is not None
+        assert tag.decimals == 0
+
+    def test_a_non_integer_decimal_count_is_refused(self) -> None:
+        tag = VariableTag.from_dict({"node_id": "ns=2;s=X", "decimals": 1.5})
+
+        assert tag is not None
+        assert tag.decimals == 0
+
+    def test_no_decimals_still_writes_the_field(self) -> None:
+        # Unlike `path`, this one is always written: `0` is a real answer about
+        # the tag rather than the absence of one, and a reader of the file should
+        # see that the question was settled.
+        assert VariableTag(node_id="ns=2;s=X").to_dict()["decimals"] == 0
 
 
 class TestConnectionSettings:
@@ -107,7 +149,7 @@ class TestConnectionSettings:
             endpoint="opc.tcp://plc:4840/",
             publishing_interval_ms=100,
             allow_writing=True,
-        ).with_tag("X", VariableTag(node_id="ns=2;s=X", scale=0.001))
+        ).with_tag("X", VariableTag(node_id="ns=2;s=X", decimals=1))
 
         assert ConnectionSettings.from_dict(settings.to_dict()) == settings
 

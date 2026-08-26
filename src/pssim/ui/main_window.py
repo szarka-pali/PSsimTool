@@ -54,7 +54,14 @@ from pssim.config.project import (
 )
 from pssim.domain.errors import PSsimError
 from pssim.domain.machine import Rgba, Transform, Vec3
-from pssim.domain.model_joints import ModelJoint, ModelJointKind, clamp, effective_limits
+from pssim.domain.model_joints import (
+    ModelJoint,
+    ModelJointKind,
+    clamp,
+    display_unit,
+    effective_limits,
+    value_scale,
+)
 from pssim.domain.placement import IDENTITY_PLACEMENT
 from pssim.domain.sensors import Sensor, SensorKind
 from pssim.domain.units import MM_TO_M
@@ -1489,6 +1496,10 @@ class MainWindow(QMainWindow):
                         name=joint.joint.variable,
                         direction=BindingDirection.READ,
                         owner=self.tr("axis or trajectory {0}").format(joint.joint.name),
+                        # Degrees for an axis, millimetres for a trajectory. Only
+                        # the scene knows which, and it is what decides whether
+                        # the PLC's 354.21 is a distance or an angle.
+                        unit_scale=value_scale(joint.joint.kind),
                     )
                 )
         for sensor in self._sensors:
@@ -1510,6 +1521,17 @@ class MainWindow(QMainWindow):
         """
         self._drive_joints_from_variables()
         self._refresh_variables_view()
+
+    def _variable_unit(self, variable: str) -> str:
+        """`mm` or `°` — what the PLC's number means for this variable.
+
+        Empty for one no joint claims: a sensor's variable has no joint kind to
+        ask (R16), and the dialog then says "units" rather than guessing.
+        """
+        for entry in self._joints:
+            if entry.joint.variable == variable:
+                return display_unit(entry.joint.kind)
+        return ""
 
     def _refresh_variables_view(self) -> None:
         self.variable_tree.refresh(self._variables)
@@ -1658,6 +1680,7 @@ class MainWindow(QMainWindow):
             self._connection_settings.endpoint,
             self._connection_settings.tag_for(name),
             self._connection_settings.credentials(self._session_password),
+            self._variable_unit(name),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

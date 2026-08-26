@@ -12,6 +12,13 @@ Two bindings, one protocol:
   — the string a joint or a sensor carries in a project (R16). It can go either
   way, because a sensor's reading is something the simulation produces.
 
+The two state their conversion differently, and deliberately. `JointBinding` keeps
+a single `scale` the machine definition spells out; `VariableBinding` takes
+**decimal places** plus the unit of the joint it drives, because that is how a PLC
+programmer knows the number — a `REAL` is 1:1 and a `DINT` has an implied decimal
+point. Working the whole factor out by hand is what produced
+`scale: 1.7453292519943296e-05` in `machines/example.yaml`.
+
 `SignalBinding` is what `io/` consumes, so a data source never has to know which
 of the two it was handed. A `Protocol`, not a base class — the same boundary rule
 `io/base.py` follows (R12).
@@ -77,6 +84,48 @@ def to_internal(raw_value: float, scale: float, offset: float) -> float:
     `machines/*.yaml`.
     """
     return raw_value * scale + offset
+
+
+def from_plc(raw_value: float, decimals: int, offset: float, unit_scale: float) -> float:
+    """A PLC number into metres or radians, the way a PLC programmer states it.
+
+    ``(raw / 10**decimals + offset) * unit_scale``, in that order:
+
+    - `decimals` is how many decimal places an integer carries. `0` for a `REAL`
+      or `FLOAT`, which then means `354.21` is 354.21 of whatever unit the thing
+      moves in. `1` makes `652` read `65.2`.
+    - `offset` is in that same unit — millimetres or degrees — because every
+      number typed for a tag is, and an offset in metres beside a value in
+      millimetres is exactly the confusion this replaced.
+    - `unit_scale` is millimetres or degrees into metres or radians, and it comes
+      from the joint's kind (`domain.model_joints.value_scale`) rather than being
+      typed. That is what makes `354.21` mean 354.21 mm on a rail and 354.21° on
+      a rotary head without the tag having to know which it is bound to.
+
+    What this replaces is a single `scale` the user had to work out themselves:
+    `machines/example.yaml` still carries `scale: 1.7453292519943296e-05` with a
+    comment explaining it is `pi/180/1000`.
+    """
+    if decimals < 0:
+        # A multiplier rather than a divisor is a different feature and one
+        # nobody asked for; accepting it silently would scale by ten instead.
+        raise ConfigError(f"decimals must not be negative, got {decimals}")
+    return (raw_value / (10.0**decimals) + offset) * unit_scale
+
+
+def to_plc_units(internal_value: float, decimals: int, offset: float, unit_scale: float) -> float:
+    """The exact inverse of `from_plc`, so a value that goes out and comes back
+    is the value that went out.
+
+    A zero `unit_scale` has no inverse. It cannot arise from a joint - both kinds
+    give a positive factor - so it means a binding assembled by hand, and
+    refusing is better than dividing by zero on the way out.
+    """
+    if decimals < 0:
+        raise ConfigError(f"decimals must not be negative, got {decimals}")
+    if unit_scale == 0.0:
+        raise ConfigError("a binding with unit_scale 0 cannot be written back")
+    return (internal_value / unit_scale - offset) * (10.0**decimals)
 
 
 def to_plc(internal_value: float, scale: float, offset: float) -> float:
@@ -147,21 +196,36 @@ class VariableBinding:
 
     variable: str
     node_id: str
-    scale: float = 1.0
     offset: float = 0.0
+    """Added after the decimals, **in the PLC's own unit** - millimetres or
+    degrees, not metres or radians. A zero point: the encoder reads 100 mm where
+    the machine is at zero."""
+
     direction: BindingDirection = BindingDirection.READ
     path: str = ""
     """Where inside the node's value to read or write. See `JointBinding.path`."""
+
+    decimals: int = 0
+    """How many decimal places an integer value carries. `0` for a `REAL` or a
+    `FLOAT`, which is then 1:1."""
+
+    unit_scale: float = 1.0
+    """Millimetres or degrees into metres or radians, from the joint's kind.
+
+    `1.0` for a variable with no joint to ask - a sensor's, which travels the
+    other way and reports metres or counts (R16). Its value then passes through
+    unchanged, which is what it did before any of this.
+    """
 
     @property
     def signal(self) -> str:
         return self.variable
 
     def to_internal(self, raw_value: float) -> float:
-        return to_internal(raw_value, self.scale, self.offset)
+        return from_plc(raw_value, self.decimals, self.offset, self.unit_scale)
 
     def to_plc(self, internal_value: float) -> float:
-        return to_plc(internal_value, self.scale, self.offset)
+        return to_plc_units(internal_value, self.decimals, self.offset, self.unit_scale)
 
 
 @dataclass(frozen=True, slots=True)

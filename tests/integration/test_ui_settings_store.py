@@ -77,7 +77,7 @@ class TestStore:
         self, store: SettingsStore, ini: QSettings
     ) -> None:
         settings = ConnectionSettings(endpoint="opc.tcp://plc:4840/").with_tag(
-            "X", VariableTag(node_id="ns=2;s=Axes.X.ActPos", scale=0.001)
+            "X", VariableTag(node_id="ns=2;s=Axes.X.ActPos", decimals=1)
         )
 
         store.save_connection(settings)

@@ -56,8 +56,9 @@ from pssim.io.opcua_security import (
     discover_endpoints,
 )
 from pssim.observability import get_logger
+from pssim.ui.labels import describe_tag_conversion
 from pssim.ui.opcua_browse_tree import OpcUaBrowseTree
-from pssim.ui.settings import ConnectionSettings, VariableTag
+from pssim.ui.settings import MAX_DECIMALS, ConnectionSettings, VariableTag
 
 logger = get_logger(__name__)
 
@@ -66,10 +67,9 @@ logger = get_logger(__name__)
 MIN_INTERVAL_MS: Final = 10
 MAX_INTERVAL_MS: Final = 5_000
 
-#: A scale of exactly zero has no inverse and cannot be written back
-#: (`config.binding.to_plc`), so the spin box does not offer it.
-SCALE_LIMIT: Final = 1_000_000.0
-SCALE_DECIMALS: Final = 6
+#: How many decimal places the **offset** spin box offers. Not the tag's own
+#: `decimals`, which is a count of the PLC integer's implied places.
+OFFSET_DECIMALS: Final = 4
 
 OFFSET_LIMIT: Final = 1_000_000.0
 
@@ -529,12 +529,17 @@ class AssignTagDialog(QDialog):
         endpoint: str,
         current: VariableTag | None = None,
         credentials: Credentials | None = None,
+        unit: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Assign a Tag to {0}").format(variable))
         self.setModal(True)
         self._endpoint = endpoint
+        # What the PLC's number means: `mm` for a rail, `°` for a rotary head.
+        # Passed in because only the window knows which joint named the variable;
+        # empty for a sensor's, which has no joint to ask (R16).
+        self._unit = unit or self.tr("units")
         self._credentials = credentials or Credentials()
         self._session: OpcUaBrowseSession | None = None
         self._connecting: _ConnectThread | None = None
@@ -595,24 +600,57 @@ class AssignTagDialog(QDialog):
         )
         form.addRow(self.tr("Path:"), self.path_edit)
 
-        # The conversion belongs with the tag, not with the joint: the same axis
-        # read from a different PLC may arrive in different units (R8).
-        self.scale_spin = QDoubleSpinBox(self)
-        self.scale_spin.setRange(-SCALE_LIMIT, SCALE_LIMIT)
-        self.scale_spin.setDecimals(SCALE_DECIMALS)
-        self.scale_spin.setValue(current.scale if current is not None else 1.0)
-        self.scale_spin.setToolTip(
-            self.tr("Multiplied by the raw value. 0.001 turns millimetres into metres.")
+        # Decimal places rather than a factor: a `REAL` is 1:1 and a `DINT`
+        # has an implied decimal point, which is how a PLC programmer knows the
+        # number. Working the unit conversion out by hand is what produced
+        # `scale: 1.7453292519943296e-05` in `machines/example.yaml`.
+        self.decimals_spin = QSpinBox(self)
+        self.decimals_spin.setRange(0, MAX_DECIMALS)
+        self.decimals_spin.setValue(current.decimals if current is not None else 0)
+        self.decimals_spin.setToolTip(
+            self.tr(
+                "How many decimal places an integer value carries. 0 for a REAL or "
+                "FLOAT, which is then 1:1. With 1, the PLC's 652 reads 65.2 {0}."
+            ).format(self._unit)
         )
-        form.addRow(self.tr("Scale:"), self.scale_spin)
+        form.addRow(self.tr("Decimal places:"), self.decimals_spin)
 
         self.offset_spin = QDoubleSpinBox(self)
         self.offset_spin.setRange(-OFFSET_LIMIT, OFFSET_LIMIT)
-        self.offset_spin.setDecimals(SCALE_DECIMALS)
+        self.offset_spin.setDecimals(OFFSET_DECIMALS)
         self.offset_spin.setValue(current.offset if current is not None else 0.0)
-        self.offset_spin.setToolTip(self.tr("Added after the scale, in metres or radians."))
+        self.offset_spin.setSuffix(f" {self._unit}")
+        self.offset_spin.setToolTip(
+            self.tr(
+                "Added after the decimal places, in the same unit as the value. "
+                "A zero point: -100 if the PLC reads 100 where the machine is at zero."
+            )
+        )
         form.addRow(self.tr("Offset:"), self.offset_spin)
+
+        self.conversion_label = QLabel(self)
+        self.conversion_label.setEnabled(False)
+        form.addRow("", self.conversion_label)
+        self._refresh_conversion()
+        self.decimals_spin.valueChanged.connect(self._on_conversion_changed)
+        self.offset_spin.valueChanged.connect(self._on_conversion_changed)
         return form
+
+    def _on_conversion_changed(self, _value: object) -> None:
+        self._refresh_conversion()
+
+    def _refresh_conversion(self) -> None:
+        """Show what one number would become, worked through.
+
+        A line of arithmetic rather than a rule to be trusted: a wrong decimal
+        place is invisible in the fields and obvious here, and this is the one
+        setting in the application that silently puts a model somewhere else.
+        """
+        self.conversion_label.setText(
+            describe_tag_conversion(
+                self.decimals_spin.value(), self.offset_spin.value(), self._unit
+            )
+        )
 
     # -- browsing -----------------------------------------------------------
 
@@ -691,7 +729,7 @@ class AssignTagDialog(QDialog):
             return None
         return VariableTag(
             node_id=node_id,
-            scale=self.scale_spin.value(),
+            decimals=self.decimals_spin.value(),
             offset=self.offset_spin.value(),
             path=self.path_edit.text().strip(),
         )

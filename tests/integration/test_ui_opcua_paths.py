@@ -263,7 +263,7 @@ class TestTheChooserTakesBothHalves:
 
 class TestTheTagIsStored:
     def test_a_path_round_trips(self) -> None:
-        tag = VariableTag(node_id=STATE_NODE, path="Position.X", scale=0.001)
+        tag = VariableTag(node_id=STATE_NODE, path="Position.X", decimals=1)
 
         assert VariableTag.from_dict(tag.to_dict()) == tag
 

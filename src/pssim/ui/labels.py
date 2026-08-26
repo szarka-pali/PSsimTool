@@ -22,6 +22,7 @@ from pssim.domain.machine import Transform
 from pssim.domain.placement import from_transform, is_identity
 from pssim.domain.sensors import DISTANCE_KINDS, ENCODER_KINDS, SensorKind
 from pssim.domain.units import MM_TO_M
+from pssim.io.base import SourceStatus
 from pssim.ui.sensor_registry import SensorEntry
 from pssim.ui.variable_registry import VariableEntry, VariableState
 from pssim.viz.sensor_markers import ACTIVE_COLOR
@@ -192,6 +193,60 @@ def describe_variable_state_tooltip(entry: VariableEntry) -> str:
     if entry.state is VariableState.STALE:
         return _tr("The last value is old - the scene is still showing it")
     return _tr("Receiving values")
+
+
+#: The four source states, as the status bar says them. `DEGRADED` is not
+#: "Connected" with a footnote: the connection is alive and at least one signal
+#: is old, and the scene is drawing that old value (R10) — which looks like
+#: nothing being wrong, so the word has to say it.
+_SOURCE_STATES: Final[dict[SourceStatus, str]] = {
+    SourceStatus.DISCONNECTED: "Disconnected",
+    SourceStatus.CONNECTING: "Connecting",
+    SourceStatus.CONNECTED: "Connected",
+    SourceStatus.DEGRADED: "Stale data",
+}
+
+
+def describe_source_status(status: SourceStatus) -> str:
+    """Where the connection to the server stands, in one or two words."""
+    return _tr(_SOURCE_STATES.get(status, status.value))
+
+
+def source_status_color(status: SourceStatus) -> QColor:
+    """The indicator's colour.
+
+    Stated rather than taken from the palette: a palette's "highlight" means
+    "selected", not "connected", and the three states have to be told apart at a
+    glance on a light theme and a dark one alike. Green is the same green a live
+    sensor reading gets, so one green never comes to mean two things.
+    """
+    if status is SourceStatus.CONNECTED:
+        return live_reading_color()
+    if status is SourceStatus.DISCONNECTED:
+        return QColor(150, 150, 150)
+    # Connecting and degraded share an amber: both are "not settled yet", and
+    # inventing a fourth colour for a state that lasts a second would only make
+    # the indicator harder to read.
+    return QColor(230, 160, 30)
+
+
+def describe_source_status_tooltip(status: SourceStatus, endpoint: str, reason: str) -> str:
+    """The sentence behind the word, with the endpoint and — when there is one —
+    why it is not connected.
+
+    The reason is here rather than in the label: it is a status code, it is long,
+    and the status bar is one line. R20 put it in `Communication → Diagnostics…`
+    for reading; this is the shortest path to it.
+    """
+    if status is SourceStatus.CONNECTED:
+        return _tr("Connected to {0}").format(endpoint)
+    if status is SourceStatus.DEGRADED:
+        return _tr("Connected to {0}, but a signal has stopped arriving").format(endpoint)
+    if status is SourceStatus.CONNECTING:
+        return _tr("Trying to reach {0}").format(endpoint)
+    if reason:
+        return _tr("Not connected to {0}: {1}").format(endpoint, reason)
+    return _tr("Not connected to {0}").format(endpoint)
 
 
 def describe_direction(direction: BindingDirection) -> str:

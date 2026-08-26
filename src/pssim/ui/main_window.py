@@ -60,6 +60,7 @@ from pssim.domain.sensors import Sensor, SensorKind
 from pssim.domain.units import MM_TO_M
 from pssim.observability import get_logger
 from pssim.ui.connection_controller import ConnectionController
+from pssim.ui.connection_status import ConnectionStatusWidget
 from pssim.ui.floor_dialog import FloorDialog
 from pssim.ui.i18n import SOURCE_LANGUAGE, install_translator
 from pssim.ui.icons import (
@@ -230,12 +231,32 @@ class MainWindow(QMainWindow):
         self._build_properties_dock()
         self._build_menu()
         self._build_toolbar()
+        self._build_connection_indicator()
         self._connection.status_changed.connect(self._on_connection_status)
         self._connection.values_changed.connect(self._refresh_variables_view)
         self._update_actions()
         self.refresh_variables()
         self.restore_view_settings()
         self.statusBar().showMessage(self.tr("Ready"))
+
+    def _build_connection_indicator(self) -> None:
+        """The connection state, permanently on the right of the status bar.
+
+        `addPermanentWidget` rather than `showMessage`: a message is wiped by the
+        next one, and where the connection stands is not a message.
+        """
+        self.connection_status = ConnectionStatusWidget(self)
+        self.connection_status.clicked.connect(self.open_diagnostics_dialog)
+        self.statusBar().addPermanentWidget(self.connection_status)
+        self._refresh_connection_indicator()
+
+    def _refresh_connection_indicator(self) -> None:
+        """Point the indicator at whatever the controller currently says."""
+        self.connection_status.show_status(
+            self._connection.status,
+            self._connection_settings.endpoint,
+            self._connection.last_error or "",
+        )
 
     # -- settings -----------------------------------------------------------
 
@@ -287,6 +308,8 @@ class MainWindow(QMainWindow):
         self._settings.save_connection(settings)
         self._variables.set_tags(dict(settings.tags))
         self._refresh_variables_view()
+        # The endpoint may have changed, and the indicator names it.
+        self._refresh_connection_indicator()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt's own name
         """Qt calls this as the window goes away.
@@ -1512,11 +1535,13 @@ class MainWindow(QMainWindow):
         """The controller's status changed. Only the actions follow it — a status
         bar rewritten ten times a second is unreadable.
 
-        The *reason* is not put in the status bar either: it belongs in
+        The reason is not spelled out in the message area either: it belongs in
         `Communication → Diagnostics…`, where it can be read rather than
-        glimpsed before the next message overwrites it.
+        glimpsed before the next message overwrites it. The indicator carries it
+        as a tooltip and opens that log when clicked.
         """
         _ = status
+        self._refresh_connection_indicator()
         self._update_actions()
 
     def open_diagnostics_dialog(self) -> DiagnosticsDialog:

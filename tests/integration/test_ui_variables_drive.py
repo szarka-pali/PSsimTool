@@ -166,6 +166,46 @@ class TestAValueMovesTheModel:
         window.close()
 
 
+class TestTwoJointsOnOneVariable:
+    """One variable driving two joints is legitimate — two axes moving together
+    off one PLC value — and `VariableRegistry.set_sources` already says so."""
+
+    def test_both_follow_it(self, qt_app: QApplication) -> None:
+        scene = Window(trajectory())
+        second = scene.window._joints.add(trajectory()).joint_id
+        scene.window.refresh_variables()
+
+        scene.deliver(0.4)
+
+        entry = scene.window._joints.get(second)
+        assert entry is not None
+        assert entry.value == pytest.approx(0.4)
+        scene.close()
+
+    def test_the_first_follows_it_too(self, qt_app: QApplication) -> None:
+        scene = Window(trajectory())
+        scene.window._joints.add(trajectory())
+        scene.window.refresh_variables()
+
+        scene.deliver(0.4)
+
+        assert scene.joint_value == pytest.approx(0.4)
+        scene.close()
+
+    def test_out_of_range_for_either_marks_the_row(self, qt_app: QApplication) -> None:
+        # The row is about the value, and the value was too big for something.
+        scene = Window(trajectory())
+        scene.window._joints.add(trajectory(limits=(0.0, 0.5)))
+        scene.window.refresh_variables()
+
+        scene.deliver(0.9)
+
+        entry = scene.window._variables.get(VARIABLE)
+        assert entry is not None
+        assert entry.is_out_of_range is True
+        scene.close()
+
+
 class TestOutOfRange:
     """A PLC sending 3000 mm to an axis that stops at 2450 is a fault worth
     seeing, not something to flatten silently."""

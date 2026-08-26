@@ -1528,46 +1528,50 @@ class MainWindow(QMainWindow):
                 continue
             if not entry.is_applied:
                 continue
-            joint_id = self._joint_id_for_variable(entry.name)
-            if joint_id is None:
+            joint_ids = self._joint_ids_for_variable(entry.name)
+            if not joint_ids:
                 # A sensor's variable, or one whose joint was renamed since. It
                 # still arrives and is still shown; there is nothing to drive.
                 continue
-            self._drive_one_joint(joint_id, entry.name, entry.value)
+            # Every joint naming it, not the first: one variable driving two
+            # joints is legitimate and `VariableRegistry.set_sources` already
+            # says so — two axes moving together off one PLC value.
+            out_of_range = False
+            for joint_id in joint_ids:
+                out_of_range = self._drive_one_joint(joint_id, entry.value) or out_of_range
+            self._variables.set_out_of_range(entry.name, out_of_range)
             moved = True
 
         if moved:
             self.refresh_sensor_readings()
 
-    def _drive_one_joint(self, joint_id: str, variable: str, value: float) -> None:
-        """One joint, clamped into what it can actually reach.
+    def _drive_one_joint(self, joint_id: str, value: float) -> bool:
+        """One joint, clamped into what it can actually reach. Returns whether it
+        had to be clamped.
 
         A value outside the limits is **not** dropped and not passed through: the
         joint goes to its limit, which is where the real machine would be, and
-        the row is marked so the number that arrived can be seen in red. Silently
-        flattening it would hide a PLC sending millimetres where metres were
-        expected, which is the most likely cause of it.
+        the caller marks the row so the number that arrived can be seen in red.
+        Silently flattening it would hide a PLC sending millimetres where metres
+        were expected, which is the most likely cause of it.
         """
         entry = self._joints.get(joint_id)
         if entry is None:  # pragma: no cover - the registry was just asked
-            return
+            return False
         low, high = effective_limits(entry.joint)
         clamped, was_clamped = clamp(low, high, value)
-        self._variables.set_out_of_range(variable, was_clamped)
         self._set_joint_value(joint_id, clamped)
+        return was_clamped
 
-    def _joint_id_for_variable(self, variable: str) -> str | None:
-        """The joint this variable drives, or `None` when no joint claims it.
+    def _joint_ids_for_variable(self, variable: str) -> tuple[str, ...]:
+        """Every joint this variable drives. Empty when no joint claims it.
 
         Searched rather than indexed: a scene has a handful of joints, and an
         index would have to be rebuilt everywhere a joint is added, renamed or
         removed — the one that got forgotten would leave an axis not following
         its own variable, which is exactly the fault this method exists to fix.
         """
-        for entry in self._joints:
-            if entry.joint.variable == variable:
-                return entry.joint_id
-        return None
+        return tuple(entry.joint_id for entry in self._joints if entry.joint.variable == variable)
 
     def set_variable_applied(self, variable: str, is_applied: bool) -> None:
         """Switch whether arriving values move the model. Qt slot for the table.

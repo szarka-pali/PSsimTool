@@ -657,6 +657,48 @@ The outbox itself lives in `StateStore` because R10 says that is the only mutabl
 between threads and anything else that needs sharing extends it. A dict keyed by signal, not a
 queue, for the reason the inbox is not one: a value offered on every frame is written once.
 
+**A value that arrives moves the model.** For a while it did not: the store held it,
+the registry held it, the table showed it, and `values_changed` was wired straight to
+a method that redraws a table. Reading a machine without watching it move is not the
+point of any of this, so a joint now takes the value of the variable it names, on
+every notification.
+
+Four decisions in that path:
+
+- **The variable-to-joint lookup is a search, not an index.** A scene has a handful
+  of joints, and an index would have to be rebuilt everywhere one is added, renamed
+  or removed; the place that got forgotten would leave an axis not following its own
+  variable, which is the fault this replaced.
+- **Every joint naming the variable is driven, not the first.** One variable driving
+  two joints is legitimate — two axes moving together off one PLC value — and
+  `VariableRegistry.set_sources` already said so.
+- **The sensors are re-read once per notification, not per joint.** Every sensor is
+  evaluated against every model (R16), so `apply_joint_value` was split:
+  `_set_joint_value` moves one joint, and the caller moving several refreshes the
+  sensors at the end.
+- **A value outside the joint's limits is clamped, and the row shows the number that
+  arrived, in red.** The joint goes to its limit, which is where the real machine
+  would be. The *arrived* value is what stays on screen because that is the
+  diagnostic — a PLC sending millimetres where metres were expected is unmistakable
+  as `2450` against a limit of `2.45`, and invisible once flattened to the limit. The
+  tooltip says the joint is at its limit instead. This is the only red in that table,
+  and it is a fault in the value rather than in the connection, so the Status column
+  stays uncoloured.
+
+**Applying a value is a switch per variable** (the `Apply` column, on by default).
+Cleared, the value goes on arriving and being shown and stops moving the model —
+which is how a scene is posed by hand while the PLC is connected, and it is what the
+application could do before it could read anything at all. A sensor's variable gets
+no checkbox rather than a cleared one: it travels the other way, there is nothing
+arriving for it to apply, and an empty box would suggest it could be turned on.
+
+Turning it back on does not replay the last value; the next notification carries it.
+Reaching backwards for one already declined would make the switch mean two things.
+
+The switch is **not stored**. It is neither scene content (R7) nor a fact about this
+user's screen (R18), and giving it a third home is a decision worth making on its own
+rather than in passing.
+
 Three more decisions:
 
 - **Browsing is a separate module** (`io/opcua_browser.py`). A browse is a one-off question

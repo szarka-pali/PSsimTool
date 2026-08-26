@@ -14,8 +14,13 @@ from typing import Final
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDoubleSpinBox, QHBoxLayout, QLabel, QSlider, QWidget
 
-from pssim.domain.model_joints import ModelJoint, ModelJointKind, effective_limits
-from pssim.domain.units import DEG_TO_RAD, MM_TO_M
+from pssim.domain.model_joints import (
+    ModelJoint,
+    ModelJointKind,
+    display_unit,
+    effective_limits,
+    value_scale,
+)
 from pssim.ui.placement_dialog import ROTATION_DECIMALS, TRANSLATION_DECIMALS
 
 #: The slider's own resolution — independent of the spin box's float range, and
@@ -63,7 +68,7 @@ class JointValueRow(QWidget):
         super().__init__(parent)
         self._joint_id = joint_id
         self._is_axis = joint.kind is ModelJointKind.AXIS
-        self._scale = DEG_TO_RAD if self._is_axis else MM_TO_M
+        self._scale = value_scale(joint.kind)
         low, high = effective_limits(joint)
         self._low_display = low / self._scale
         self._high_display = high / self._scale
@@ -75,7 +80,7 @@ class JointValueRow(QWidget):
         self.value_spin = QDoubleSpinBox(self)
         self.value_spin.setRange(self._low_display, self._high_display)
         self.value_spin.setDecimals(ROTATION_DECIMALS if self._is_axis else TRANSLATION_DECIMALS)
-        self.value_spin.setSuffix(" °" if self._is_axis else " mm")
+        self.value_spin.setSuffix(f" {display_unit(joint.kind)}")
 
         self.slider = QSlider(Qt.Orientation.Horizontal, self)
         self.slider.setRange(0, SLIDER_STEPS)

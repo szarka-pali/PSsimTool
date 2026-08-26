@@ -21,6 +21,7 @@ from pssim.domain.model_joints import (
     anchor_pose,
     clamp,
     direction_of,
+    display_unit,
     effective_limits,
     from_anchor,
     from_model_joint,
@@ -202,6 +203,33 @@ class TestTrajectoryPose:
         pose = model_joint_pose(trajectory_joint(), 0.5)
 
         assert pose.rotation_angle_rad == 0.0
+
+
+class TestTheUnitAValueIsWrittenIn:
+    """A joint's value is degrees for an axis and millimetres for a trajectory.
+
+    `value_scale` already existed for the limits and the live value; these pin it
+    for the third caller, the tag conversion, and `display_unit` is the label
+    that goes beside it — until now spelled out at each spin box.
+    """
+
+    def test_an_axis_is_in_degrees(self) -> None:
+        assert value_scale(ModelJointKind.AXIS) == pytest.approx(math.pi / 180.0)
+
+    def test_a_trajectory_is_in_millimetres(self) -> None:
+        assert value_scale(ModelJointKind.TRAJECTORY) == pytest.approx(1e-3)
+
+    def test_ninety_degrees_is_a_quarter_turn(self) -> None:
+        assert 90.0 * value_scale(ModelJointKind.AXIS) == pytest.approx(math.pi / 2.0)
+
+    def test_a_metre_of_travel_is_a_thousand(self) -> None:
+        assert 1000.0 * value_scale(ModelJointKind.TRAJECTORY) == pytest.approx(1.0)
+
+    def test_an_axis_is_labelled_in_degrees(self) -> None:
+        assert display_unit(ModelJointKind.AXIS) == "°"
+
+    def test_a_trajectory_is_labelled_in_millimetres(self) -> None:
+        assert display_unit(ModelJointKind.TRAJECTORY) == "mm"
 
 
 class TestEffectiveLimits:

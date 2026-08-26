@@ -438,6 +438,15 @@ def value_scale(kind: ModelJointKind) -> float:
     return DEG_TO_RAD if kind is ModelJointKind.AXIS else MM_TO_M
 
 
+def display_unit(kind: ModelJointKind) -> str:
+    """`"°"` or `"mm"` — the suffix that belongs beside a value of this kind.
+
+    Not translated: both are symbols rather than words, and neither changes in
+    any language this would be read in.
+    """
+    return "\u00b0" if kind is ModelJointKind.AXIS else "mm"
+
+
 @dataclass(frozen=True, slots=True)
 class ModelJointDisplay:
     """A joint in the units the user sees: **millimetres and degrees**. Same role as

@@ -14,6 +14,7 @@ import pytest
 
 from pssim.config.binding import BindingDirection, JointBinding, VariableBinding
 from pssim.domain.errors import DataSourceError
+from pssim.domain.units import MM_TO_M
 from pssim.io._ready import wait_for_endpoint
 from pssim.io.base import SourceStatus
 from pssim.io.mock_server import (
@@ -249,7 +250,7 @@ class TestWriting:
                         VariableBinding(
                             variable="distance",
                             node_id=OUTPUT_NODE,
-                            scale=0.001,
+                            unit_scale=MM_TO_M,
                             direction=BindingDirection.WRITE,
                         ),
                     ),

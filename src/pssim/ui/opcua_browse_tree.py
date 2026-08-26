@@ -15,7 +15,13 @@ from __future__ import annotations
 from typing import Final
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QWidget
+from PySide6.QtGui import QPalette
+from PySide6.QtWidgets import (
+    QApplication,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QWidget,
+)
 
 from pssim.io.opcua_browse_session import (
     OBJECTS_NODE_ID,
@@ -63,7 +69,10 @@ class OpcUaBrowseTree(QTreeWidget):
         super().__init__(parent)
 
         self._session: OpcUaBrowseSession | None = None
-        self._workers: dict[str, _ChildrenThread] = {}
+        # Keyed by node **and** path: a struct's fields all share one node id,
+        # so keying by node alone would drop the second field expanded and
+        # fill the wrong row with the first one's answer.
+        self._workers: dict[tuple[str, str], _ChildrenThread] = {}
         self._numeric_only = False
 
         self.setHeaderLabels(
@@ -136,21 +145,22 @@ class OpcUaBrowseTree(QTreeWidget):
             return
         node = item.data(COLUMN_NAME, NODE_ROLE)
         if isinstance(node, BrowseNode):
-            self._request(node.node_id, parent=item)
+            self._request(node.node_id, parent=item, path=node.path)
 
-    def _request(self, node_id: str, parent: QTreeWidgetItem | None) -> None:
-        """Start one worker for one node. A second request for the same node
+    def _request(self, node_id: str, parent: QTreeWidgetItem | None, path: str = "") -> None:
+        """Start one worker for one place. A second request for the same place
         while the first is in flight is dropped — double-clicking an expander
         should not ask twice."""
         session = self._session
-        if session is None or node_id in self._workers:
+        key = (node_id, path)
+        if session is None or key in self._workers:
             return
 
-        worker = _ChildrenThread(session, node_id, parent, self)
+        worker = _ChildrenThread(session, node_id, parent, path, self)
         worker.succeeded.connect(self._on_children)
         worker.failed.connect(self._on_failure)
-        worker.finished.connect(lambda: self._workers.pop(node_id, None))
-        self._workers[node_id] = worker
+        worker.finished.connect(lambda: self._workers.pop(key, None))
+        self._workers[key] = worker
         worker.start()
 
     def _on_children(self, _node_id: str, parent: object, result: object) -> None:
@@ -228,12 +238,14 @@ class _ChildrenThread(QThread):
         session: OpcUaBrowseSession,
         node_id: str,
         parent_item: QTreeWidgetItem | None,
+        path: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._session = session
         self._node_id = node_id
         self._parent_item = parent_item
+        self._path = path
 
     def abandon(self) -> None:
         """Stop anyone hearing the answer. The thread itself finishes on its own
@@ -244,7 +256,7 @@ class _ChildrenThread(QThread):
     def run(self) -> None:
         """Never raises out of the thread: that would take the window with it."""
         try:
-            result = self._session.children_of(self._node_id)
+            result = self._session.children_of(self._node_id, path=self._path)
         except Exception as exc:
             self.failed.emit(self._node_id, str(exc))
             return
@@ -263,22 +275,54 @@ def _make_item(node: BrowseNode, numeric_only: bool) -> QTreeWidgetItem:
     )
     item.setData(COLUMN_NAME, NODE_ROLE, node)
     item.setData(COLUMN_NAME, LOADED_ROLE, False)
-    item.setToolTip(COLUMN_NAME, node.browse_name)
+    item.setToolTip(COLUMN_NAME, _tooltip(node))
 
     if node.has_children:
         # A placeholder, so the expander exists before anything is known about
         # what is inside. Without it a folder reads as empty until it is opened,
         # which is the one thing it cannot be.
         item.addChild(QTreeWidgetItem([PLACEHOLDER_TEXT, "", "", ""]))
+        if node.is_container:
+            # **Dimmed, not disabled.** A struct or an array is the one thing
+            # here that must stay openable — it is where the field somebody
+            # wants lives — while still reading as something that cannot itself
+            # be bound. Disabling it would rest on Qt letting a click reach the
+            # expander of a disabled row, which is not a thing to build the
+            # central interaction of a feature on. The same choice R15 made for
+            # a hidden model's row, for the same reason.
+            _dim(item)
     elif node.kind is NodeKind.OTHER:
         # A method or a type: shown so the tree matches the server, greyed
         # because there is nothing this application can do with it.
         item.setDisabled(True)
     elif numeric_only and not node.is_numeric:
-        # Greyed rather than hidden: it is then obvious that the tag was found
+        # Greyed rather than hidden: it is obvious then that the tag was found
         # and rejected, not that it is missing.
         item.setDisabled(True)
     return item
+
+
+def _tooltip(node: BrowseNode) -> str:
+    """The browse name, and for a field where inside the value it is.
+
+    A field's Node id column shows the node holding it — correct, and identical
+    all the way down a struct's subtree, so the path is what says which place
+    this row actually is.
+    """
+    if node.path:
+        return f"{node.browse_name}\n{node.node_id} → {node.path}"
+    return node.browse_name
+
+
+def _dim(item: QTreeWidgetItem) -> None:
+    """Paint a row in the palette's disabled colour without disabling it.
+
+    From the palette rather than a fixed grey: a hardcoded one cannot be legible
+    on a light theme and a dark one both (R17).
+    """
+    color = QApplication.palette().color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text)
+    for column in range(item.columnCount()):
+        item.setForeground(column, color)
 
 
 def _access_text(node: BrowseNode) -> str:

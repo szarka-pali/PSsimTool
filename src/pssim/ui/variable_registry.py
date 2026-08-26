@@ -80,6 +80,7 @@ class VariableEntry:
             scale=self.tag.scale,
             offset=self.tag.offset,
             direction=self.direction,
+            path=self.tag.path,
         )
 
 

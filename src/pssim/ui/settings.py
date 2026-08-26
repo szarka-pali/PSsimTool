@@ -36,6 +36,8 @@ import os
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, TypeGuard
 
+from pssim.domain.errors import DataSourceError
+from pssim.io.opcua_path import parse_path
 from pssim.io.opcua_security import (
     POLICY_NONE,
     Credentials,
@@ -78,9 +80,26 @@ class VariableTag:
     node_id: str
     scale: float = 1.0
     offset: float = 0.0
+    path: str = ""
+    """Where inside the node's value the number is: `Position.X`, `Limits[1]`.
+
+    A **field is not a node** — a server has one node for a struct and nothing
+    for a field inside it — so a tag on a field is this node id plus this path.
+    Empty means the node's own value, which is what every tag stored before
+    structures existed means, so nothing already saved changes meaning.
+    """
 
     def to_dict(self) -> dict[str, Any]:
-        return {"node_id": self.node_id, "scale": self.scale, "offset": self.offset}
+        stored: dict[str, Any] = {
+            "node_id": self.node_id,
+            "scale": self.scale,
+            "offset": self.offset,
+        }
+        # Written only when there is one, so a settings file from a scene with no
+        # structures in it looks exactly as it did before paths existed.
+        if self.path:
+            stored["path"] = self.path
+        return stored
 
     @classmethod
     def from_dict(cls, data: Any) -> VariableTag | None:
@@ -98,6 +117,7 @@ class VariableTag:
             node_id=node_id,
             scale=_as_float(data.get("scale"), 1.0),
             offset=_as_float(data.get("offset"), 0.0),
+            path=_as_path(data.get("path")),
         )
 
 
@@ -337,6 +357,24 @@ def _as_token(value: Any) -> TokenType:
         if token.value == value:
             return token
     return TokenType.ANONYMOUS
+
+
+def _as_path(value: Any) -> str:
+    """A path this build can actually walk, or none at all.
+
+    Validated on the way in like every other setting (R18). A malformed path
+    would otherwise reach `resolve_value` on the source's thread and be reported
+    per notification, at the publishing rate, about a settings file nobody is
+    looking at.
+    """
+    if not isinstance(value, str) or not value:
+        return ""
+    try:
+        parse_path(value)
+    except DataSourceError:
+        logger.warning("ignoring an unusable variable path", path=value)
+        return ""
+    return value
 
 
 def _as_float(value: Any, fallback: float) -> float:

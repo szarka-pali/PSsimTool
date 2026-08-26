@@ -21,7 +21,7 @@ meanwhile looks broken — the same reason `ui/loader.StepImportThread` exists.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Final
+from typing import Final, TypeGuard
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -582,6 +582,19 @@ class AssignTagDialog(QDialog):
         self.node_edit.setToolTip(self.tr("The NodeId in text form, e.g. ns=2;s=Axes.X.ActPos"))
         form.addRow(self.tr("Node id:"), self.node_edit)
 
+        # Shown as a field of its own rather than folded into the node id: they
+        # are two different things, and a struct's every field shares one node
+        # id, so the path is what says which of them this is.
+        self.path_edit = QLineEdit(current.path if current is not None else "", self)
+        self.path_edit.setPlaceholderText(self.tr("the whole value"))
+        self.path_edit.setToolTip(
+            self.tr(
+                "Which field of a structure, or which element of an array: "
+                "Position.X, Limits[1]. Empty reads the node's own value."
+            )
+        )
+        form.addRow(self.tr("Path:"), self.path_edit)
+
         # The conversion belongs with the tag, not with the joint: the same axis
         # read from a different PLC may arrive in different units (R8).
         self.scale_spin = QDoubleSpinBox(self)
@@ -641,19 +654,28 @@ class AssignTagDialog(QDialog):
         self.browse_button.setEnabled(True)
 
     def _on_node_selected(self, node: object) -> None:
-        """Picking in the tree fills the field, which stays editable.
+        """Picking in the tree fills the fields, which stay editable.
 
-        Only a variable: selecting a folder is navigation, and letting it
-        overwrite a node id already typed would lose it on the way past.
+        Only something bindable: selecting a folder, a struct or an array is
+        navigation — a struct is the row you open on the way to the field you
+        want — and letting any of them overwrite what is already typed would lose
+        it on the way past.
         """
-        if isinstance(node, BrowseNode) and node.is_variable:
-            self.node_edit.setText(node.node_id)
+        if _is_pickable(node):
+            self._take(node)
 
     def _on_node_activated(self, node: object) -> None:
-        """A double-click on a variable is "that one, done"."""
-        if isinstance(node, BrowseNode) and node.is_variable:
-            self.node_edit.setText(node.node_id)
+        """A double-click on something bindable is "that one, done"."""
+        if _is_pickable(node):
+            self._take(node)
             self.accept()
+
+    def _take(self, node: BrowseNode) -> None:
+        """Both halves of what a row identifies. The path is set even when it is
+        empty: picking a plain node after a field has to clear the old path, or
+        the tag would keep pointing inside a value the new node does not have."""
+        self.node_edit.setText(node.node_id)
+        self.path_edit.setText(node.path)
 
     # -- values -------------------------------------------------------------
 
@@ -671,6 +693,7 @@ class AssignTagDialog(QDialog):
             node_id=node_id,
             scale=self.scale_spin.value(),
             offset=self.offset_spin.value(),
+            path=self.path_edit.text().strip(),
         )
 
     def done(self, result: int) -> None:
@@ -681,6 +704,18 @@ class AssignTagDialog(QDialog):
         if session is not None:
             session.close()
         super().done(result)
+
+
+def _is_pickable(node: object) -> TypeGuard[BrowseNode]:
+    """Whether selecting this row means "bind that".
+
+    A container is excluded: a struct's value is an object and an array's is a
+    list, and neither is a number. It is still the row that gets opened to reach
+    the field that is one.
+    """
+    # A `TypeGuard`, so the caller may then read the node's fields without a
+    # second `isinstance` at every call site.
+    return isinstance(node, BrowseNode) and node.is_variable and not node.is_container
 
 
 class DiagnosticsDialog(QDialog):

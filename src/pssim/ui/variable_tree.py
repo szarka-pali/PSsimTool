@@ -18,9 +18,11 @@ from PySide6.QtCore import QModelIndex, QPoint, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem, QWidget
 
+from pssim.config.binding import BindingDirection
 from pssim.observability import get_logger
 from pssim.ui.labels import (
     NOT_APPLICABLE,
+    describe_applied,
     describe_direction,
     describe_direction_tooltip,
     describe_variable_state,
@@ -28,6 +30,7 @@ from pssim.ui.labels import (
     describe_variable_value,
     describe_variable_value_tooltip,
     live_reading_color,
+    out_of_range_color,
 )
 from pssim.ui.variable_registry import VariableEntry, VariableRegistry, VariableState
 
@@ -38,17 +41,18 @@ logger = get_logger(__name__)
 #: the same string here but need not stay that way.
 VARIABLE_NAME_ROLE: Final = int(Qt.ItemDataRole.UserRole) + 1
 
-COLUMN_NAME: Final = 0
-COLUMN_DIRECTION: Final = 1
-COLUMN_TAG: Final = 2
-COLUMN_VALUE: Final = 3
-COLUMN_STATUS: Final = 4
+COLUMN_APPLY: Final = 0
+COLUMN_NAME: Final = 1
+COLUMN_DIRECTION: Final = 2
+COLUMN_TAG: Final = 3
+COLUMN_VALUE: Final = 4
+COLUMN_STATUS: Final = 5
 
 #: How this table is named in the saved view settings.
 TABLE_NAME: Final = "variables"
 
 #: What the columns start at before anyone has dragged them.
-DEFAULT_COLUMN_WIDTHS: Final[tuple[int, ...]] = (110, 60, 200, 90, 100)
+DEFAULT_COLUMN_WIDTHS: Final[tuple[int, ...]] = (46, 110, 60, 200, 90, 100)
 
 
 class VariableTree(QTreeWidget):
@@ -65,17 +69,25 @@ class VariableTree(QTreeWidget):
     connect_requested = Signal()
     settings_requested = Signal()
 
+    applied_changed = Signal(str, bool)
+    """A checkbox was clicked. Carries the variable's name and its new state."""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
         self.setHeaderLabels(
             [
+                self.tr("Apply"),
                 self.tr("Variable"),
                 self.tr("Way"),
                 self.tr("OPC UA tag"),
                 self.tr("Value"),
                 self.tr("Status"),
             ]
+        )
+        self.headerItem().setToolTip(
+            COLUMN_APPLY,
+            self.tr("Whether an arriving value moves the model"),
         )
         self.setRootIsDecorated(False)  # no children — arrows would be noise
         self.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
@@ -90,6 +102,7 @@ class VariableTree(QTreeWidget):
 
         self.itemSelectionChanged.connect(self._on_selection_changed)
         self.itemDoubleClicked.connect(self._on_double_clicked)
+        self.itemChanged.connect(self._on_item_changed)
 
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
@@ -207,11 +220,26 @@ class VariableTree(QTreeWidget):
     def _on_selection_changed(self) -> None:
         self.variable_selected.emit(self.selected_variable)
 
+    def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
+        """A checkbox was clicked. Nothing else in this table is editable.
+
+        `refresh` blocks signals while it rebuilds, so this only ever fires for a
+        real click — otherwise redrawing the table would report every row as
+        having just been switched.
+        """
+        if column != COLUMN_APPLY:
+            return
+        name = item.data(COLUMN_NAME, VARIABLE_NAME_ROLE)
+        if not isinstance(name, str):
+            return
+        self.applied_changed.emit(name, item.checkState(COLUMN_APPLY) == Qt.CheckState.Checked)
+
 
 def _make_item(entry: VariableEntry) -> QTreeWidgetItem:
     """One row. The name travels in item data, never read back from the text."""
     item = QTreeWidgetItem(
         [
+            "",
             entry.name,
             describe_direction(entry.direction),
             entry.tag.node_id if entry.tag is not None else NOT_APPLICABLE,
@@ -224,15 +252,40 @@ def _make_item(entry: VariableEntry) -> QTreeWidgetItem:
     item.setToolTip(COLUMN_VALUE, describe_variable_value_tooltip(entry))
     item.setToolTip(COLUMN_STATUS, describe_variable_state_tooltip(entry))
     item.setTextAlignment(COLUMN_VALUE, Qt.AlignmentFlag.AlignRight)
+    _set_apply_box(item, entry)
 
     # The same green a live sensor reading gets, and for the same reason: it
-    # marks the rows that are actually carrying data right now. Nothing is
-    # painted red — a red cell in a table reads as an error, and being
-    # disconnected is a state, not a fault.
+    # marks the rows that are actually carrying data right now.
     if entry.state is VariableState.LIVE:
         item.setBackground(COLUMN_STATUS, live_reading_color())
+
+    # The one thing painted red, and it is a fault rather than a state: the
+    # number arrived and the joint cannot reach it. Being disconnected is still
+    # left uncoloured — that is a state, and a red cell would read as a problem
+    # with the row rather than with the value in it.
+    if entry.is_out_of_range:
+        item.setForeground(COLUMN_VALUE, out_of_range_color())
+
     item.setToolTip(COLUMN_DIRECTION, describe_direction_tooltip(entry.direction))
     return item
+
+
+def _set_apply_box(item: QTreeWidgetItem, entry: VariableEntry) -> None:
+    """The checkbox, on the rows where it means something.
+
+    A sensor's variable travels the other way (R19) — there is nothing arriving
+    for it to apply — so it gets **no box at all** rather than a cleared one,
+    which would suggest it could be turned on.
+    """
+    if entry.direction is not BindingDirection.READ:
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+        return
+    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+    item.setCheckState(
+        COLUMN_APPLY,
+        Qt.CheckState.Checked if entry.is_applied else Qt.CheckState.Unchecked,
+    )
+    item.setToolTip(COLUMN_APPLY, describe_applied(entry.is_applied))
 
 
 def state_color(entry: VariableEntry) -> QColor | None:

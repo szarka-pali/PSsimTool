@@ -54,7 +54,7 @@ from pssim.config.project import (
 )
 from pssim.domain.errors import PSsimError
 from pssim.domain.machine import Rgba, Transform, Vec3
-from pssim.domain.model_joints import ModelJoint, ModelJointKind
+from pssim.domain.model_joints import ModelJoint, ModelJointKind, clamp, effective_limits
 from pssim.domain.placement import IDENTITY_PLACEMENT
 from pssim.domain.sensors import Sensor, SensorKind
 from pssim.domain.units import MM_TO_M
@@ -1188,6 +1188,7 @@ class MainWindow(QMainWindow):
         self.variable_tree.clear_requested.connect(self.clear_variable_tag)
         self.variable_tree.connect_requested.connect(self.connect_to_server)
         self.variable_tree.settings_requested.connect(self.open_connection_dialog)
+        self.variable_tree.applied_changed.connect(self.set_variable_applied)
 
         dock = QDockWidget(self.tr("Variables"), self)
         dock.setObjectName("variable-dock")
@@ -1525,16 +1526,35 @@ class MainWindow(QMainWindow):
         for entry in self._variables:
             if entry.direction is not BindingDirection.READ or entry.value is None:
                 continue
+            if not entry.is_applied:
+                continue
             joint_id = self._joint_id_for_variable(entry.name)
             if joint_id is None:
                 # A sensor's variable, or one whose joint was renamed since. It
                 # still arrives and is still shown; there is nothing to drive.
                 continue
-            self._set_joint_value(joint_id, entry.value)
+            self._drive_one_joint(joint_id, entry.name, entry.value)
             moved = True
 
         if moved:
             self.refresh_sensor_readings()
+
+    def _drive_one_joint(self, joint_id: str, variable: str, value: float) -> None:
+        """One joint, clamped into what it can actually reach.
+
+        A value outside the limits is **not** dropped and not passed through: the
+        joint goes to its limit, which is where the real machine would be, and
+        the row is marked so the number that arrived can be seen in red. Silently
+        flattening it would hide a PLC sending millimetres where metres were
+        expected, which is the most likely cause of it.
+        """
+        entry = self._joints.get(joint_id)
+        if entry is None:  # pragma: no cover - the registry was just asked
+            return
+        low, high = effective_limits(entry.joint)
+        clamped, was_clamped = clamp(low, high, value)
+        self._variables.set_out_of_range(variable, was_clamped)
+        self._set_joint_value(joint_id, clamped)
 
     def _joint_id_for_variable(self, variable: str) -> str | None:
         """The joint this variable drives, or `None` when no joint claims it.
@@ -1548,6 +1568,17 @@ class MainWindow(QMainWindow):
             if entry.joint.variable == variable:
                 return entry.joint_id
         return None
+
+    def set_variable_applied(self, variable: str, is_applied: bool) -> None:
+        """Switch whether arriving values move the model. Qt slot for the table.
+
+        Turning it back on does not replay the last value: the next notification
+        carries it, and reaching backwards for one that has already been declined
+        would make the switch mean two different things.
+        """
+        if not self._variables.set_applied(variable, is_applied):
+            return
+        self._refresh_variables_view()
 
     # -- the connection ---------------------------------------------------------
 

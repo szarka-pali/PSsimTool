@@ -1,8 +1,13 @@
-"""Values arriving from the PLC drive the joints.
+"""Values arriving from the PLC drive the joints, under control.
 
-The bug: values were read, the registry held them, the table showed them, and
-nothing moved. `_refresh_variables_view` redrew the table and there was no path
-from a variable to the joint carrying its name.
+Three things at once, because they are one behaviour:
+
+- a value that arrives **moves the model** — the registry holding it and the
+  table showing it is not the point of reading it;
+- a variable can be switched off, so the joint goes back to being set by hand;
+- a value outside the joint's limits is clamped and shown red, because a PLC
+  sending 3000 mm to an axis that stops at 2450 is a fault worth seeing rather
+  than silently flattening.
 
 No server: `ConnectionController.poll` takes the store and the time, so a value
 can be put in by hand at a known instant. What is exercised is the window's own
@@ -41,7 +46,7 @@ def qt_app() -> QApplication:
     return QApplication([])
 
 
-def trajectory() -> ModelJoint:
+def trajectory(limits: tuple[float, float] | None = None) -> ModelJoint:
     """A straight path a metre long, so a value is a distance in metres."""
     return ModelJoint(
         name="rail",
@@ -49,6 +54,7 @@ def trajectory() -> ModelJoint:
         origin=(0.0, 0.0, 0.0),
         target=(1.0, 0.0, 0.0),
         variable=VARIABLE,
+        limits=limits,
     )
 
 
@@ -158,3 +164,106 @@ class TestAValueMovesTheModel:
 
         assert window._variables.get("orphan") is None
         window.close()
+
+
+class TestOutOfRange:
+    """A PLC sending 3000 mm to an axis that stops at 2450 is a fault worth
+    seeing, not something to flatten silently."""
+
+    @pytest.fixture
+    def limited(self, qt_app: QApplication) -> Window:
+        return Window(trajectory(limits=(0.2, 0.8)))
+
+    def test_a_value_above_the_limit_is_clamped(self, limited: Window) -> None:
+        limited.deliver(0.95)
+
+        assert limited.joint_value == pytest.approx(0.8)
+
+    def test_a_value_below_it_too(self, limited: Window) -> None:
+        # Moved off the lower limit first: a joint with limits does not rest at
+        # zero (R9), so this would pass with nothing driving it at all.
+        limited.deliver(0.5, at_s=10.0)
+
+        limited.deliver(0.05, at_s=11.0)
+
+        assert limited.joint_value == pytest.approx(0.2)
+
+    def test_a_value_inside_is_untouched(self, limited: Window) -> None:
+        limited.deliver(0.5)
+
+        assert limited.joint_value == pytest.approx(0.5)
+
+    def test_the_row_says_it_was_out_of_range(self, limited: Window) -> None:
+        limited.deliver(0.95)
+
+        entry = limited.window._variables.get(VARIABLE)
+        assert entry is not None
+        assert entry.is_out_of_range is True
+
+    def test_and_stops_saying_so_once_it_is_back(self, limited: Window) -> None:
+        limited.deliver(0.95, at_s=10.0)
+        limited.deliver(0.5, at_s=11.0)
+
+        entry = limited.window._variables.get(VARIABLE)
+        assert entry is not None
+        assert entry.is_out_of_range is False
+
+    def test_the_value_shown_is_the_one_that_arrived(self, limited: Window) -> None:
+        # Not the clamped one: seeing 0.95 in red says what the PLC sent, which
+        # is the whole diagnostic. The joint took 0.8.
+        limited.deliver(0.95)
+
+        assert limited.shown == pytest.approx(0.95)
+
+
+class TestSwitchingItOff:
+    def test_it_is_on_by_default(self, scene: Window) -> None:
+        entry = scene.window._variables.get(VARIABLE)
+        assert entry is not None
+        assert entry.is_applied is True
+
+    def test_switched_off_the_joint_stops_following(self, scene: Window) -> None:
+        scene.window.set_variable_applied(VARIABLE, False)
+
+        scene.deliver(0.4)
+
+        assert scene.joint_value == pytest.approx(0.0)
+
+    def test_but_the_value_still_arrives(self, scene: Window) -> None:
+        # Off means "do not move the model", not "stop reading".
+        scene.window.set_variable_applied(VARIABLE, False)
+
+        scene.deliver(0.4)
+
+        assert scene.shown == pytest.approx(0.4)
+
+    def test_switched_off_the_joint_can_be_set_by_hand(self, scene: Window) -> None:
+        scene.window.set_variable_applied(VARIABLE, False)
+        scene.deliver(0.4)
+
+        scene.window.apply_joint_value(scene.joint_id, 0.7)
+
+        assert scene.joint_value == pytest.approx(0.7)
+
+    def test_switching_it_back_on_takes_the_next_value(self, scene: Window) -> None:
+        scene.window.set_variable_applied(VARIABLE, False)
+        scene.deliver(0.4, at_s=10.0)
+
+        scene.window.set_variable_applied(VARIABLE, True)
+        scene.deliver(0.9, at_s=11.0)
+
+        assert scene.joint_value == pytest.approx(0.9)
+
+    def test_a_value_out_of_range_is_not_flagged_while_it_is_off(
+        self, qt_app: QApplication
+    ) -> None:
+        # Nothing is being clamped, so nothing is being refused.
+        scene = Window(trajectory(limits=(0.2, 0.8)))
+        scene.window.set_variable_applied(VARIABLE, False)
+
+        scene.deliver(0.95)
+
+        entry = scene.window._variables.get(VARIABLE)
+        assert entry is not None
+        assert entry.is_out_of_range is False
+        scene.close()

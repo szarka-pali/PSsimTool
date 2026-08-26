@@ -481,8 +481,8 @@ class TestDialogs:
 
 
 class TestTheTabItself:
-    def test_it_has_five_columns(self, qt_app: QApplication) -> None:
-        assert VariableTree().columnCount() == 5
+    def test_it_has_six_columns(self, qt_app: QApplication) -> None:
+        assert VariableTree().columnCount() == 6
 
     def test_every_column_can_be_dragged(self, qt_app: QApplication) -> None:
         tree = VariableTree()

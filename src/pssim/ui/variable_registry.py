@@ -64,7 +64,27 @@ class VariableEntry:
     owner: str
     tag: VariableTag | None = None
     value: float | None = None
+    """The number that **arrived**, not the one the joint took. When a value is
+    out of range those differ, and the one worth showing is what the PLC sent —
+    that is the diagnostic; the clamped one says only that something was wrong."""
+
     state: VariableState = VariableState.UNBOUND
+
+    is_applied: bool = True
+    """Whether an arriving value moves the model.
+
+    On by default: reading a machine and watching it move is the point of the
+    application. Off leaves the value arriving and shown while the joint goes
+    back to being set by hand, which is how a scene is posed while the PLC is
+    connected.
+    """
+
+    is_out_of_range: bool = False
+    """Whether the last value had to be clamped into the joint's limits.
+
+    Not an error state of its own: the value arrived intact and the joint is at
+    its limit. It is a fault in what was sent, and the row says so in red.
+    """
 
     @property
     def is_bound(self) -> bool:
@@ -92,11 +112,15 @@ class VariableRegistry:
     every time something moves.
     """
 
-    __slots__ = ("_entries", "_tags", "_is_connected")
+    __slots__ = ("_entries", "_tags", "_applied", "_is_connected")
 
     def __init__(self) -> None:
         self._entries: dict[str, VariableEntry] = {}
         self._tags: dict[str, VariableTag] = {}
+        # Kept by name outside the entries, like `_tags`: a variable switched off
+        # must stay switched off when the scene is re-read, and the entries are
+        # rebuilt from scratch every time anything is renamed.
+        self._applied: dict[str, bool] = {}
         self._is_connected = False
 
     # -- reading ------------------------------------------------------------
@@ -159,6 +183,8 @@ class VariableRegistry:
                 tag=self._tags.get(source.name),
                 value=previous.value if previous is not None else None,
                 state=self._state_for(source.name, previous),
+                is_applied=self._applied.get(source.name, True),
+                is_out_of_range=(previous.is_out_of_range if previous is not None else False),
             )
 
         if rebuilt == self._entries:
@@ -186,6 +212,35 @@ class VariableRegistry:
         if updated == entry:
             return False
         self._entries[name] = updated
+        return True
+
+    def set_applied(self, name: str, is_applied: bool) -> bool:
+        """Switch whether arriving values move the model. Returns whether it
+        changed.
+
+        Remembered by name even for a variable the scene does not have yet, for
+        the reason `set_tags` gives: loading a project after the settings is the
+        normal order, and a switch thrown before then must not be lost.
+        """
+        self._applied[name] = is_applied
+        entry = self._entries.get(name)
+        if entry is None or entry.is_applied == is_applied:
+            return False
+        self._entries[name] = replace(entry, is_applied=is_applied)
+        return True
+
+    def set_out_of_range(self, name: str, is_out_of_range: bool) -> bool:
+        """Record whether the last value had to be clamped. Returns whether the
+        row now reads differently.
+
+        Separate from `set_value` because it is answered by the **joint**, not by
+        the server: the same number is in range for one axis and not for another,
+        and the registry has no idea what any of them can reach.
+        """
+        entry = self._entries.get(name)
+        if entry is None or entry.is_out_of_range == is_out_of_range:
+            return False
+        self._entries[name] = replace(entry, is_out_of_range=is_out_of_range)
         return True
 
     def set_connected(self, is_connected: bool) -> None:

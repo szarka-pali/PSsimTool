@@ -173,6 +173,23 @@ _VARIABLE_STATES: Final[dict[VariableState, str]] = {
 }
 
 
+def out_of_range_color() -> QColor:
+    """The colour a value the joint could not reach is written in.
+
+    Stated rather than taken from the palette: a palette has no "this number is
+    wrong" role, and this has to read as a fault on a light theme and a dark one
+    alike. Darker than a pure red so it stays legible on a white row.
+    """
+    return QColor(200, 40, 40)
+
+
+def describe_applied(is_applied: bool) -> str:
+    """The Apply column's tooltip: what the checkbox does, both ways round."""
+    if is_applied:
+        return _tr("Values from the server move the model. Clear this to set it by hand.")
+    return _tr("Values still arrive but do not move the model - set it by hand instead.")
+
+
 def describe_variable_state(entry: VariableEntry) -> str:
     """The Status column: where this variable stands with the server."""
     return _tr(_VARIABLE_STATES.get(entry.state, entry.state.value))
@@ -277,12 +294,20 @@ def describe_variable_value(entry: VariableEntry) -> str:
 
 
 def describe_variable_value_tooltip(entry: VariableEntry) -> str:
-    """Both numbers, so the conversion is visible rather than mysterious."""
+    """Both numbers, so the conversion is visible rather than mysterious.
+
+    And, when the joint could not reach it, that it did not: the number in the
+    cell is the one that arrived, so without this the row would show a value the
+    model is not actually at.
+    """
     if entry.value is None:
         return _tr("No value yet")
-    return _tr("{0} on the server, {1} in the scene (metres / radians)").format(
+    both = _tr("{0} on the server, {1} in the scene (metres / radians)").format(
         f"{_plc_value(entry):.6g}", f"{entry.value:.6g}"
     )
+    if not entry.is_out_of_range:
+        return both
+    return both + _tr(" - outside the joint's limits, which is where it is instead")
 
 
 def _plc_value(entry: VariableEntry) -> float:

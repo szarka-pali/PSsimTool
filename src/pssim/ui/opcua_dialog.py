@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Final, TypeGuard
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QCoreApplication, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -56,6 +56,7 @@ from pssim.io.opcua_security import (
     discover_endpoints,
 )
 from pssim.observability import get_logger
+from pssim.ui.browse_cache import BrowseCache
 from pssim.ui.labels import describe_tag_conversion
 from pssim.ui.opcua_browse_tree import OpcUaBrowseTree
 from pssim.ui.settings import MAX_DECIMALS, ConnectionSettings, VariableTag
@@ -74,6 +75,34 @@ OFFSET_DECIMALS: Final = 4
 OFFSET_LIMIT: Final = 1_000_000.0
 
 OFFER_COLUMNS: Final = 4
+
+
+def _refresh_row(tree: OpcUaBrowseTree, parent: QWidget) -> QHBoxLayout:
+    """The two refreshes, side by side, because they answer different questions.
+
+    **This node** re-reads one folder and keeps the rest; **All** forgets the
+    server and walks it again from `Objects`. One is for a folder whose contents
+    changed, the other for an address space that did — and a single button would
+    make the cheap case cost the expensive one.
+    """
+    row = QHBoxLayout()
+    node_button = QPushButton(QCoreApplication.translate("browse", "Refresh &Node"), parent)
+    node_button.setToolTip(
+        QCoreApplication.translate(
+            "browse", "Read the selected node again. Anything deeper stays as it was."
+        )
+    )
+    node_button.clicked.connect(tree.refresh_node)
+    row.addWidget(node_button)
+
+    all_button = QPushButton(QCoreApplication.translate("browse", "Refresh &All"), parent)
+    all_button.setToolTip(
+        QCoreApplication.translate("browse", "Forget the server and walk it again from the top.")
+    )
+    all_button.clicked.connect(tree.refresh_all)
+    row.addWidget(all_button)
+    row.addStretch(1)
+    return row
 
 
 class _DiscoverThread(QThread):
@@ -119,7 +148,12 @@ class _ConnectThread(QThread):
 class ConnectionDialog(QDialog):
     """Where the server is, how to get in, and what it turned out to hold."""
 
-    def __init__(self, settings: ConnectionSettings, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        settings: ConnectionSettings,
+        cache: BrowseCache | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("OPC UA Connection"))
         self.setModal(True)
@@ -145,6 +179,7 @@ class ConnectionDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        self.browse_tree.use_cache(cache)
         self._apply_settings(settings)
         self._update_authentication()
 
@@ -279,6 +314,7 @@ class ConnectionDialog(QDialog):
 
         self.browse_tree = OpcUaBrowseTree(tab)
         self.browse_tree.failed.connect(self._on_browse_failed)
+        layout.addLayout(_refresh_row(self.browse_tree, tab))
         layout.addWidget(self.browse_tree)
 
         self.address_label = QLabel(self.tr("Connect first"), tab)
@@ -530,6 +566,7 @@ class AssignTagDialog(QDialog):
         current: VariableTag | None = None,
         credentials: Credentials | None = None,
         unit: str = "",
+        cache: BrowseCache | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -546,6 +583,7 @@ class AssignTagDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_browse_group())
+        self.node_tree.use_cache(cache)
         layout.addLayout(self._build_tag_form(current))
 
         self.status_label = QLabel(self.tr("Not browsed yet"), self)
@@ -577,6 +615,7 @@ class AssignTagDialog(QDialog):
         self.node_tree.node_selected.connect(self._on_node_selected)
         self.node_tree.node_activated.connect(self._on_node_activated)
         self.node_tree.failed.connect(self.show_failure)
+        inner.addLayout(_refresh_row(self.node_tree, group))
         inner.addWidget(self.node_tree)
         return group
 

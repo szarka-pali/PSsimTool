@@ -66,6 +66,7 @@ from pssim.domain.placement import IDENTITY_PLACEMENT
 from pssim.domain.sensors import Sensor, SensorKind
 from pssim.domain.units import MM_TO_M
 from pssim.observability import get_logger
+from pssim.ui.browse_cache import BrowseCache
 from pssim.ui.connection_controller import ConnectionController
 from pssim.ui.connection_status import ConnectionStatusWidget
 from pssim.ui.floor_dialog import FloorDialog
@@ -207,6 +208,13 @@ class MainWindow(QMainWindow):
         self._values_panel: ModelValuesPanel | None = None
         self._selected_variable: str | None = None
         self._session_password = ""
+        self._browse_cache = BrowseCache()
+        """What the address space said, kept for this run of the application.
+
+        Here rather than in the dialog so it outlives one: reopening the
+        connection dialog shows the tree where it was left instead of walking
+        back down to it a request at a time. Not persisted - see
+        `ui/browse_cache.py`."""
         """Typed into the connection dialog and held for this session only. It is
         deliberately not in `ConnectionSettings`, which is what gets written to
         disk — see `ui/settings.py`."""
@@ -1657,7 +1665,7 @@ class MainWindow(QMainWindow):
 
     def open_connection_dialog(self) -> ConnectionDialog:
         """Where the server is, how to get in, and what it turned out to hold."""
-        dialog = ConnectionDialog(self._connection_settings, parent=self)
+        dialog = ConnectionDialog(self._connection_settings, self._browse_cache, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return dialog
 
@@ -1681,6 +1689,7 @@ class MainWindow(QMainWindow):
             self._connection_settings.tag_for(name),
             self._connection_settings.credentials(self._session_password),
             self._variable_unit(name),
+            self._browse_cache,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

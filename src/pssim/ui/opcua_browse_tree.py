@@ -31,6 +31,7 @@ from pssim.io.opcua_browse_session import (
     OpcUaBrowseSession,
 )
 from pssim.observability import get_logger
+from pssim.ui.browse_cache import BrowseCache
 
 logger = get_logger(__name__)
 
@@ -69,6 +70,7 @@ class OpcUaBrowseTree(QTreeWidget):
         super().__init__(parent)
 
         self._session: OpcUaBrowseSession | None = None
+        self._cache: BrowseCache | None = None
         # Keyed by node **and** path: a struct's fields all share one node id,
         # so keying by node alone would drop the second field expanded and
         # fill the wrong row with the first one's answer.
@@ -104,6 +106,14 @@ class OpcUaBrowseTree(QTreeWidget):
         self._numeric_only = True
         self.refresh()
 
+    def use_cache(self, cache: BrowseCache | None) -> None:
+        """Read from, and write to, answers the server already gave.
+
+        Handed in rather than owned: the window keeps it, so it outlives this
+        dialog and reopening one shows the tree as it was.
+        """
+        self._cache = cache
+
     # -- the session --------------------------------------------------------
 
     @property
@@ -123,9 +133,57 @@ class OpcUaBrowseTree(QTreeWidget):
             self._request(OBJECTS_NODE_ID, parent=None)
 
     def refresh(self) -> None:
-        """Read the whole tree again from the top. What a server that changed
-        under us needs, and the only way to see a tag added since connecting."""
+        """Show the tree again, from whatever is cached. Asks the server only for
+        what it has no answer to."""
         self.set_session(self._session)
+
+    def refresh_all(self) -> None:
+        """Forget the server and walk it again from `Objects`.
+
+        What to reach for when the address space itself has changed - a tag added
+        on the PLC this morning is not in an answer given yesterday.
+        """
+        if self._cache is not None:
+            self._cache.clear()
+        self.set_session(self._session)
+
+    def refresh_node(self, node: BrowseNode | None = None) -> None:
+        """Read one place again, keeping the rest.
+
+        The selected row unless told otherwise. Its own children are re-read;
+        anything deeper stays cached until it is refreshed in turn, which is what
+        "refresh this node" means as opposed to "refresh everything".
+        """
+        target = node or self.selected_node
+        if target is None:
+            self.refresh_all()
+            return
+        if self._cache is not None:
+            self._cache.forget(target.node_id, target.path)
+
+        item = self._item_for(target)
+        if item is None:
+            return
+        item.takeChildren()
+        item.setData(COLUMN_NAME, LOADED_ROLE, False)
+        item.addChild(QTreeWidgetItem([PLACEHOLDER_TEXT, "", "", ""]))
+        self._request(target.node_id, parent=item, path=target.path)
+
+    def _item_for(self, node: BrowseNode) -> QTreeWidgetItem | None:
+        """The row standing for one place, wherever it sits.
+
+        Searched rather than remembered: a row is thrown away and rebuilt on
+        every fill, so a held reference would be to an item Qt has deleted.
+        """
+        for item in self.findItems("", Qt.MatchFlag.MatchContains | Qt.MatchFlag.MatchRecursive):
+            held = item.data(COLUMN_NAME, NODE_ROLE)
+            if (
+                isinstance(held, BrowseNode)
+                and held.node_id == node.node_id
+                and held.path == node.path
+            ):
+                return item
+        return None
 
     # -- reading ------------------------------------------------------------
 
@@ -148,13 +206,23 @@ class OpcUaBrowseTree(QTreeWidget):
             self._request(node.node_id, parent=item, path=node.path)
 
     def _request(self, node_id: str, parent: QTreeWidgetItem | None, path: str = "") -> None:
-        """Start one worker for one place. A second request for the same place
-        while the first is in flight is dropped — double-clicking an expander
-        should not ask twice."""
+        """Fill one place from the cache, or ask the server for it.
+
+        A second request for the same place while the first is in flight is
+        dropped — double-clicking an expander should not ask twice.
+        """
         session = self._session
         key = (node_id, path)
         if session is None or key in self._workers:
             return
+
+        if self._cache is not None:
+            remembered = self._cache.get(node_id, path)
+            if remembered is not None:
+                # No thread and no request: the answer is already here, so the
+                # folder opens at once and offline.
+                self._fill(parent, remembered)
+                return
 
         worker = _ChildrenThread(session, node_id, parent, path, self)
         worker.succeeded.connect(self._on_children)
@@ -163,12 +231,17 @@ class OpcUaBrowseTree(QTreeWidget):
         self._workers[key] = worker
         worker.start()
 
-    def _on_children(self, _node_id: str, parent: object, result: object) -> None:
-        """Fill in one folder. The node id rides along for the worker's own
-        bookkeeping; which item to fill is the `parent` it was started with."""
+    def _on_children(self, node_id: str, parent: object, result: object) -> None:
+        """Fill in one folder, and remember what it held.
+
+        Which item to fill is the `parent` the worker was started with; the node
+        id is what the answer gets filed under.
+        """
         if not isinstance(result, BrowseResult):
             return
         holder = parent if isinstance(parent, QTreeWidgetItem) else None
+        if self._cache is not None:
+            self._cache.put(node_id, _path_of(holder), result)
         self._fill(holder, result)
 
     def _on_failure(self, node_id: str, message: str) -> None:
@@ -189,6 +262,19 @@ class OpcUaBrowseTree(QTreeWidget):
                 self.addTopLevelItem(item)
             else:
                 parent.addChild(item)
+
+        # Anything already known about a child opens with it, so reopening the
+        # dialog puts the tree back where it was rather than at the root.
+        if self._cache is not None:
+            for index in range(self.topLevelItemCount() if parent is None else parent.childCount()):
+                child = self.topLevelItem(index) if parent is None else parent.child(index)
+                held = child.data(COLUMN_NAME, NODE_ROLE) if child is not None else None
+                if (
+                    child is not None
+                    and isinstance(held, BrowseNode)
+                    and self._cache.get(held.node_id, held.path) is not None
+                ):
+                    child.setExpanded(True)
 
         if result.is_truncated:
             # Said rather than silently shown: a folder cut off at the limit that
@@ -300,6 +386,14 @@ def _make_item(node: BrowseNode, numeric_only: bool) -> QTreeWidgetItem:
         # and rejected, not that it is missing.
         item.setDisabled(True)
     return item
+
+
+def _path_of(item: QTreeWidgetItem | None) -> str:
+    """The path of the place a row stands for, or `""` for the root."""
+    if item is None:
+        return ""
+    held = item.data(COLUMN_NAME, NODE_ROLE)
+    return held.path if isinstance(held, BrowseNode) else ""
 
 
 def _tooltip(node: BrowseNode) -> str:

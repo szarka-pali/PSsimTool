@@ -756,10 +756,115 @@ adds a `UserManager` and offers only `UserName`, so anonymous is not on the list
 the security half would be written rather than tested, and this is the only server this project
 may point at (`.claude/rules/io-opcua.md`).
 
+**Where the connection stands is a permanent widget**, on the right of the status bar
+(`ui/connection_status.py`). Not a `showMessage` call: a message is wiped by the next
+one, and the connection's state is not a message about something that just happened.
+`DEGRADED` is not "Connected" with a footnote either — the link is alive, a signal has
+stopped arriving, and the scene goes on drawing the old value (R10), which looks like
+nothing being wrong. The reason is the tooltip and a click opens the log, because a
+status code does not fit on one line beside the state.
+
 `pssim probe <endpoint>` is tab one on the command line: it prints the offers before trying
 anything, then connects with `--policy`, `--sign-only` and `--user`, and prints the diagnostics
 log whether or not it got in. There is no `--password` — one typed on a command line lands in
 the shell's history.
+
+### R21 — A field of a structure is a node plus a path, not a node
+
+The address-space browse stopped at a variable. On a mock server made of scalars
+that is invisible; on a real PLC, whose address space is mostly structures, it means
+every interesting value is behind a dead end. The stop was a written decision —
+`has_children=kind is NodeKind.OBJECT` — taken to keep a tree of leaves from looking
+like a tree of folders.
+
+What makes opening it awkward rather than obvious is that **a server has no node for
+a field**. `Struct.AxisState` is one node holding one `ExtensionObject`; `Position.X`
+does not exist as anything. Two facts, both established in a REPL against a live
+server before any of this was designed, rule out the alternatives:
+
+- `subscribe_data_change` in asyncua leaves `IndexRange` null deliberately ("then the
+  entire array is returned"), so a single array element cannot be subscribed to.
+- asyncua's own server ignores `IndexRange` on a plain read as well: asking for `'1'`
+  of a four-element array returned all four, with a good status code.
+
+So a tag is a **node id plus a path** — `Position.X`, `Limits[1]`,
+`Drive.Axes[2].Actual` — and the path is applied to the value where the unit
+conversion already happens: at the boundary, once (R8). `io/opcua_path.py` is that
+path, and it is **pure** — stdlib only, no asyncua — because it is the one half of
+this feature testable in milliseconds, and the half where a mistake binds a joint to
+the wrong number in silence.
+
+The path is text rather than a structure because it goes into a settings file: one
+spelling, readable by whoever opens the file, and nothing new in a versioned format.
+
+**Three sources of children, tried in that order**, because only the first has real
+nodes in it:
+
+1. **the address space** — a PLC that exposes its struct members as `HasComponent`
+   children needs nothing else, and it costs one request either way;
+2. **the `DataType`'s `StructureDefinition`** — metadata, so a struct opens before
+   anything has ever been written into it, which is most of a freshly started PLC;
+3. **the value** — for an array, and only to learn how many elements there are.
+
+The decisions worth the words:
+
+- **A struct or an array is a `container`: openable, and never bindable.** Both
+  halves matter. `Double[4]` reports its type as `Double`, so without the flag the
+  array itself would look like a perfectly good tag and would hand a joint a list.
+- **In the tree a container is dimmed, not disabled.** It is the one row here that
+  *must* be opened — it is where the wanted field lives — while still reading as
+  something that cannot itself be bound. Disabling it would rest on Qt letting a
+  click through to the expander of a disabled row, which is not a thing to build a
+  feature's central interaction on. The palette's disabled colour, so it is legible
+  on a light theme and a dark one (R17); the same choice R15 made for a hidden
+  model's row, for the same reason.
+- **One notification feeds several signals.** `Position.X` and `Position.Y` are two
+  signals reading two places in one arriving struct, so the source keeps a **list**
+  of bindings per node. The dict keyed by node id that preceded it kept only the last
+  of them, and three fields of one struct are still one monitored item.
+- **`load_data_type_definitions()` is what makes a struct decode**, and it is called
+  lazily: by the source only when some binding actually has a path, and by the browse
+  session only before it first has to read a value. It is a round trip and a code
+  generation, and every setup that existed before this reads plain scalars.
+- **A path that does not fit costs one signal.** The other fields of the same struct
+  still arrive and the subscription stays up. A field the server renamed is a
+  configuration problem, not a reason to stop reading the machine.
+- **A path is validated on the way out of the settings file** (R18). A malformed one
+  would otherwise reach `resolve_value` on the source's thread and be reported once
+  per notification, at the publishing rate, about a file nobody is looking at.
+
+Three properties of the wire that are not guessable and cost time to find:
+
+- **`ValueRank` is the array test, and it is reliable.** `-1` is Scalar; every other
+  value is an array, `0` ("one or more dimensions") included. A four-element `Double`
+  array reported rank `0` and left `ArrayDimensions` unset entirely — which is why
+  the element count comes from the value and from nowhere else.
+- **`ua.datatype_to_varianttype` is silently wrong for a custom type.** It reads the
+  numeric identifier and ignores the namespace, so `ns=2;i=1` came back as
+  `VariantType.Boolean`. Namespace 0 only; a custom type is asked for its own
+  definition instead.
+- **It is `node.session`, not `node.server`**, in asyncua 2.x. The old name raises an
+  `AttributeError` that a `try` around a browse turns into an empty folder, which is
+  exactly how it presented.
+
+The mock server grew a struct, a nested struct, an array inside it and a bare array,
+because none of this is testable otherwise and it is the only server this project may
+point at. `Struct.AxisState.Position` tracks the same axes as the scalar nodes, so
+reading through a path and reading the plain node must give the same number — that is
+what pins the extraction rather than merely exercising it.
+
+One test had to be moved out of process to be worth anything. An array *inside* a
+struct needs the generated classes to decode the value it is counting; run in the
+same process, the mock server has already registered those same classes on the
+process-wide `ua` module, so the test passed whether or not the session ever loaded
+them. It runs through `pssim probe --path` in a subprocess now, and it failed there
+first.
+
+**Not done, deliberately:** `machines/*.yaml` has no `path`. `JointBinding` carries
+one and `io/` reads it, but wiring it into the versioned machine definition needs its
+own migration story, and validating it in `config/schema.py` would mean `config/`
+importing `io/`, which `tests/unit/test_layer_boundaries.py` forbids. The tag route —
+which is what the address-space browser feeds — is complete.
 
 ## Performance
 
@@ -783,4 +888,5 @@ of draw calls if approached naively. So when building the scene:
 | CAD formats other than STEP    | STEP is the minimum; IGES/JT/glTF can be added in `cad/`           |
 | Several machines in one scene  | the data model allows it, the scene builder does not yet           |
 | OPC UA certificate validation  | the server's certificate is trusted on first use (R20)            |
+| A struct path in `machines/*.yaml` | the tag route is complete; the versioned format is not (R21)   |
 | Packaging                      | `setup_dist.py` does not exist; `pssim write-icon` is what it needs |

@@ -103,6 +103,27 @@ DEFAULT_AXES: Final = (
 )
 
 
+#: The structured nodes: a struct, a nested struct inside it, an array inside
+#: it, and a bare array beside it. On by default, because a mock server made only
+#: of scalars is what let a client ship that stops browsing at a variable — a real
+#: PLC's address space is mostly structures.
+#:
+#: `Struct.AxisState.Position` tracks the three axes, so binding a path into the
+#: struct and binding the plain axis node must give the same number. That is the
+#: test that pins the extraction.
+DEFAULT_STRUCTS: Final = (
+    "Struct.AxisState",
+    "Struct.Point",
+    "Struct.Positions",
+)
+
+#: The struct type names. Prefixed, because `load_data_type_definitions` generates
+#: these as classes on the `ua` module itself — a process-wide namespace shared
+#: with whatever else asyncua has loaded.
+POINT_TYPE_NAME: Final = "PSsimPoint3D"
+AXIS_STATE_TYPE_NAME: Final = "PSsimAxisState"
+
+
 async def run_mock_server(
     endpoint: str = DEFAULT_ENDPOINT,
     axes: tuple[MockAxis, ...] = DEFAULT_AXES,
@@ -112,6 +133,7 @@ async def run_mock_server(
     outputs: tuple[str, ...] = DEFAULT_OUTPUTS,
     security: MockSecurity = OPEN,
     stop_event: threading.Event | None = None,
+    with_structs: bool = True,
 ) -> None:
     """Run the mock server. `duration_s=None` means run until interrupted.
 
@@ -127,6 +149,10 @@ async def run_mock_server(
 
     `security` decides what a client must present. Left alone it is the open
     server this has always been.
+
+    `with_structs` adds the structured nodes. On by default: a client that has
+    only ever met scalars is a client nobody has tested against a real PLC, whose
+    address space is mostly structures.
     """
     from asyncua import Server, ua  # a heavy import - only when actually needed
 
@@ -161,7 +187,15 @@ async def run_mock_server(
         node = await output_folder.add_variable(node_id, name, 0.0, ua.VariantType.Double)
         await node.set_writable(True)
 
-    logger.info("mock server running", endpoint=endpoint, nodes=node_ids, writable=output_ids)
+    structs = await _add_structs(server, namespace_index, axes) if with_structs else None
+
+    logger.info(
+        "mock server running",
+        endpoint=endpoint,
+        nodes=node_ids,
+        writable=output_ids,
+        structs=list(DEFAULT_STRUCTS) if structs is not None else [],
+    )
 
     async with server:
         elapsed = 0.0
@@ -171,8 +205,115 @@ async def run_mock_server(
                 return
             for axis, variable in variables.items():
                 await variable.write_value(axis.value_at(elapsed))
+            if structs is not None:
+                await structs.update(elapsed)
             await asyncio.sleep(update_interval_s)
             elapsed += update_interval_s
+
+
+class _Structs:
+    """The structured nodes, and the one call that keeps them moving.
+
+    A small class rather than a tuple of nodes: the point of these is that the
+    struct's `Position` and the bare array follow the same axes as the scalar
+    nodes, so a path into the struct and the plain node can be compared. That is
+    two nodes and three axes to keep in step, which is a thing with state.
+    """
+
+    def __init__(self, axes: tuple[MockAxis, ...], state_node: Any, array_node: Any) -> None:
+        self._axes = axes
+        self._state = state_node
+        self._array = array_node
+
+    async def update(self, elapsed_s: float) -> None:
+        from asyncua import ua
+
+        values = [axis.value_at(elapsed_s) for axis in self._axes]
+        point = _point(ua, values)
+        state = getattr(ua, AXIS_STATE_TYPE_NAME)(
+            Position=point,
+            Enabled=values[0] > 0.0,
+            Name="X",
+            Limits=[0.0, 2450.0],
+        )
+        await self._state.write_value(state)
+        await self._array.write_value(values)
+
+
+def _point(ua: Any, values: list[float]) -> Any:
+    """A `Point3D` from the first three axis values, whatever there are of them."""
+    padded = (values + [0.0, 0.0, 0.0])[:3]
+    return getattr(ua, POINT_TYPE_NAME)(X=padded[0], Y=padded[1], Z=padded[2])
+
+
+async def _add_structs(server: Any, namespace_index: int, axes: tuple[MockAxis, ...]) -> _Structs:
+    """A struct, a nested struct, an array inside it, and a bare array.
+
+    `load_data_type_definitions` is called on the **server** as well as by the
+    client: without it there is no `ua.PSsimAxisState` class to build a value
+    from. It generates classes onto the `ua` module, which is process-wide — two
+    mock servers in one process regenerate the same names, which is harmless
+    because the definitions are identical.
+    """
+    from asyncua import ua
+    from asyncua.common.structures104 import new_struct, new_struct_field
+
+    # The `type: ignore` on each name below: `new_struct` annotates it
+    # `int | ua.QualifiedName`, which is wrong. It hands the value straight to
+    # `create_data_type`, whose own signature is `ua.QualifiedName | str` — so a
+    # plain string is what it wants, and what the spike against a live server
+    # used.
+
+    point_type, _ = await new_struct(
+        server,
+        namespace_index,
+        POINT_TYPE_NAME,  # type: ignore[arg-type]
+        [
+            new_struct_field("X", ua.VariantType.Double),
+            new_struct_field("Y", ua.VariantType.Double),
+            new_struct_field("Z", ua.VariantType.Double),
+        ],
+    )
+    state_type, _ = await new_struct(
+        server,
+        namespace_index,
+        AXIS_STATE_TYPE_NAME,  # type: ignore[arg-type]
+        [
+            # A struct inside a struct: the case a one-level-deep implementation
+            # gets wrong and nobody notices until a real PLC.
+            new_struct_field("Position", point_type),
+            new_struct_field("Enabled", ua.VariantType.Boolean),
+            # Deliberately not a number. Selecting it must be refused, not scaled.
+            new_struct_field("Name", ua.VariantType.String),
+            new_struct_field("Limits", ua.VariantType.Double, array=True),
+        ],
+    )
+    await server.load_data_type_definitions()
+
+    folder = await server.nodes.objects.add_folder(namespace_index, "Struct")
+    values = [axis.value_at(0.0) for axis in axes]
+
+    state = await folder.add_variable(
+        f"ns={namespace_index};s=Struct.AxisState",
+        "Struct.AxisState",
+        getattr(ua, AXIS_STATE_TYPE_NAME)(
+            Position=_point(ua, values), Enabled=True, Name="X", Limits=[0.0, 2450.0]
+        ),
+        datatype=state_type.nodeid,
+    )
+    await folder.add_variable(
+        f"ns={namespace_index};s=Struct.Point",
+        "Struct.Point",
+        _point(ua, values),
+        datatype=point_type.nodeid,
+    )
+    array = await folder.add_variable(
+        f"ns={namespace_index};s=Struct.Positions",
+        "Struct.Positions",
+        values,
+        ua.VariantType.Double,
+    )
+    return _Structs(axes, state, array)
 
 
 def _user_manager(security: MockSecurity) -> Any:

@@ -357,6 +357,13 @@ def probe(
     browse: Annotated[
         str | None, typer.Option("--browse", help="List the children of this node id")
     ] = None,
+    path: Annotated[
+        str,
+        typer.Option(
+            "--path",
+            help="Look inside a structure or an array: Position, Limits, Position.X",
+        ),
+    ] = "",
     policy: Annotated[
         str | None,
         typer.Option("--policy", help="Security policy, e.g. Basic256Sha256. Default: none"),
@@ -374,11 +381,16 @@ def probe(
     offer `Anonymous` refuses an anonymous session, and a server offering only
     `Basic256Sha256` refuses an unsecured one.
     """
-    _guard(lambda: _probe(endpoint, browse, policy, sign_only, user))
+    _guard(lambda: _probe(endpoint, browse, policy, sign_only, user, path))
 
 
 def _probe(
-    endpoint: str, browse: str | None, policy: str | None, sign_only: bool, user: str | None
+    endpoint: str,
+    browse: str | None,
+    policy: str | None,
+    sign_only: bool,
+    user: str | None,
+    path: str = "",
 ) -> None:
     from pssim.io.opcua_browse_session import OBJECTS_NODE_ID, OpcUaBrowseSession
     from pssim.io.opcua_security import (
@@ -411,9 +423,12 @@ def _probe(
     session = OpcUaBrowseSession(endpoint, credentials=credentials)
     try:
         session.open()
-        for node in session.children_of(browse or OBJECTS_NODE_ID).nodes:
+        for node in session.children_of(browse or OBJECTS_NODE_ID, path=path).nodes:
             access = " [w]" if node.is_writable else ""
-            typer.echo(f"  {node.node_id:<32} {node.label:<24} {node.data_type}{access}")
+            # A field carries its parent's node id, so the path is what says
+            # which place the row is - print it where there is one.
+            where = f"{node.node_id} -> {node.path}" if node.path else node.node_id
+            typer.echo(f"  {where:<44} {node.label:<20} {node.data_type}{access}")
     finally:
         # The log is the point of the command when the connection failed, so it
         # is printed either way rather than only on success.

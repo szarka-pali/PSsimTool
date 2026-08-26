@@ -178,6 +178,7 @@ class OpcUaBrowseSession:
         "_ready",
         "_diagnostics",
         "_open_error",
+        "_structures_loaded",
     )
 
     def __init__(
@@ -197,6 +198,7 @@ class OpcUaBrowseSession:
         self._ready = threading.Event()
         self._diagnostics = DiagnosticLog()
         self._open_error: BaseException | None = None
+        self._structures_loaded = False
 
     # -- reading ------------------------------------------------------------
 
@@ -227,6 +229,7 @@ class OpcUaBrowseSession:
         self._diagnostics.start_attempt(self._credentials.describe())
         self._ready.clear()
         self._open_error = None
+        self._structures_loaded = False
         self._thread = threading.Thread(target=self._run, name="pssim-opcua-browse", daemon=True)
         self._thread.start()
 
@@ -385,7 +388,58 @@ class OpcUaBrowseSession:
             if described is not None:
                 return described
 
-        return await _read_inside(node, path, self._child_limit)
+        return await self._read_inside(node, path)
+
+    async def _read_inside(self, node: Any, path: str) -> BrowseResult:
+        """What is inside a value: a struct's fields, or an array's elements.
+
+        Which of the two is decided by the **type**, walked from the node's own
+        `DataType` along `path`. Only an array needs the value read, and only to
+        learn how many elements there are.
+        """
+        steps = parse_path(path)
+        try:
+            described = await _walk_type(node, steps)
+        except Exception as exc:
+            logger.debug("a type would not describe itself", path=path, error=str(exc))
+            return BrowseResult()
+
+        if described is None:
+            return BrowseResult()
+        if described.is_array:
+            await self._ensure_structures()
+            return await _array_elements(node, path, steps, described, self._child_limit)
+        return await _struct_fields_of(node, path, described)
+
+    async def _ensure_structures(self) -> None:
+        """Teach the client the server's struct types, once, before reading a value.
+
+        Needed for an array **inside** a struct: the value arrives as one
+        `ExtensionObject`, and without the generated classes there is nothing to
+        walk the path through — so the element count cannot be found and the
+        folder comes back empty. A bare array needs none of this, which is why
+        the gap survived a passing test: the mock server had registered the same
+        classes on the process-wide `ua` module from inside the test process.
+
+        Once, and lazily: it is a round trip and a code generation, and a server
+        of plain scalars should not pay for it just to open a folder. A failure is
+        logged and carried past — the fields of a struct come from metadata and
+        still work without it.
+        """
+        if self._structures_loaded:
+            return
+        self._structures_loaded = True
+        client = self._client
+        if client is None:  # pragma: no cover - closed underneath us
+            return
+        try:
+            await client.load_data_type_definitions()
+        except Exception as exc:
+            logger.warning(
+                "could not load the server's structure definitions",
+                endpoint=self._endpoint,
+                error=str(exc),
+            )
 
     async def _describe_all(self, children: list[Any]) -> BrowseResult | None:
         """Describe real child nodes, or `None` when there are none to describe."""
@@ -416,27 +470,6 @@ class _TypeAt:
     def element(self) -> _TypeAt:
         """The same type without the array-ness — what one element is."""
         return _TypeAt(self.name, self.is_struct, False, self.definition)
-
-
-async def _read_inside(node: Any, path: str, limit: int) -> BrowseResult:
-    """What is inside a value: a struct's fields, or an array's elements.
-
-    Which of the two is decided by the **type**, walked from the node's own
-    `DataType` along `path`. Only an array needs the value read, and only to
-    learn how many elements there are.
-    """
-    steps = parse_path(path)
-    try:
-        described = await _walk_type(node, steps)
-    except Exception as exc:
-        logger.debug("a type would not describe itself", path=path, error=str(exc))
-        return BrowseResult()
-
-    if described is None:
-        return BrowseResult()
-    if described.is_array:
-        return await _array_elements(node, path, steps, described, limit)
-    return await _struct_fields_of(node, path, described)
 
 
 async def _struct_fields_of(node: Any, path: str, described: _TypeAt) -> BrowseResult:

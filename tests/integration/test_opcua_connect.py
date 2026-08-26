@@ -51,6 +51,7 @@ pytestmark = pytest.mark.integration
 
 NAMESPACE_INDEX = 2
 AXIS_NODE = f"ns={NAMESPACE_INDEX};s=Axes.X.ActPos"
+STRUCT_NODE = f"ns={NAMESPACE_INDEX};s=Struct.AxisState"
 
 USER = "operator"
 PASSWORD = "letmein"
@@ -462,6 +463,38 @@ class TestTheProbeCommand:
         )
 
         assert "BadUserAccessDenied" in output
+
+    def test_it_looks_inside_a_struct(self, probe_server: SecureMockServer) -> None:
+        output = self._authenticated(probe_server, "--browse", STRUCT_NODE)
+
+        assert "Position" in output
+
+    def test_it_looks_inside_an_array_within_a_struct(self, probe_server: SecureMockServer) -> None:
+        # **Across processes**, which is the point of running probe as a
+        # subprocess for this one. An array inside a struct needs the server's
+        # type definitions to decode the value it is counting; in one process the
+        # mock server has already registered the same generated classes on the
+        # process-wide `ua` module, so the same test in-process passes whether or
+        # not the session ever loads them.
+        output = self._authenticated(probe_server, "--browse", STRUCT_NODE, "--path", "Limits")
+
+        assert "Limits[1]" in output
+
+    def test_and_inside_a_nested_struct(self, probe_server: SecureMockServer) -> None:
+        output = self._authenticated(probe_server, "--browse", STRUCT_NODE, "--path", "Position")
+
+        assert "Position.X" in output
+
+    def _authenticated(self, server: SecureMockServer, *arguments: str) -> str:
+        return run_probe(
+            server.endpoint,
+            "--policy",
+            "Basic256Sha256",
+            "--user",
+            USER,
+            *arguments,
+            password=PASSWORD,
+        )
 
     def test_a_writable_node_is_marked(self, probe_server: SecureMockServer) -> None:
         output = run_probe(

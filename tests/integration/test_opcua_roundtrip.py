@@ -19,6 +19,7 @@ from pssim.io._ready import wait_for_endpoint
 from pssim.io.base import SourceStatus
 from pssim.io.mock_server import (
     DEFAULT_AXES,
+    DEFAULT_FLAGS,
     DEFAULT_OUTPUTS,
     DEFAULT_STRUCTS,
     MockAxis,
@@ -381,7 +382,9 @@ class TestBrowsing:
         with MockServerThread() as server:
             found = browse_variables(server.endpoint)
 
-        expected = len(DEFAULT_AXES) + len(DEFAULT_OUTPUTS) + len(DEFAULT_STRUCTS)
+        expected = (
+            len(DEFAULT_AXES) + len(DEFAULT_OUTPUTS) + len(DEFAULT_FLAGS) + len(DEFAULT_STRUCTS)
+        )
         assert len(found) == expected
 
     def test_it_reports_the_browse_path(self) -> None:
